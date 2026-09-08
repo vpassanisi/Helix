@@ -1,7 +1,18 @@
-# DeepSeek Harness for VS Code
+# DeepBlue for VS Code
 
-A VS Code sidebar Webview UI for DeepSeek Harness. The extension host owns the Harness subprocess, editor context capture, session routing, and runtime lifecycle. The sidebar is a Svelte app bundled by Vite and rendered through `WebviewViewProvider`.
+--start of text written by Vinny--
+I built this VS Code extension because I could not find a harness that gave me enough control over what gets sent to the model. That control is especially important when working with smaller local models.
 
+I also could not find an app or extension that supported the workflow I wanted. Codex and Claude Code extensions are good, but their support for local models is limited and seems to be getting worse over time.
+
+The goal is to provide a Codex style workflow with first class support for local models, while still allowing users to customize and optimize the experience for the models they use.
+
+**Disclaimer**
+
+This is currently a quick and dirty proof of concept. Most of the code is AI generated, with guidance and testing provided during development. The code quality is likely rough, and the core harness, DeepSeek Harness, is still in alpha.
+--end of text written by Vinny--
+
+--start of AI generated text--
 ## Run locally
 
 1. Install Node.js 22 or newer.
@@ -59,3 +70,5 @@ The runtime emits notifications for every session. The extension uses one runtim
 ## Webview UI
 
 The UI uses Basecoat CSS primitives with a custom shadcn-compatible monochrome token theme in `src/webview/theme.css`. It uses a near-black canvas, off-white primary actions, subtle gray borders, and Lucide icons. The UI communicates with the extension host through `postMessage`; it does not assume native VS Code controls.
+
+--end of AI generated text--

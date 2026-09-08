@@ -1,0 +1,7 @@
+.vscode/
+src/
+test/
+tsconfig.json
+*.tsbuildinfo
+README.md
+node_modules/

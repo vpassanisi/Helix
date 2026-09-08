@@ -1,0 +1,164 @@
+{
+  "name": "deepseek-harness-vscode",
+  "displayName": "DeepSeek Harness",
+  "description": "A VS Code sidebar Webview UI for DeepSeek Harness.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:dsh.sidebar",
+    "onCommand:dsh.openSidebar",
+    "onCommand:dsh.newSession"
+  ],
+  "main": "./out/extension.js",
+  "type": "module",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dsh",
+          "title": "DeepSeek",
+          "icon": "media/dsh.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh": [
+        {
+          "type": "webview",
+          "id": "dsh.sidebar",
+          "name": "Harness"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dsh.openSidebar",
+        "title": "DeepSeek Harness: Open Sidebar"
+      },
+      {
+        "command": "dsh.newSession",
+        "title": "DeepSeek Harness: New Session"
+      },
+      {
+        "command": "dsh.askSelection",
+        "title": "DeepSeek Harness: Ask About Selection"
+      }
+    ],
+    "configuration": {
+      "title": "DeepSeek Harness",
+      "properties": {
+        "deepseekHarness.provider": {
+          "type": "string",
+          "default": "deepseek-official",
+          "description": "Harness model provider route."
+        },
+        "deepseekHarness.model": {
+          "type": "string",
+          "default": "deepseek-v4-flash",
+          "description": "Selected Harness model identifier. Managed by the sidebar model picker."
+        },
+        "deepseekHarness.contextWindow": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Selected model context window in tokens. Managed by the sidebar model picker."
+        },
+        "deepseekHarness.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional DeepSeek-compatible API base URL. Empty uses the provider default."
+        },
+        "deepseekHarness.mcpServers": {
+          "type": "array",
+          "default": [],
+          "description": "MCP servers attached to the DSH runtime. Secret environment values are stored in VS Code SecretStorage.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "serverName": {
+                "type": "string",
+                "description": "Unique MCP tool namespace."
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "streamable-http"
+                ]
+              },
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "url": {
+                "type": "string"
+              },
+              "envKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "deepseekHarness.dshBin": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the dsh executable. Empty launches @deepseek-ai/dsh through npx."
+        },
+        "deepseekHarness.dshHome": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Harness home directory. Empty inherits the normal Harness home."
+        },
+        "deepseekHarness.maxSelectionCharacters": {
+          "type": "number",
+          "default": 32000,
+          "minimum": 1000,
+          "description": "Maximum selected editor characters sent as prompt context."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "npm run build:webview && tsc -p .",
+    "build:webview": "vite build --config vite.webview.config.ts",
+    "check:webview": "svelte-check --tsconfig ./tsconfig.webview.json",
+    "watch:webview": "vite build --watch --config vite.webview.config.ts",
+    "watch": "tsc -p . --watch",
+    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/session-router.test.js out/test/model-catalog.test.js out/test/mcp.test.js",
+    "package": "npm run compile && npx @vscode/vsce package"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-sdk-client": "0.0.1-rc.1",
+    "@lucide/svelte": "^1.43.0",
+    "basecoat-css": "^1.0.2",
+    "dompurify": "^3.4.15",
+    "marked": "^18.0.12",
+    "svelte": "^5.57.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.20.0",
+    "@types/vscode": "^1.100.0",
+    "svelte-check": "^4.7.6",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.2"
+  }
+}

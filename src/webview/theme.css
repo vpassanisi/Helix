@@ -1,0 +1,36 @@
+@import "basecoat-css/base.css";
+@import "basecoat-css/styles/vega.css";
+
+:root {
+  color-scheme: dark;
+  --background: #080808;
+  --foreground: #f2f2f2;
+  --card: #101010;
+  --card-foreground: #f2f2f2;
+  --popover: #101010;
+  --popover-foreground: #f2f2f2;
+  --primary: #f2f2f2;
+  --primary-foreground: #080808;
+  --secondary: #171717;
+  --secondary-foreground: #e7e7e7;
+  --muted: #141414;
+  --muted-foreground: #898989;
+  --accent: #202020;
+  --accent-foreground: #f2f2f2;
+  --destructive: #c7c7c7;
+  --border: #272727;
+  --input: #202020;
+  --ring: #737373;
+  --sidebar: #0c0c0c;
+  --sidebar-foreground: #f2f2f2;
+  --sidebar-primary: #f2f2f2;
+  --sidebar-primary-foreground: #080808;
+  --sidebar-accent: #202020;
+  --sidebar-accent-foreground: #f2f2f2;
+  --sidebar-border: #272727;
+  --sidebar-ring: #737373;
+  --radius: 0.375rem;
+
+  --vscode-sideBar-background: var(--background);
+  --vscode-editor-background: var(--background);
+}

@@ -1,3 +1,5 @@
+import 'basecoat-css/basecoat'
+import 'basecoat-css/select'
 import { mount } from 'svelte'
 import App from './App.svelte'
 import './app.css'
@@ -9,7 +11,7 @@ const vscode = acquireVsCodeApi()
 const target = document.getElementById('app')
 
 if (target === null) {
-  throw new Error('DeepSeek Harness UI target was not found.')
+  throw new Error('DeepBlue UI target was not found.')
 }
 
 mount(App, {

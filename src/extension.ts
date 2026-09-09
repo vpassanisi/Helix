@@ -21,7 +21,7 @@ const API_KEY_SECRET = 'deepseekHarness.apiKey'
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 const MCP_ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
-class ExtensionApp implements vscode.Disposable {
+class ExtensionApp {
   readonly sidebar: SidebarProvider
   private readonly runtime: HarnessRuntime
   private readonly subscriptions: vscode.Disposable[] = []
@@ -29,6 +29,8 @@ class ExtensionApp implements vscode.Disposable {
   private runtimeState: RuntimeState = 'stopped'
   private selection: SidebarState['selection']
   private readonly sessionRoutes = new Set<{ dispose(): void }>()
+  private promptGeneration = 0
+  private disposed = false
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.runtime = new HarnessRuntime({
@@ -42,11 +44,11 @@ class ExtensionApp implements vscode.Disposable {
       context.extensionMode === vscode.ExtensionMode.Development,
     )
 
-    this.runtime.onStateChange(({ state, message }) => {
+    this.subscriptions.push(this.runtime.onStateChange(({ state, message }) => {
       this.runtimeState = state
       this.sidebar.post({ type: 'state', state: this.getSidebarState() })
       if (message !== undefined) this.sidebar.post({ type: 'error', message })
-    })
+    }))
     this.registerSessionRoute(this.activeSessionId)
   }
 
@@ -63,6 +65,7 @@ class ExtensionApp implements vscode.Disposable {
   }
 
   async submit(prompt: string, includeSelection: boolean): Promise<void> {
+    const generation = ++this.promptGeneration
     const editor = includeSelection ? vscode.window.activeTextEditor : undefined
     const configuration = vscode.workspace.getConfiguration('deepseekHarness')
     const maxCharacters = configuration.get<number>('maxSelectionCharacters', 32_000)
@@ -71,19 +74,36 @@ class ExtensionApp implements vscode.Disposable {
 
     try {
       if (this.runtimeState !== 'ready') await this.runtime.start(await this.runtimeOptions())
+      if (generation !== this.promptGeneration) return
       await this.runtime.prompt(this.activeSessionId, contentBlocks)
+      if (generation !== this.promptGeneration) return
       this.sidebar.post({ type: 'accepted', sessionId: this.activeSessionId })
+    } catch (error) {
+      if (generation === this.promptGeneration) this.postError(error)
+    }
+  }
+
+  async stopRuntime(): Promise<void> {
+    this.promptGeneration += 1
+    try {
+      await this.runtime.stop()
     } catch (error) {
       this.postError(error)
     }
   }
 
   dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
     for (const subscription of this.subscriptions.splice(0)) subscription.dispose()
     for (const route of this.sessionRoutes) route.dispose()
     this.sessionRoutes.clear()
     this.sidebar.dispose()
-    void this.runtime.dispose()
+  }
+
+  async shutdown(): Promise<void> {
+    this.dispose()
+    await this.runtime.dispose()
   }
 
   private async handleMessage(message: SidebarMessage): Promise<void> {
@@ -108,6 +128,9 @@ class ExtensionApp implements vscode.Disposable {
         return
       case 'submit':
         await this.submit(message.prompt, message.includeSelection)
+        return
+      case 'stopRuntime':
+        await this.stopRuntime()
         return
       case 'newSession':
         this.newSession()
@@ -481,13 +504,15 @@ class ExtensionApp implements vscode.Disposable {
   }
 }
 
+let activeApp: ExtensionApp | undefined
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
 export function activate(context: vscode.ExtensionContext): void {
   const app = new ExtensionApp(context)
-  context.subscriptions.push(app)
+  activeApp = app
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('dsh.sidebar', app.sidebar, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -503,4 +528,8 @@ export function activate(context: vscode.ExtensionContext): void {
   )
 }
 
-export function deactivate(): void {}
+export async function deactivate(): Promise<void> {
+  const app = activeApp
+  activeApp = undefined
+  if (app !== undefined) await app.shutdown()
+}

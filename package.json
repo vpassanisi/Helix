@@ -1,7 +1,7 @@
 {
   "name": "deepseek-harness-vscode",
-  "displayName": "DeepSeek Harness",
-  "description": "A VS Code sidebar Webview UI for DeepSeek Harness.",
+  "displayName": "DeepBlue",
+  "description": "A VS Code sidebar Webview UI for DeepBlue.",
   "version": "0.0.1",
   "publisher": "local",
   "license": "MIT",
@@ -23,7 +23,7 @@
       "activitybar": [
         {
           "id": "dsh",
-          "title": "DeepSeek",
+          "title": "DeepBlue",
           "icon": "media/dsh.svg"
         }
       ]
@@ -33,26 +33,26 @@
         {
           "type": "webview",
           "id": "dsh.sidebar",
-          "name": "Harness"
+          "name": "DeepBlue"
         }
       ]
     },
     "commands": [
       {
         "command": "dsh.openSidebar",
-        "title": "DeepSeek Harness: Open Sidebar"
+        "title": "DeepBlue: Open Sidebar"
       },
       {
         "command": "dsh.newSession",
-        "title": "DeepSeek Harness: New Session"
+        "title": "DeepBlue: New Session"
       },
       {
         "command": "dsh.askSelection",
-        "title": "DeepSeek Harness: Ask About Selection"
+        "title": "DeepBlue: Ask About Selection"
       }
     ],
     "configuration": {
-      "title": "DeepSeek Harness",
+      "title": "DeepBlue",
       "properties": {
         "deepseekHarness.provider": {
           "type": "string",

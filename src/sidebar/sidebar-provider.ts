@@ -17,6 +17,7 @@ export type SidebarMessage =
     }
   | { type: 'submit'; prompt: string; includeSelection: boolean }
   | { type: 'newSession' }
+  | { type: 'stopRuntime' }
   | { type: 'refreshModels' }
   | { type: 'selectModel'; model: string; contextWindow?: number }
 
@@ -180,6 +181,7 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
   return type === 'ready' ||
     type === 'openSettings' ||
     type === 'newSession' ||
+    type === 'stopRuntime' ||
     type === 'refreshModels'
 }
 
@@ -231,7 +233,7 @@ function getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   <style>body { color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); padding: 16px; } code { color: var(--vscode-errorForeground); }</style>
 </head>
 <body>
-  <strong>DeepSeek Harness UI is not built.</strong>
+  <strong>DeepBlue UI is not built.</strong>
   <p>Run <code>npm run compile</code>, then reload the Extension Development Host.</p>
   <small>${escapeHtml(message)}</small>
 </body>

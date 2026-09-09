@@ -9,7 +9,7 @@ The goal is to provide a Codex style workflow with first class support for local
 
 **Disclaimer**
 
-This is currently a quick and dirty proof of concept. Most of the code is AI generated, with guidance and testing provided during development. The code quality is likely rough, and the core harness, DeepSeek Harness, is still in alpha.
+This is currently a quick and dirty proof of concept. Most of the code is AI generated, with guidance and testing provided during development. The code quality is likely rough, and the core DeepBlue runtime is still in alpha.
 --end of text written by Vinny--
 
 --start of AI generated text--
@@ -20,7 +20,7 @@ This is currently a quick and dirty proof of concept. Most of the code is AI gen
 3. Run `npm run compile` (builds the Svelte Webview and extension host).
 4. Open this folder in VS Code.
 5. Press `F5` to launch the Extension Development Host.
-6. Open the DeepSeek activity bar view.
+6. Open the DeepBlue activity bar view.
 
 ## Fast UI iteration
 

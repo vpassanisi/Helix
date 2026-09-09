@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte'
   import {
     ArrowLeft,
+    ArrowRight,
     Check,
     ChevronDown,
     Code2,
@@ -11,7 +12,7 @@
     Server,
     Send,
     Settings2,
-    SquareTerminal,
+    Square,
     Trash2,
     Wrench,
     X,
@@ -83,6 +84,7 @@
   let selectionAttached = $state(true)
   let messages = $state<ChatMessage[]>([])
   let prompt = $state('')
+  let isGenerating = $state(false)
   let showSettings = $state(false)
   let settings = $state<SidebarSettings | undefined>()
   let provider = $state('')
@@ -104,6 +106,7 @@
   let nextMessageId = 1
   let transcriptElement = $state<HTMLDivElement>()
   let promptElement = $state<HTMLTextAreaElement>()
+  let modelPickerElement = $state<HTMLDivElement>()
   let streamFrame: number | undefined
   let streamQueue: StreamUpdate[] = []
   let streamedSteps: Record<string, boolean> = {}
@@ -128,6 +131,7 @@
     if (message.type === 'state') {
       activeSessionId = message.state.activeSessionId
       runtimeState = message.state.runtimeState
+      if (runtimeState === 'stopped' || runtimeState === 'error') isGenerating = false
       selection = message.state.selection
       selectionAttached = true
       if (runtimeState === 'ready' && settingsRestarting) {
@@ -170,6 +174,7 @@
       } else if (contextWindowOverride === undefined) {
         contextWindowTokens = undefined
       }
+      void tick().then(refreshModelPicker)
       return
     }
 
@@ -182,6 +187,7 @@
     }
 
     if (message.type === 'error') {
+      isGenerating = false
       settingsRestarting = false
       modelChanging = false
       if (showSettings) {
@@ -192,6 +198,7 @@
     }
 
     if (message.type === 'accepted' && message.sessionId === activeSessionId) {
+      isGenerating = true
       runtimeState = 'starting'
     }
   }
@@ -226,6 +233,7 @@
     streamQueue = []
     streamedSteps = {}
     messages = []
+    isGenerating = false
     contextUsedTokens = undefined
     contextWindowTokens = contextWindowOverride
   }
@@ -251,11 +259,17 @@
   }
 
   function submit(): void {
+    if (isGenerating) {
+      post({ type: 'stopRuntime' })
+      return
+    }
+
     const text = prompt.trim()
     if (!text) return
 
     const attachedSelection = selectionAttached ? selection : undefined
     appendMessage('user', 'You', text, attachedSelection)
+    isGenerating = true
     post({ type: 'submit', prompt: text, includeSelection: attachedSelection !== undefined })
     prompt = ''
     selectionAttached = true
@@ -276,7 +290,8 @@
   }
 
   function handleModelChange(event: Event): void {
-    const nextModel = (event.currentTarget as HTMLSelectElement).value
+    const detail = (event as CustomEvent<{ value?: string }>).detail
+    const nextModel = typeof detail?.value === 'string' ? detail.value : ''
     if (!nextModel) return
 
     const selected = models.find((option) => option.id === nextModel)
@@ -314,7 +329,7 @@
         next.push({
           id: nextMessageId++,
           role: update.role,
-          label: update.role === 'reasoning' ? 'Thinking' : 'DeepSeek',
+          label: update.role === 'reasoning' ? 'Thinking' : 'DeepBlue',
           text: update.text,
         })
       }
@@ -389,6 +404,19 @@
     if (modelsError) return modelsError
     const selected = models.find((option) => option.id === model)
     return selected === undefined ? `Model: ${model || 'not selected'}` : `Model: ${modelOptionLabel(selected)}`
+  }
+
+  function selectedModelLabel(): string {
+    if (modelsLoading) return 'Loading models…'
+    const selected = models.find((option) => option.id === model)
+    if (selected !== undefined) return modelOptionLabel(selected)
+    if (model) return model
+    return models.length === 0 ? 'No models found' : 'Select model'
+  }
+
+  function refreshModelPicker(): void {
+    const picker = modelPickerElement as (HTMLDivElement & { refresh?: () => void }) | undefined
+    picker?.refresh?.()
   }
 
   function appendAssistantBlocks(content: unknown): void {
@@ -515,7 +543,13 @@
     const params = isRecord(notification.params) ? notification.params : {}
 
     if (notification.method === 'session.status') {
-      runtimeState = params.status === 'running' ? 'starting' : 'ready'
+      if (params.status === 'running') {
+        isGenerating = true
+        runtimeState = 'starting'
+      } else {
+        isGenerating = false
+        runtimeState = 'ready'
+      }
       return
     }
 
@@ -681,10 +715,9 @@
 
 <main class="shell">
   <header class="masthead">
-    <div class="eyebrow"><SquareTerminal size={11} strokeWidth={1.7} /> local agent runtime</div>
     <div class="title-row">
-      <div>
-        <h1>DeepSeek Harness</h1>
+      <div class="title-copy">
+        <h1>DeepBlue</h1>
         <div class="runtime-state">
           <span class:ready={runtimeState === 'ready'} class:starting={runtimeState === 'starting'} class:error={runtimeState === 'error'} class="status-dot"></span>
           {runtimeLabel(runtimeState)}
@@ -844,28 +877,21 @@
   {:else}
     <section class="chat-view">
       <div class="transcript" bind:this={transcriptElement} aria-live="polite">
-        {#if messages.length === 0}
-          <div class="empty-state">
-            <div class="empty-mark"><Code2 size={24} strokeWidth={1.4} /></div>
-            <strong>Ready when you are.</strong>
-            <p>Ask the Harness runtime about your code, or highlight a selection before sending a prompt.</p>
-          </div>
-        {/if}
-
         {#each messages as message (message.id)}
           <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'}>
             {#if message.role === 'reasoning'}
               <details class="thinking">
-                <summary><span>{message.label}</span><ChevronDown size={13} strokeWidth={1.8} /></summary>
+                <summary><span>{message.label}</span><ChevronDown class="thinking-chevron" size={13} strokeWidth={1.8} /></summary>
                 <div class="message-body">{message.text}</div>
               </details>
             {:else if message.role === 'tool' && message.tool}
-              <details class="tool-details">
+              <details class:completed={message.tool.status === 'completed'} class:failed={message.tool.status === 'error'} class="tool-details">
                 <summary>
                   <Wrench size={13} strokeWidth={1.7} />
                   <span class="tool-name">{message.tool.name}</span>
-                  <ChevronDown class="tool-chevron" size={13} strokeWidth={1.8} />
+                  <ArrowRight class="tool-flow-arrow" size={12} strokeWidth={1.7} />
                   <span class:error={message.tool.status === 'error'} class:running={message.tool.status === 'running'} class="tool-status">{toolStatusLabel(message.tool.status)}</span>
+                  <ChevronDown class="tool-chevron" size={13} strokeWidth={1.8} />
                 </summary>
                 <div class="tool-panel">
                   <div class="tool-section">
@@ -893,7 +919,6 @@
                 </div>
               </details>
             {:else}
-              <div class="message-label">{message.label}</div>
               {#if message.role === 'user' && message.context}
                 <div class="message-context" title={`${message.context.fileLabel} · ${selectionLineLabel(message.context)}`}>
                   <Code2 size={12} strokeWidth={1.7} />
@@ -917,7 +942,12 @@
             <Code2 size={14} strokeWidth={1.7} />
             <div class="context-copy">
               <div class="context-file">{selection.fileLabel}</div>
-              <div class="context-range">{selection.languageId || 'plain text'} · {selectionLineLabel(selection)}</div>
+              <span class="context-separator" aria-hidden="true">·</span>
+              <div class="context-range">
+                {selectionLineLabel(selection)}
+                <span class="context-separator" aria-hidden="true">·</span>
+                {selection.languageId || 'plain text'}
+              </div>
             </div>
             <button class="btn remove-context" data-variant="ghost" data-size="icon" type="button" aria-label="Remove editor context" title="Remove editor context" onclick={() => selectionAttached = false}>
               <X size={14} strokeWidth={1.8} />
@@ -925,27 +955,61 @@
           </div>
         {/if}
         <div class="composer-box">
-          <textarea bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="3"></textarea>
+          <textarea bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
           <div class="composer-footer">
-            <div class="model-picker-wrap" data-tooltip={modelPickerLabel()} data-side="top">
-              <select
+            <div class="model-picker-wrap">
+              <div
+                bind:this={modelPickerElement}
                 class="select model-picker"
-                aria-label="Model"
-                title={modelPickerLabel()}
-                bind:value={model}
+                data-placeholder="Select model"
                 onchange={handleModelChange}
-                disabled={modelsLoading || modelChanging}
               >
-                {#if model && !models.some((option) => option.id === model)}
-                  <option value={model}>{model}</option>
-                {/if}
-                {#if models.length === 0 && !model}
-                  <option value="" disabled>{modelsLoading ? 'Loading models…' : 'No models found'}</option>
-                {/if}
-                {#each models as option (option.id)}
-                  <option value={option.id}>{modelOptionLabel(option)}</option>
-                {/each}
-              </select>
+                <button
+                  id="model-picker-trigger"
+                  class="btn"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-controls="model-picker-listbox"
+                  aria-label="Model"
+                  title={modelPickerLabel()}
+                  disabled={modelsLoading || modelChanging}
+                >
+                  <span>{selectedModelLabel()}</span>
+                  <ChevronDown size={13} strokeWidth={1.7} />
+                </button>
+                <div
+                  id="model-picker-popover"
+                  data-popover
+                  data-side="top"
+                  data-align="end"
+                  aria-hidden="true"
+                >
+                  <div
+                    id="model-picker-listbox"
+                    class="model-picker-listbox"
+                    role="listbox"
+                    aria-orientation="vertical"
+                    aria-labelledby="model-picker-trigger"
+                  >
+                    {#if models.length === 0}
+                      <div class="model-picker-status" role="status">
+                        {modelsLoading ? 'Loading models…' : modelsError || 'No models found'}
+                      </div>
+                    {:else}
+                      {#if model && !models.some((option) => option.id === model)}
+                        <div role="option" data-value={model} aria-selected="true">{model}</div>
+                      {/if}
+                      {#each models as option (option.id)}
+                        <div role="option" data-value={option.id} aria-selected={model === option.id ? 'true' : undefined}>
+                          {modelOptionLabel(option)}
+                        </div>
+                      {/each}
+                    {/if}
+                  </div>
+                </div>
+                <input type="hidden" name="model" value={model} />
+              </div>
               <button class="btn model-refresh" data-variant="ghost" data-size="icon" type="button" aria-label="Refresh models" title="Refresh models" onclick={refreshModels} disabled={modelsLoading || modelChanging}>
                 {#if modelsLoading}<LoaderCircle class="spin" size={13} strokeWidth={1.8} />{:else}<RefreshCw size={13} strokeWidth={1.8} />{/if}
               </button>
@@ -960,8 +1024,8 @@
               <span class="context-meter-ring" style={`--context-progress: ${contextProgress()}%`}>
               </span>
             </div>
-            <button class="btn send" data-size="icon-sm" type="button" aria-label="Send message" title="Send message" onclick={submit} disabled={!prompt.trim()}>
-              <Send size={14} strokeWidth={1.8} />
+            <button class="btn send" data-size="icon-sm" type="button" aria-label={isGenerating ? 'Stop generation' : 'Send message'} title={isGenerating ? 'Stop generation' : 'Send message'} onclick={submit} disabled={!isGenerating && !prompt.trim()}>
+              {#if isGenerating}<Square size={13} strokeWidth={1.8} />{:else}<Send size={14} strokeWidth={1.8} />{/if}
             </button>
           </div>
         </div>

@@ -116,7 +116,7 @@ export class HarnessRuntime {
 
   async prompt(sessionId: string, contentBlocks: ContentBlock[]): Promise<string> {
     if (this.client === undefined) {
-      throw new Error('DeepSeek Harness runtime is not running')
+      throw new Error('DeepBlue runtime is not running')
     }
 
     return this.client.prompt(sessionId, contentBlocks)

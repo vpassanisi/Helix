@@ -6,11 +6,15 @@
     Check,
     ChevronDown,
     Code2,
+    Eye,
+    FileDiff,
+    FolderPen,
     LoaderCircle,
     Plus,
     RefreshCw,
     Server,
     Send,
+    ShieldAlert,
     Settings2,
     Square,
     Trash2,
@@ -22,8 +26,10 @@
     HarnessEvent,
     HarnessNotification,
     IncomingMessage,
+    CodeChange,
     RuntimeState,
     SelectionMetadata,
+    SandboxMode,
     SidebarMessage,
     SidebarMcpEnvironment,
     SidebarMcpServer,
@@ -54,6 +60,14 @@
     meta?: string
     error?: string
     status: 'running' | 'completed' | 'error'
+    approval?: ApprovalView
+  }
+
+  interface ApprovalView {
+    requestId: string
+    reason?: string
+    status: 'pending' | 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+    decisionPending?: boolean
   }
 
   interface StreamUpdate {
@@ -91,6 +105,7 @@
   let model = $state('')
   let baseUrl = $state('')
   let apiKey = $state('')
+  let sandboxMode = $state<SandboxMode>('workspace-write')
   let clearApiKey = $state(false)
   let settingsStatus = $state('')
   let settingsStatusTone = $state<'success' | 'warning' | ''>('')
@@ -103,19 +118,29 @@
   let modelsLoading = $state(false)
   let modelsError = $state('')
   let mcpServers = $state<McpServerDraft[]>([])
+  let codeChanges = $state<CodeChange[]>([])
+  let changesOpen = $state(false)
+  let changesActive = $state(false)
+  let hostChangesStarted = false
   let nextMessageId = 1
   let transcriptElement = $state<HTMLDivElement>()
   let promptElement = $state<HTMLTextAreaElement>()
   let modelPickerElement = $state<HTMLDivElement>()
+  let sandboxPickerElement = $state<HTMLDivElement>()
   let streamFrame: number | undefined
   let streamQueue: StreamUpdate[] = []
   let streamedSteps: Record<string, boolean> = {}
+  let toolCallsByStep: Record<string, string> = {}
+  let pendingCodeChanges: Record<string, CodeChange> = {}
+  let pendingApprovalRequests: Record<string, Extract<IncomingMessage, { type: 'approvalRequest' }> & { approval: ApprovalView }> = {}
+  let toolDerivedPaths = new Set<string>()
 
   onMount(() => {
     const listener = (event: MessageEvent<IncomingMessage>) => handleMessage(event.data)
     window.addEventListener('message', listener)
     modelsLoading = true
     vscode.postMessage({ type: 'ready' })
+    void tick().then(initializeSandboxPicker)
 
     return () => {
       window.removeEventListener('message', listener)
@@ -151,6 +176,27 @@
       return
     }
 
+    if (message.type === 'codeChanges') {
+      if (message.sessionId !== activeSessionId) return
+      if (message.active && !hostChangesStarted) {
+        hostChangesStarted = true
+        codeChanges = []
+        changesOpen = false
+        pendingCodeChanges = {}
+        toolDerivedPaths = new Set()
+      }
+      if (message.changes.length > 0) codeChanges = mergeHostChanges(codeChanges, message.changes)
+      changesActive = message.active
+      if (codeChanges.length > 0 && !changesOpen) {
+        changesOpen = true
+      }
+      if (!message.active) {
+        hostChangesStarted = false
+        void scrollToBottom()
+      }
+      return
+    }
+
     if (message.type === 'settings' || message.type === 'settingsSaved') {
       applySettings(message.settings)
       if (message.type === 'settingsSaved') {
@@ -175,6 +221,18 @@
         contextWindowTokens = undefined
       }
       void tick().then(refreshModelPicker)
+      return
+    }
+
+    if (message.type === 'approvalRequest') {
+      if (message.sessionId !== activeSessionId) return
+      handleApprovalRequest(message)
+      return
+    }
+
+    if (message.type === 'approvalResolved') {
+      if (message.sessionId !== activeSessionId) return
+      updateToolApproval(message.requestId, message.outcome)
       return
     }
 
@@ -211,6 +269,7 @@
     contextWindowOverride = selected?.contextWindow ?? (next.contextWindow > 0 ? next.contextWindow : undefined)
     contextWindowTokens = contextWindowOverride
     baseUrl = next.baseUrl
+    sandboxMode = next.sandboxMode
     apiKey = ''
     clearApiKey = false
     mcpServers = next.mcpServers.map(toMcpServerDraft)
@@ -232,7 +291,15 @@
     streamFrame = undefined
     streamQueue = []
     streamedSteps = {}
+    toolCallsByStep = {}
+    pendingCodeChanges = {}
+    toolDerivedPaths = new Set()
+    pendingApprovalRequests = {}
     messages = []
+    codeChanges = []
+    changesOpen = false
+    changesActive = false
+    hostChangesStarted = false
     isGenerating = false
     contextUsedTokens = undefined
     contextWindowTokens = contextWindowOverride
@@ -260,7 +327,7 @@
 
   function submit(): void {
     if (isGenerating) {
-      post({ type: 'stopRuntime' })
+      post({ type: 'cancelTurn' })
       return
     }
 
@@ -303,6 +370,20 @@
     post({ type: 'selectModel', model: nextModel, contextWindow: selectedContextWindow })
   }
 
+  function sandboxModeLabel(mode: SandboxMode = sandboxMode): string {
+    if (mode === 'read-only') return 'Read-only'
+    if (mode === 'danger-full-access') return 'Danger full access'
+    return 'Workspace write'
+  }
+
+  function handleSandboxModeChange(event: Event): void {
+    const detail = (event as CustomEvent<{ value?: string }>).detail
+    const nextMode = detail?.value
+    if (nextMode !== 'read-only' && nextMode !== 'workspace-write' && nextMode !== 'danger-full-access') return
+    sandboxMode = nextMode
+    post({ type: 'setSandboxMode', sandboxMode: nextMode })
+  }
+
   function appendMessage(role: ChatMessage['role'], label: string, text: string, context?: SelectionMetadata): void {
     messages = [...messages, { id: nextMessageId++, role, label, text, context }]
     void scrollToBottom()
@@ -329,7 +410,7 @@
         next.push({
           id: nextMessageId++,
           role: update.role,
-          label: update.role === 'reasoning' ? 'Thinking' : 'DeepBlue',
+          label: update.role === 'reasoning' ? 'Thinking' : 'Helix',
           text: update.text,
         })
       }
@@ -387,6 +468,77 @@
     return new Intl.NumberFormat().format(Math.round(value))
   }
 
+  function changeKindSymbol(kind: CodeChange['kind']): string {
+    if (kind === 'created') return 'A'
+    if (kind === 'deleted') return 'D'
+    if (kind === 'renamed') return 'R'
+    return 'M'
+  }
+
+  function changeKindLabel(kind: CodeChange['kind']): string {
+    if (kind === 'created') return 'created'
+    if (kind === 'deleted') return 'deleted'
+    if (kind === 'renamed') return 'renamed'
+    return 'modified'
+  }
+
+  function changeSummaryLabel(): string {
+    const fileLabel = `${codeChanges.length} ${codeChanges.length === 1 ? 'file' : 'files'}`
+    const additions = codeChanges.reduce((total, change) => total + change.additions, 0)
+    const deletions = codeChanges.reduce((total, change) => total + change.deletions, 0)
+    if (additions === 0 && deletions === 0) return `${fileLabel} changed`
+    return `${fileLabel} · +${additions} −${deletions}`
+  }
+
+  function mergeHostChanges(current: CodeChange[], incoming: CodeChange[]): CodeChange[] {
+    const merged = new Map(current.map((change) => [change.path, change]))
+    for (const change of incoming) {
+      const existing = merged.get(change.path)
+      if (existing === undefined) {
+        merged.set(change.path, change)
+        continue
+      }
+      merged.set(change.path, {
+        ...existing,
+        kind: mergeChangeKind(existing.kind, change.kind),
+        additions: Math.max(existing.additions, change.additions),
+        deletions: Math.max(existing.deletions, change.deletions),
+        oldPath: change.oldPath ?? existing.oldPath,
+      })
+    }
+    return [...merged.values()].sort((left, right) => left.path.localeCompare(right.path))
+  }
+
+  function mergeChangeKind(existing: CodeChange['kind'], next: CodeChange['kind']): CodeChange['kind'] {
+    if (next === 'renamed' || next === 'deleted') return next
+    if (existing === 'created' || existing === 'renamed') return existing
+    return next
+  }
+
+  function recordToolChange(change: CodeChange): void {
+    const existing = codeChanges.find((current) => current.path === change.path)
+    const alreadyDerived = toolDerivedPaths.has(change.path)
+    const nextChange: CodeChange = existing === undefined
+      ? change
+      : {
+          ...existing,
+          kind: mergeChangeKind(existing.kind, change.kind),
+          additions: alreadyDerived
+            ? existing.additions + change.additions
+            : Math.max(existing.additions, change.additions),
+          deletions: alreadyDerived
+            ? existing.deletions + change.deletions
+            : Math.max(existing.deletions, change.deletions),
+        }
+
+    toolDerivedPaths.add(change.path)
+    codeChanges = existing === undefined
+      ? [...codeChanges, nextChange].sort((left, right) => left.path.localeCompare(right.path))
+      : codeChanges.map((current) => current.path === change.path ? nextChange : current)
+    changesActive = true
+    changesOpen = true
+  }
+
   function contextMeterLabel(): string {
     if (contextWindowTokens === undefined) return 'Context window unavailable'
     if (contextUsedTokens === undefined) return `Context window: ${formatTokenCount(contextWindowTokens)} tokens`
@@ -419,6 +571,21 @@
     picker?.refresh?.()
   }
 
+  function initializeSandboxPicker(): void {
+    const basecoat = (window as Window & {
+      basecoat?: {
+        init?: (component: string) => void
+      }
+    }).basecoat
+    basecoat?.init?.('select')
+    refreshSandboxPicker()
+  }
+
+  function refreshSandboxPicker(): void {
+    const picker = sandboxPickerElement as (HTMLDivElement & { refresh?: () => void }) | undefined
+    picker?.refresh?.()
+  }
+
   function appendAssistantBlocks(content: unknown): void {
     if (!Array.isArray(content)) return
     for (const block of content) {
@@ -440,6 +607,67 @@
       messages = next
     }
     void scrollToBottom()
+  }
+
+  function handleApprovalRequest(message: Extract<IncomingMessage, { type: 'approvalRequest' }>): void {
+    const approval: ApprovalView = {
+      requestId: message.requestId,
+      reason: message.reason,
+      status: 'pending',
+    }
+    pendingApprovalRequests[message.requestId] = { ...message, approval }
+    const callId = message.toolCallId ?? `approval-${message.requestId}`
+    const index = messages.findIndex((entry) => entry.tool?.callId === callId)
+    if (index === -1) {
+      upsertToolCall({
+        callId,
+        name: message.toolName,
+        arguments: '',
+        status: 'running',
+        approval,
+      })
+      return
+    }
+
+    const next = [...messages]
+    const tool = next[index].tool
+    if (!tool) return
+    next[index] = { ...next[index], tool: { ...tool, approval } }
+    messages = next
+    void scrollToBottom()
+  }
+
+  function updateToolApproval(
+    requestId: string,
+    status: ApprovalView['status'],
+  ): void {
+    const index = messages.findIndex((entry) => entry.tool?.approval?.requestId === requestId)
+    if (index === -1) return
+    const next = [...messages]
+    const tool = next[index].tool
+    if (!tool?.approval) return
+    next[index] = {
+      ...next[index],
+      tool: { ...tool, approval: { ...tool.approval, status, decisionPending: false } },
+    }
+    messages = next
+    void scrollToBottom()
+  }
+
+  function decideApproval(tool: ToolCallView, outcome: 'allowed-once' | 'rejected'): void {
+    if (tool.approval?.status !== 'pending' || tool.approval.decisionPending) return
+    const index = messages.findIndex((entry) => entry.tool?.callId === tool.callId)
+    if (index === -1) return
+    const next = [...messages]
+    const current = next[index].tool
+    if (!current?.approval) return
+    const requestId = current.approval.requestId
+    next[index] = {
+      ...next[index],
+      tool: { ...current, approval: { ...current.approval, decisionPending: true } },
+    }
+    messages = next
+    post({ type: 'approvalDecision', sessionId: activeSessionId, requestId, outcome })
   }
 
   function updateToolResult(callId: string, result: string, error?: string, meta?: string): void {
@@ -474,7 +702,17 @@
     void scrollToBottom()
   }
 
-  function toolResultCallId(data: Record<string, unknown>, message: Record<string, unknown>): string {
+  function toolStepKey(sessionId: string | undefined, data: Record<string, unknown>): string | undefined {
+    const response = responseKey(data)
+    if (!response) return undefined
+    return `${sessionId ?? activeSessionId}:${response}`
+  }
+
+  function toolResultCallId(
+    data: Record<string, unknown>,
+    message: Record<string, unknown>,
+    sessionId: string | undefined,
+  ): string {
     const direct = stringValue(data.callId)
     if (direct) return direct
 
@@ -490,7 +728,35 @@
       }
     }
 
+    const stepKey = toolStepKey(sessionId, data)
+    if (stepKey !== undefined && toolCallsByStep[stepKey] !== undefined) {
+      return toolCallsByStep[stepKey]
+    }
+
     return responseKey(data) || `tool-result-${nextMessageId}`
+  }
+
+  function pendingToolKey(
+    data: Record<string, unknown>,
+    message: Record<string, unknown>,
+    sessionId: string | undefined,
+  ): string | undefined {
+    const direct = stringValue(data.callId)
+    if (direct) return direct
+
+    const source = isRecord(message.source) ? message.source : undefined
+    const sourceCallId = source ? stringValue(source.callId) : undefined
+    if (sourceCallId) return sourceCallId
+
+    if (Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (!isRecord(block)) continue
+        const blockCallId = stringValue(block.toolCallId)
+        if (blockCallId) return blockCallId
+      }
+    }
+
+    return toolStepKey(sessionId, data)
   }
 
   function toolResultText(value: unknown): string {
@@ -531,10 +797,23 @@
     return typeof value === 'string' && value.length > 0 ? value : undefined
   }
 
-  function toolStatusLabel(status: ToolCallView['status']): string {
-    if (status === 'running') return 'running'
-    if (status === 'error') return 'failed'
+  function toolStatusLabel(tool: ToolCallView): string {
+    if (tool.approval?.status === 'pending') return tool.approval.decisionPending ? 'sending' : 'approval'
+    if (tool.approval?.status === 'allowed-once') return 'allowed once'
+    if (tool.approval?.status === 'rejected') return 'denied'
+    if (tool.approval?.status === 'cancelled') return 'cancelled'
+    if (tool.approval?.status === 'unavailable') return 'unavailable'
+    if (tool.status === 'running') return 'running'
+    if (tool.status === 'error') return 'failed'
     return 'completed'
+  }
+
+  function approvalResultLabel(status: ApprovalView['status']): string {
+    if (status === 'allowed-once') return 'Allowed once'
+    if (status === 'rejected') return 'Denied'
+    if (status === 'cancelled') return 'Cancelled'
+    if (status === 'unavailable') return 'Unavailable'
+    return 'Approval required'
   }
 
   function handleNotification(value: unknown): void {
@@ -543,12 +822,17 @@
     const params = isRecord(notification.params) ? notification.params : {}
 
     if (notification.method === 'session.status') {
+      if (params.sessionId !== activeSessionId) return
       if (params.status === 'running') {
         isGenerating = true
         runtimeState = 'starting'
       } else {
         isGenerating = false
         runtimeState = 'ready'
+        if (codeChanges.length > 0) {
+          changesActive = false
+          void scrollToBottom()
+        }
       }
       return
     }
@@ -567,6 +851,7 @@
     const event = params.event as HarnessEvent
     const data = isRecord(event.data) ? event.data : {}
     const isRootSessionEvent = params.sessionId === activeSessionId
+    const sessionId = stringValue(params.sessionId)
 
     if (event.type === 'request/context') {
       if (isRootSessionEvent) updateContextWindow(data.contextWindow)
@@ -620,11 +905,24 @@
     }
 
     if (event.type === 'tool/call') {
+      const callId = stringValue(data.callId) ?? (responseKey(data) || `tool-call-${nextMessageId}`)
+      const stepKey = toolStepKey(sessionId, data)
+      if (stepKey !== undefined) toolCallsByStep[stepKey] = callId
+      const toolName = stringValue(data.name)
+      const toolArguments = parsePayload(data.arguments)
+      const plannedChange = toolName === undefined || toolArguments === undefined
+        ? undefined
+        : toolChange(toolName, toolArguments)
+      const pendingKey = stringValue(data.callId) ?? stepKey
+      if (plannedChange !== undefined && pendingKey !== undefined) {
+        pendingCodeChanges[pendingKey] = plannedChange
+      }
       upsertToolCall({
-        callId: stringValue(data.callId) ?? (responseKey(data) || `tool-call-${nextMessageId}`),
-        name: stringValue(data.name) ?? 'Tool call',
+        callId,
+        name: toolName ?? 'Tool call',
         arguments: typeof data.arguments === 'string' ? data.arguments : stringifyPayload(data.arguments),
         status: 'running',
+        approval: Object.values(pendingApprovalRequests).find((approval) => approval.toolCallId === callId)?.approval,
       })
       return
     }
@@ -636,7 +934,19 @@
         ? [stringValue(data.error.name), stringValue(data.error.code)].filter(Boolean).join(': ')
         : toolResultIsError(resultContent) ? 'Tool reported an error.' : undefined
       const meta = data.meta === undefined ? undefined : stringifyPayload(data.meta)
-      updateToolResult(toolResultCallId(data, resultMessage), toolResultText(resultContent), error || undefined, meta)
+      const callId = toolResultCallId(data, resultMessage, sessionId)
+      const pendingKey = pendingToolKey(data, resultMessage, sessionId)
+      const plannedChange = pendingKey === undefined ? undefined : pendingCodeChanges[pendingKey]
+      if (pendingKey !== undefined) delete pendingCodeChanges[pendingKey]
+      if (plannedChange !== undefined && !error) {
+        recordToolChange({
+          ...plannedChange,
+          kind: plannedChange.kind === 'modified' && /created file/i.test(toolResultText(resultContent))
+            ? 'created'
+            : plannedChange.kind,
+        })
+      }
+      updateToolResult(callId, toolResultText(resultContent), error || undefined, meta)
     }
   }
 
@@ -660,6 +970,7 @@
       baseUrl,
       apiKey,
       clearApiKey,
+      sandboxMode,
       mcpServers: mcpServers.map(toMcpServerMessage),
     })
   }
@@ -711,13 +1022,86 @@
   function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null
   }
+
+  function parsePayload(value: unknown): Record<string, unknown> | undefined {
+    if (isRecord(value)) return value
+    if (typeof value !== 'string') return undefined
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return isRecord(parsed) ? parsed : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  function toolChange(name: string, argumentsValue: Record<string, unknown>): CodeChange | undefined {
+    const normalizedName = name.toLowerCase()
+    const filePath = stringValue(argumentsValue.file_path) ?? stringValue(argumentsValue.filePath) ?? stringValue(argumentsValue.path)
+    if (filePath === undefined) return undefined
+
+    if (normalizedName === 'write' || /(?:^|[/_.])write$/.test(normalizedName) || /(?:^|__)write$/.test(normalizedName)) {
+      const content = textValue(argumentsValue.content)
+      if (content === undefined) return undefined
+      return { path: filePath, kind: 'modified', additions: countLines(content), deletions: 0 }
+    }
+
+    if (normalizedName === 'edit' || /(?:^|[/_.])edit$/.test(normalizedName) || /(?:^|__)edit$/.test(normalizedName)) {
+      const oldString = stringValue(argumentsValue.old_string) ?? stringValue(argumentsValue.oldString)
+      const newString = textValue(argumentsValue.new_string) ?? textValue(argumentsValue.newString)
+      if (oldString === undefined || newString === undefined) return undefined
+      return { path: filePath, kind: 'modified', additions: countLines(newString), deletions: countLines(oldString) }
+    }
+
+    if (!normalizedName.includes('str_replace_editor')) return undefined
+    const command = stringValue(argumentsValue.command)
+    if (command === 'create') {
+      const fileText = textValue(argumentsValue.file_text) ?? textValue(argumentsValue.fileText) ?? ''
+      return { path: filePath, kind: 'created', additions: countLines(fileText), deletions: 0 }
+    }
+    if (command === 'str_replace') {
+      const oldString = stringValue(argumentsValue.old_str) ?? stringValue(argumentsValue.oldStr)
+      const newString = textValue(argumentsValue.new_str) ?? textValue(argumentsValue.newStr) ?? ''
+      if (oldString === undefined) return undefined
+      return { path: filePath, kind: 'modified', additions: countLines(newString), deletions: countLines(oldString) }
+    }
+    if (command === 'insert') {
+      const newString = textValue(argumentsValue.new_str) ?? textValue(argumentsValue.newStr) ?? ''
+      return { path: filePath, kind: 'modified', additions: countLines(newString), deletions: 0 }
+    }
+    return undefined
+  }
+
+  function countLines(value: string): number {
+    return value.length === 0 ? 0 : value.split(/\r\n|\r|\n/).length
+  }
+
+  function textValue(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined
+  }
 </script>
+
+{#snippet changeRows()}
+  {#each codeChanges as change (change.path)}
+    <div class="change-row">
+      <span class={`change-kind ${change.kind}`} title={changeKindLabel(change.kind)}>{changeKindSymbol(change.kind)}</span>
+      <div class="change-file">
+        <span class="change-path" title={change.path}>{change.path}</span>
+        {#if change.oldPath}<small>from {change.oldPath}</small>{/if}
+      </div>
+      <span class="change-stats">
+        {#if change.additions > 0}<span class="change-additions">+{change.additions}</span>{/if}
+        {#if change.deletions > 0}<span class="change-deletions">−{change.deletions}</span>{/if}
+        {#if change.additions === 0 && change.deletions === 0}<span>{changeKindLabel(change.kind)}</span>{/if}
+      </span>
+    </div>
+  {/each}
+{/snippet}
 
 <main class="shell">
   <header class="masthead">
     <div class="title-row">
       <div class="title-copy">
-        <h1>DeepBlue</h1>
+        <h1>Helix</h1>
         <div class="runtime-state">
           <span class:ready={runtimeState === 'ready'} class:starting={runtimeState === 'starting'} class:error={runtimeState === 'error'} class="status-dot"></span>
           {runtimeLabel(runtimeState)}
@@ -769,8 +1153,8 @@
           </small>
         </div>
 
-        <fieldset class="mcp-settings">
-          <legend>MCP servers</legend>
+        <section class="mcp-settings" aria-labelledby="mcp-settings-title">
+          <h3 id="mcp-settings-title">MCP servers</h3>
           <div class="mcp-settings-heading">
             <div>
               <p>Attach local Docker or HTTP tool servers to the DSH runtime.</p>
@@ -861,7 +1245,7 @@
               {/each}
             </div>
           {/if}
-        </fieldset>
+        </section>
 
         <div class="settings-footer">
           <button class="btn clear-key" data-variant="ghost" type="button" onclick={clearStoredKey} disabled={!settings?.apiKeyConfigured && !apiKey}>
@@ -885,15 +1269,33 @@
                 <div class="message-body">{message.text}</div>
               </details>
             {:else if message.role === 'tool' && message.tool}
-              <details class:completed={message.tool.status === 'completed'} class:failed={message.tool.status === 'error'} class="tool-details">
+              <details open={message.tool.approval?.status === 'pending'} class:completed={message.tool.status === 'completed'} class:failed={message.tool.status === 'error'} class="tool-details">
                 <summary>
                   <Wrench size={13} strokeWidth={1.7} />
                   <span class="tool-name">{message.tool.name}</span>
                   <ArrowRight class="tool-flow-arrow" size={12} strokeWidth={1.7} />
-                  <span class:error={message.tool.status === 'error'} class:running={message.tool.status === 'running'} class="tool-status">{toolStatusLabel(message.tool.status)}</span>
+                  <span class:error={message.tool.status === 'error' || message.tool.approval?.status === 'rejected'} class:running={message.tool.status === 'running' && message.tool.approval?.status === undefined} class="tool-status">{toolStatusLabel(message.tool)}</span>
                   <ChevronDown class="tool-chevron" size={13} strokeWidth={1.8} />
                 </summary>
                 <div class="tool-panel">
+                  {#if message.tool.approval}
+                    <div class="tool-section tool-approval" class:pending={message.tool.approval.status === 'pending'}>
+                      <div class="tool-section-label">Permission</div>
+                      {#if message.tool.approval.reason}<div class="tool-approval-reason">{message.tool.approval.reason}</div>{/if}
+                      {#if message.tool.approval.status === 'pending'}
+                        <div class="tool-approval-actions">
+                          <button class="btn" data-variant="outline" data-size="xs" type="button" onclick={() => decideApproval(message.tool!, 'allowed-once')} disabled={message.tool.approval.decisionPending}>
+                            <Check size={12} strokeWidth={1.8} /> Allow once
+                          </button>
+                          <button class="btn" data-variant="destructive" data-size="xs" type="button" onclick={() => decideApproval(message.tool!, 'rejected')} disabled={message.tool.approval.decisionPending}>
+                            <X size={12} strokeWidth={1.8} /> Deny
+                          </button>
+                        </div>
+                      {:else}
+                        <div class="tool-approval-result">{approvalResultLabel(message.tool.approval.status)}</div>
+                      {/if}
+                    </div>
+                  {/if}
                   <div class="tool-section">
                     <div class="tool-section-label">Arguments</div>
                     <pre class="tool-payload">{formatToolArguments(message.tool.arguments)}</pre>
@@ -934,6 +1336,17 @@
             {/if}
           </article>
         {/each}
+        {#if codeChanges.length > 0 && !isGenerating}
+          <section class="changes-summary-card" aria-label="Agent changes summary">
+            <div class="changes-summary-header">
+              <span class="changes-title"><FileDiff size={13} strokeWidth={1.8} /> <span>Changes</span><span class="changes-count">{codeChanges.length}</span></span>
+              <span class="changes-summary">{changeSummaryLabel()}</span>
+            </div>
+            <div class="changes-list changes-summary-list">
+              {@render changeRows()}
+            </div>
+          </section>
+        {/if}
       </div>
 
       <div class="composer">
@@ -954,9 +1367,79 @@
             </button>
           </div>
         {/if}
+        {#if codeChanges.length > 0 && isGenerating}
+          <section class:open={changesOpen} class="changes-drawer" aria-label="Agent changes">
+            <button class="btn changes-toggle" data-variant="ghost" type="button" aria-expanded={changesOpen} onclick={() => { changesOpen = !changesOpen }}>
+              <span class="changes-title"><FileDiff size={13} strokeWidth={1.8} /> <span>Changes</span><span class="changes-count">{codeChanges.length}</span></span>
+              <span class="changes-summary">{changesActive ? 'Updating…' : changeSummaryLabel()}</span>
+              <ChevronDown class="changes-chevron" size={13} strokeWidth={1.8} />
+            </button>
+            <div class="changes-panel">
+              <div class="changes-panel-inner">
+                <div class="changes-list">
+                  {@render changeRows()}
+                </div>
+              </div>
+            </div>
+          </section>
+        {/if}
         <div class="composer-box">
           <textarea bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
           <div class="composer-footer">
+            <div
+              class="select sandbox-picker"
+              bind:this={sandboxPickerElement}
+              data-placeholder="Sandbox permissions"
+              onchange={handleSandboxModeChange}
+            >
+              <button
+                id="sandbox-picker-trigger"
+                class="btn icon-button"
+                data-variant="ghost"
+                data-size="icon"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="sandbox-picker-listbox"
+                aria-label="Sandbox permissions"
+                title={sandboxModeLabel()}
+              >
+                <span class="sandbox-picker-label">{sandboxModeLabel()}</span>
+                {#if sandboxMode === 'read-only'}
+                  <Eye size={14} strokeWidth={1.8} aria-hidden="true" />
+                {:else if sandboxMode === 'workspace-write'}
+                  <FolderPen size={14} strokeWidth={1.8} aria-hidden="true" />
+                {:else}
+                  <ShieldAlert size={14} strokeWidth={1.8} aria-hidden="true" />
+                {/if}
+              </button>
+              <div
+                id="sandbox-picker-popover"
+                data-popover
+                data-side="top"
+                data-align="start"
+                aria-hidden="true"
+              >
+                <div
+                  id="sandbox-picker-listbox"
+                  class="sandbox-picker-listbox"
+                  role="listbox"
+                  aria-orientation="vertical"
+                  aria-labelledby="sandbox-picker-trigger"
+                >
+                  <div role="option" data-value="read-only" aria-selected={sandboxMode === 'read-only' ? 'true' : undefined}>
+                    <span>Read-only</span>
+                  </div>
+                  <div role="option" data-value="workspace-write" aria-selected={sandboxMode === 'workspace-write' ? 'true' : undefined}>
+                    <span>Workspace write</span>
+                  </div>
+                  <div role="option" data-value="danger-full-access" aria-selected={sandboxMode === 'danger-full-access' ? 'true' : undefined}>
+                    <span>Danger full access</span>
+                  </div>
+                </div>
+              </div>
+              <input type="hidden" name="sandbox-mode" value={sandboxMode} />
+            </div>
             <div class="model-picker-wrap">
               <div
                 bind:this={modelPickerElement}
@@ -967,6 +1450,7 @@
                 <button
                   id="model-picker-trigger"
                   class="btn"
+                  data-variant="ghost"
                   type="button"
                   aria-haspopup="listbox"
                   aria-expanded="false"

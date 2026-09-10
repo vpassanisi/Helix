@@ -1,7 +1,7 @@
 {
-  "name": "deepseek-harness-vscode",
-  "displayName": "DeepBlue",
-  "description": "A VS Code sidebar Webview UI for DeepBlue.",
+  "name": "helix-vscode",
+  "displayName": "Helix",
+  "description": "A VS Code sidebar Webview UI for Helix.",
   "version": "0.0.1",
   "publisher": "local",
   "license": "MIT",
@@ -23,7 +23,7 @@
       "activitybar": [
         {
           "id": "dsh",
-          "title": "DeepBlue",
+          "title": "Helix",
           "icon": "media/dsh.svg"
         }
       ]
@@ -33,26 +33,26 @@
         {
           "type": "webview",
           "id": "dsh.sidebar",
-          "name": "DeepBlue"
+          "name": "Helix"
         }
       ]
     },
     "commands": [
       {
         "command": "dsh.openSidebar",
-        "title": "DeepBlue: Open Sidebar"
+        "title": "Helix: Open Sidebar"
       },
       {
         "command": "dsh.newSession",
-        "title": "DeepBlue: New Session"
+        "title": "Helix: New Session"
       },
       {
         "command": "dsh.askSelection",
-        "title": "DeepBlue: Ask About Selection"
+        "title": "Helix: Ask About Selection"
       }
     ],
     "configuration": {
-      "title": "DeepBlue",
+      "title": "Helix",
       "properties": {
         "deepseekHarness.provider": {
           "type": "string",
@@ -74,6 +74,21 @@
           "type": "string",
           "default": "",
           "description": "Optional DeepSeek-compatible API base URL. Empty uses the provider default."
+        },
+        "deepseekHarness.sandboxMode": {
+          "type": "string",
+          "enum": [
+            "read-only",
+            "workspace-write",
+            "danger-full-access"
+          ],
+          "enumItemLabels": [
+            "Read-only",
+            "Workspace write",
+            "Danger full access"
+          ],
+          "default": "workspace-write",
+          "description": "Sandbox permission mode for DSH sessions."
         },
         "deepseekHarness.mcpServers": {
           "type": "array",
@@ -139,8 +154,8 @@
     "check:webview": "svelte-check --tsconfig ./tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.ts",
     "watch": "tsc -p . --watch",
-    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/session-router.test.js out/test/model-catalog.test.js out/test/mcp.test.js",
-    "package": "npm run compile && npx @vscode/vsce package"
+    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/session-router.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/serial-task-queue.test.js",
+    "package": "npm run compile && npx --yes @vscode/vsce package --allow-missing-repository"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.2-rc.1",

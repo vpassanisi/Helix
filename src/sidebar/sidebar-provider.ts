@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
 import * as vscode from 'vscode'
+import type { CodeChange } from '../runtime/change-tracker.js'
 import type { EditorContext } from '../runtime/prompt-context.js'
-import type { RuntimeState } from '../runtime/types.js'
+import type { RuntimeState, SandboxMode } from '../runtime/types.js'
 import type { DiscoveredModel } from '../runtime/model-catalog.js'
 
 export type SidebarMessage =
@@ -13,13 +14,16 @@ export type SidebarMessage =
       baseUrl: string
       apiKey?: string
       clearApiKey: boolean
+      sandboxMode: SandboxMode
       mcpServers: SidebarMcpServer[]
     }
   | { type: 'submit'; prompt: string; includeSelection: boolean }
   | { type: 'newSession' }
-  | { type: 'stopRuntime' }
+  | { type: 'cancelTurn' }
+  | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
   | { type: 'refreshModels' }
   | { type: 'selectModel'; model: string; contextWindow?: number }
+  | { type: 'setSandboxMode'; sandboxMode: SandboxMode }
 
 export interface SidebarState {
   activeSessionId: string
@@ -36,6 +40,7 @@ export interface SidebarSettings {
   baseUrl: string
   dshHome: string
   apiKeyConfigured: boolean
+  sandboxMode: SandboxMode
   mcpServers: SidebarMcpServerSetting[]
 }
 
@@ -61,16 +66,33 @@ export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env'> {
 }
 
 export type SidebarModel = DiscoveredModel
+export type SidebarCodeChange = CodeChange
 
 export type SidebarOutgoingMessage =
   | { type: 'state'; state: SidebarState; resetTranscript?: boolean }
   | { type: 'settings'; settings: SidebarSettings }
   | { type: 'settingsSaved'; settings: SidebarSettings; restarting: boolean }
   | { type: 'selection'; selection?: SidebarState['selection'] }
+  | { type: 'codeChanges'; sessionId: string; changes: SidebarCodeChange[]; active: boolean }
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'error'; message: string }
   | { type: 'accepted'; sessionId: string }
   | { type: 'models'; models: SidebarModel[]; error?: string }
+  | {
+      type: 'approvalRequest'
+      sessionId: string
+      agentSessionId: string
+      requestId: string
+      toolCallId?: string
+      toolName: string
+      reason?: string
+    }
+  | {
+      type: 'approvalResolved'
+      sessionId: string
+      requestId: string
+      outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+    }
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined
@@ -91,6 +113,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [webviewRoot],
     }
+    webviewView.onDidDispose(() => {
+      if (this.view !== webviewView) return
+      this.view = undefined
+      this.disposeWebviewWatcher()
+    })
     if (this.watchWebview) this.watchWebviewOutput(webviewView, webviewRoot)
     webviewView.webview.html = getHtml(webviewView.webview, this.extensionUri)
     webviewView.webview.onDidReceiveMessage((message: unknown) => {
@@ -114,7 +141,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   post(message: SidebarOutgoingMessage): void {
-    void this.view?.webview.postMessage(message)
+    const view = this.view
+    if (view === undefined) return
+    void view.webview.postMessage(message).then(() => undefined, () => undefined)
   }
 
   dispose(): void {
@@ -131,12 +160,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       watcher.onDidCreate(reload),
       watcher.onDidChange(reload),
       watcher.onDidDelete(reload),
-      webviewView.onDidDispose(() => {
-        if (this.view === webviewView) {
-          this.view = undefined
-          this.disposeWebviewWatcher()
-        }
-      }),
     )
   }
 
@@ -165,6 +188,7 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
     return 'provider' in value && typeof value.provider === 'string' &&
       'baseUrl' in value && typeof value.baseUrl === 'string' &&
       'clearApiKey' in value && typeof value.clearApiKey === 'boolean' &&
+      'sandboxMode' in value && isSandboxMode(value.sandboxMode) &&
       'mcpServers' in value && Array.isArray(value.mcpServers) && value.mcpServers.every(isSidebarMcpServer) &&
       (!('apiKey' in value) || typeof value.apiKey === 'string')
   }
@@ -177,11 +201,20 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
       (!('contextWindow' in value) || value.contextWindow === undefined ||
         (typeof value.contextWindow === 'number' && Number.isSafeInteger(value.contextWindow) && value.contextWindow > 0))
   }
+  if (type === 'setSandboxMode') {
+    return 'sandboxMode' in value && isSandboxMode(value.sandboxMode)
+  }
+
+  if (type === 'approvalDecision') {
+    return 'sessionId' in value && typeof value.sessionId === 'string' &&
+      'requestId' in value && typeof value.requestId === 'string' &&
+      (value.outcome === 'allowed-once' || value.outcome === 'rejected')
+  }
 
   return type === 'ready' ||
     type === 'openSettings' ||
     type === 'newSession' ||
-    type === 'stopRuntime' ||
+    type === 'cancelTurn' ||
     type === 'refreshModels'
 }
 
@@ -199,6 +232,10 @@ function isSidebarMcpServer(value: unknown): value is SidebarMcpServer {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function isSandboxMode(value: unknown): value is SandboxMode {
+  return value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access'
 }
 
 function getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
@@ -233,7 +270,7 @@ function getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   <style>body { color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); padding: 16px; } code { color: var(--vscode-errorForeground); }</style>
 </head>
 <body>
-  <strong>DeepBlue UI is not built.</strong>
+  <strong>Helix UI is not built.</strong>
   <p>Run <code>npm run compile</code>, then reload the Extension Development Host.</p>
   <small>${escapeHtml(message)}</small>
 </body>

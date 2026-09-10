@@ -7,6 +7,8 @@ import type { PersistedMcpServer, RuntimeMcpServer } from './mcp.js'
 export type { ContentBlock, HarnessNotification }
 export type { PersistedMcpServer, RuntimeMcpServer } from './mcp.js'
 
+export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+
 export interface RuntimeOptions {
   cwd: string
   provider: string
@@ -16,6 +18,7 @@ export interface RuntimeOptions {
   contextWindow?: number
   dshBin?: string
   dshHome?: string
+  sandboxMode: SandboxMode
   mcpServers: RuntimeMcpServer[]
 }
 

@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import * as vscode from 'vscode'
 import { captureEditorContext, editorContextMetadata } from './runtime/editor-context.js'
+import { WorkspaceChangeTracker } from './runtime/change-tracker.js'
 import { HarnessRuntime } from './runtime/harness-runtime.js'
+import type { ControlEvent } from './runtime/control-bridge.js'
 import { mcpSecretKey } from './runtime/mcp.js'
 import { modelEndpointCandidates, parseModelCatalog } from './runtime/model-catalog.js'
 import { buildPromptContent } from './runtime/prompt-context.js'
-import type { PersistedMcpServer, RuntimeMcpServer, RuntimeOptions, RuntimeState } from './runtime/types.js'
+import { SerialTaskQueue } from './runtime/serial-task-queue.js'
+import type { PersistedMcpServer, RuntimeMcpServer, RuntimeOptions, RuntimeState, SandboxMode } from './runtime/types.js'
 import {
   SidebarProvider,
   type SidebarMessage,
@@ -21,6 +24,10 @@ const API_KEY_SECRET = 'deepseekHarness.apiKey'
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 const MCP_ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+function normalizeSandboxMode(value: unknown): SandboxMode {
+  return value === 'read-only' || value === 'danger-full-access' ? value : 'workspace-write'
+}
+
 class ExtensionApp {
   readonly sidebar: SidebarProvider
   private readonly runtime: HarnessRuntime
@@ -29,6 +36,15 @@ class ExtensionApp {
   private runtimeState: RuntimeState = 'stopped'
   private selection: SidebarState['selection']
   private readonly sessionRoutes = new Set<{ dispose(): void }>()
+  private readonly changeTracker: WorkspaceChangeTracker
+  private readonly pendingApprovals = new Map<string, {
+    rootSessionId: string
+    agentSessionId: string
+    toolCallId?: string
+    toolName: string
+    reason?: string
+  }>()
+  private readonly settingsOperationQueue = new SerialTaskQueue()
   private promptGeneration = 0
   private disposed = false
 
@@ -36,6 +52,7 @@ class ExtensionApp {
     this.runtime = new HarnessRuntime({
       onUnrouted: () => undefined,
       onHandlerError: (error) => this.postError(error),
+      onControlEvent: (event) => this.handleControlEvent(event),
     })
     this.sidebar = new SidebarProvider(
       context.extensionUri,
@@ -43,6 +60,11 @@ class ExtensionApp {
       (message) => this.handleMessage(message),
       context.extensionMode === vscode.ExtensionMode.Development,
     )
+    this.changeTracker = new WorkspaceChangeTracker(
+      vscode.workspace.workspaceFolders?.[0]?.uri,
+      (update) => this.sidebar.post({ type: 'codeChanges', ...update }),
+    )
+    this.subscriptions.push(this.changeTracker)
 
     this.subscriptions.push(this.runtime.onStateChange(({ state, message }) => {
       this.runtimeState = state
@@ -58,6 +80,11 @@ class ExtensionApp {
   }
 
   newSession(): void {
+    for (const [requestId, pending] of this.pendingApprovals) {
+      void this.runtime.resolveApproval(pending.agentSessionId, requestId, 'rejected').catch(() => undefined)
+    }
+    this.pendingApprovals.clear()
+    this.changeTracker.finish(this.activeSessionId)
     this.activeSessionId = randomUUID()
     this.registerSessionRoute(this.activeSessionId)
     this.selection = editorContextMetadata(vscode.window.activeTextEditor)
@@ -66,6 +93,7 @@ class ExtensionApp {
 
   async submit(prompt: string, includeSelection: boolean): Promise<void> {
     const generation = ++this.promptGeneration
+    const sessionId = this.activeSessionId
     const editor = includeSelection ? vscode.window.activeTextEditor : undefined
     const configuration = vscode.workspace.getConfiguration('deepseekHarness')
     const maxCharacters = configuration.get<number>('maxSelectionCharacters', 32_000)
@@ -75,18 +103,22 @@ class ExtensionApp {
     try {
       if (this.runtimeState !== 'ready') await this.runtime.start(await this.runtimeOptions())
       if (generation !== this.promptGeneration) return
-      await this.runtime.prompt(this.activeSessionId, contentBlocks)
+      this.changeTracker.start(sessionId)
+      await this.runtime.prompt(sessionId, contentBlocks)
       if (generation !== this.promptGeneration) return
-      this.sidebar.post({ type: 'accepted', sessionId: this.activeSessionId })
+      this.sidebar.post({ type: 'accepted', sessionId })
     } catch (error) {
       if (generation === this.promptGeneration) this.postError(error)
+    } finally {
+      this.changeTracker.finish(sessionId)
     }
   }
 
-  async stopRuntime(): Promise<void> {
+  async cancelTurn(): Promise<void> {
     this.promptGeneration += 1
+    this.changeTracker.finish(this.activeSessionId)
     try {
-      await this.runtime.stop()
+      await this.runtime.cancelTurn(this.activeSessionId)
     } catch (error) {
       this.postError(error)
     }
@@ -98,6 +130,7 @@ class ExtensionApp {
     for (const subscription of this.subscriptions.splice(0)) subscription.dispose()
     for (const route of this.sessionRoutes) route.dispose()
     this.sessionRoutes.clear()
+    this.pendingApprovals.clear()
     this.sidebar.dispose()
   }
 
@@ -110,6 +143,7 @@ class ExtensionApp {
     switch (message.type) {
       case 'ready':
         this.refreshSelection()
+        this.replayPendingApprovals()
         await this.postSettings()
         await this.fetchModels()
         return
@@ -126,11 +160,17 @@ class ExtensionApp {
       case 'selectModel':
         await this.selectModel(message)
         return
+      case 'setSandboxMode':
+        await this.setSandboxMode(message)
+        return
       case 'submit':
         await this.submit(message.prompt, message.includeSelection)
         return
-      case 'stopRuntime':
-        await this.stopRuntime()
+      case 'cancelTurn':
+        await this.cancelTurn()
+        return
+      case 'approvalDecision':
+        await this.resolveApproval(message)
         return
       case 'newSession':
         this.newSession()
@@ -140,6 +180,7 @@ class ExtensionApp {
 
   private registerSessionRoute(sessionId: string): void {
     const route = this.runtime.registerSession(sessionId, (routed) => {
+      this.changeTracker.observeNotification(routed.rootSessionId, routed.notification)
       const message: SidebarOutgoingMessage = {
         type: 'notification',
         sessionId: routed.rootSessionId,
@@ -148,6 +189,80 @@ class ExtensionApp {
       this.sidebar.post(message)
     }, 'tree')
     this.sessionRoutes.add(route)
+  }
+
+  private handleControlEvent(event: ControlEvent): void {
+    if (event.method === 'approval.request') {
+      const approvalId = stringValue(event.params.approvalId)
+      const toolName = stringValue(event.params.toolName)
+      if (approvalId === undefined || toolName === undefined) return
+
+      if (!this.runtime.ownsSession(this.activeSessionId, event.sessionId)) {
+        void this.runtime.resolveApproval(event.sessionId, approvalId, 'rejected').catch(() => undefined)
+        return
+      }
+
+      this.pendingApprovals.set(approvalId, {
+        rootSessionId: this.activeSessionId,
+        agentSessionId: event.sessionId,
+        toolCallId: stringValue(event.params.toolCallId),
+        toolName,
+        reason: stringValue(event.params.reason),
+      })
+      this.sidebar.post({
+        type: 'approvalRequest',
+        sessionId: this.activeSessionId,
+        agentSessionId: event.sessionId,
+        requestId: approvalId,
+        toolCallId: stringValue(event.params.toolCallId),
+        toolName,
+        reason: stringValue(event.params.reason),
+      })
+      return
+    }
+
+    if (event.method === 'approval.resolved') {
+      const approvalId = stringValue(event.params.approvalId)
+      const outcome = event.params.outcome
+      if (approvalId === undefined || !isApprovalOutcome(outcome)) return
+      const pending = this.pendingApprovals.get(approvalId)
+      if (pending === undefined) return
+      this.pendingApprovals.delete(approvalId)
+      if (pending.rootSessionId !== this.activeSessionId) return
+      this.sidebar.post({
+        type: 'approvalResolved',
+        sessionId: pending.rootSessionId,
+        requestId: approvalId,
+        outcome,
+      })
+    }
+  }
+
+  private async resolveApproval(message: Extract<SidebarMessage, { type: 'approvalDecision' }>): Promise<void> {
+    if (message.sessionId !== this.activeSessionId) return
+    const pending = this.pendingApprovals.get(message.requestId)
+    if (pending === undefined || pending.rootSessionId !== this.activeSessionId) return
+
+    try {
+      await this.runtime.resolveApproval(pending.agentSessionId, message.requestId, message.outcome)
+    } catch (error) {
+      this.postError(error)
+    }
+  }
+
+  private replayPendingApprovals(): void {
+    for (const [requestId, pending] of this.pendingApprovals) {
+      if (pending.rootSessionId !== this.activeSessionId) continue
+      this.sidebar.post({
+        type: 'approvalRequest',
+        sessionId: pending.rootSessionId,
+        agentSessionId: pending.agentSessionId,
+        requestId,
+        toolCallId: pending.toolCallId,
+        toolName: pending.toolName,
+        reason: pending.reason,
+      })
+    }
   }
 
   private async runtimeOptions(): Promise<RuntimeOptions> {
@@ -163,6 +278,7 @@ class ExtensionApp {
       contextWindow: contextWindow > 0 ? contextWindow : undefined,
       dshBin: configuration.get<string>('dshBin', '') || undefined,
       dshHome: configuration.get<string>('dshHome', '') || undefined,
+      sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
       mcpServers: await this.runtimeMcpServers(),
     }
   }
@@ -171,7 +287,11 @@ class ExtensionApp {
     this.sidebar.post({ type: 'settings', settings: await this.getSidebarSettings() })
   }
 
-  private async saveSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
+  private saveSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
+    return this.enqueueSettingsOperation(() => this.saveSettingsInternal(message))
+  }
+
+  private async saveSettingsInternal(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
     const provider = message.provider.trim()
     const baseUrl = message.baseUrl.trim()
     if (!provider) {
@@ -200,6 +320,7 @@ class ExtensionApp {
     const configuration = vscode.workspace.getConfiguration()
     await configuration.update('deepseekHarness.provider', provider, vscode.ConfigurationTarget.Global)
     await configuration.update('deepseekHarness.baseUrl', baseUrl, vscode.ConfigurationTarget.Global)
+    await configuration.update('deepseekHarness.sandboxMode', message.sandboxMode, vscode.ConfigurationTarget.Global)
     await configuration.update('deepseekHarness.mcpServers', mcpServers, vscode.ConfigurationTarget.Global)
 
     if (message.clearApiKey) {
@@ -216,7 +337,7 @@ class ExtensionApp {
     })
 
     // Resolve the selected model's context before the next DSH process starts.
-    await this.fetchModels()
+    await this.fetchModelsInternal()
 
     try {
       if (this.runtimeState === 'stopped') {
@@ -229,7 +350,11 @@ class ExtensionApp {
     }
   }
 
-  private async selectModel(message: Extract<SidebarMessage, { type: 'selectModel' }>): Promise<void> {
+  private selectModel(message: Extract<SidebarMessage, { type: 'selectModel' }>): Promise<void> {
+    return this.enqueueSettingsOperation(() => this.selectModelInternal(message))
+  }
+
+  private async selectModelInternal(message: Extract<SidebarMessage, { type: 'selectModel' }>): Promise<void> {
     const model = message.model.trim()
     if (!model) return
 
@@ -260,7 +385,36 @@ class ExtensionApp {
     }
   }
 
-  private async fetchModels(): Promise<void> {
+  private setSandboxMode(message: Extract<SidebarMessage, { type: 'setSandboxMode' }>): Promise<void> {
+    return this.enqueueSettingsOperation(async () => {
+      const mode = normalizeSandboxMode(message.sandboxMode)
+      await vscode.workspace.getConfiguration().update(
+        'deepseekHarness.sandboxMode',
+        mode,
+        vscode.ConfigurationTarget.Global,
+      )
+
+      if (this.runtimeState === 'ready') {
+        try {
+          await this.runtime.setSandboxMode(this.activeSessionId, mode)
+        } catch {
+          // The root session does not exist until the first prompt. Restarting
+          // applies the persisted mode through DSH_PERMISSION_MODE.
+          await this.runtime.restart(await this.runtimeOptions())
+        }
+      } else if (this.runtimeState === 'starting') {
+        await this.runtime.restart(await this.runtimeOptions())
+      }
+
+      await this.postSettings()
+    })
+  }
+
+  private fetchModels(): Promise<void> {
+    return this.enqueueSettingsOperation(() => this.fetchModelsInternal())
+  }
+
+  private async fetchModelsInternal(): Promise<void> {
     const configuration = vscode.workspace.getConfiguration('deepseekHarness')
     const provider = configuration.get<string>('provider', 'deepseek-official').trim()
     const configuredBaseUrl = configuration.get<string>('baseUrl', '').trim()
@@ -322,6 +476,10 @@ class ExtensionApp {
     )
   }
 
+  private enqueueSettingsOperation<T>(operation: () => Promise<T>): Promise<T> {
+    return this.settingsOperationQueue.run(operation)
+  }
+
   private postModels(models: SidebarModel[], error?: string): void {
     this.sidebar.post({ type: 'models', models, error })
   }
@@ -335,6 +493,7 @@ class ExtensionApp {
       baseUrl: configuration.get<string>('baseUrl', ''),
       dshHome: configuration.get<string>('dshHome', ''),
       apiKeyConfigured: Boolean(await this.context.secrets.get(API_KEY_SECRET)),
+      sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
       mcpServers: await this.sidebarMcpServers(),
     }
   }
@@ -508,6 +667,14 @@ let activeApp: ExtensionApp | undefined
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function isApprovalOutcome(value: unknown): value is 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable' {
+  return value === 'allowed-once' || value === 'rejected' || value === 'cancelled' || value === 'unavailable'
 }
 
 export function activate(context: vscode.ExtensionContext): void {

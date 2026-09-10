@@ -4,4 +4,8 @@ test/
 tsconfig.json
 *.tsbuildinfo
 README.md
-node_modules/
+node_modules/**
+!node_modules/@deepseek-ai/dsh-sdk-client/
+!node_modules/@deepseek-ai/dsh-sdk-client/**
+!node_modules/@deepseek-ai/dsh-sdk-protocol/
+!node_modules/@deepseek-ai/dsh-sdk-protocol/**

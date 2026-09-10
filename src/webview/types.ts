@@ -1,4 +1,5 @@
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
+export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 
 export interface SelectionMetadata {
   fileLabel: string
@@ -18,6 +19,7 @@ export interface SidebarSettings {
   baseUrl: string
   dshHome: string
   apiKeyConfigured: boolean
+  sandboxMode: SandboxMode
   mcpServers: SidebarMcpServerSetting[]
 }
 
@@ -49,6 +51,16 @@ export interface SidebarModel {
   loaded?: boolean
 }
 
+export type CodeChangeKind = 'created' | 'modified' | 'deleted' | 'renamed'
+
+export interface CodeChange {
+  path: string
+  kind: CodeChangeKind
+  additions: number
+  deletions: number
+  oldPath?: string
+}
+
 export type SidebarMessage =
   | { type: 'ready' }
   | { type: 'openSettings' }
@@ -58,15 +70,16 @@ export type SidebarMessage =
       baseUrl: string
       apiKey?: string
       clearApiKey: boolean
+      sandboxMode: SandboxMode
       mcpServers: SidebarMcpServer[]
     }
   | { type: 'submit'; prompt: string; includeSelection: boolean }
   | { type: 'newSession' }
   | { type: 'refreshModels' }
   | { type: 'selectModel'; model: string; contextWindow?: number }
-  | { type: 'startRuntime' }
-  | { type: 'restartRuntime' }
-  | { type: 'stopRuntime' }
+  | { type: 'setSandboxMode'; sandboxMode: SandboxMode }
+  | { type: 'cancelTurn' }
+  | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
 
 export interface WebviewApi {
   postMessage(message: SidebarMessage): void
@@ -77,10 +90,26 @@ export type IncomingMessage =
   | { type: 'settings'; settings: SidebarSettings }
   | { type: 'settingsSaved'; settings: SidebarSettings; restarting: boolean }
   | { type: 'selection'; selection?: SelectionMetadata }
+  | { type: 'codeChanges'; sessionId: string; changes: CodeChange[]; active: boolean }
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'error'; message: string }
   | { type: 'accepted'; sessionId: string }
   | { type: 'models'; models: SidebarModel[]; error?: string }
+  | {
+      type: 'approvalRequest'
+      sessionId: string
+      agentSessionId: string
+      requestId: string
+      toolCallId?: string
+      toolName: string
+      reason?: string
+    }
+  | {
+      type: 'approvalResolved'
+      sessionId: string
+      requestId: string
+      outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+    }
 
 export interface HarnessNotification {
   method?: string

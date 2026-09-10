@@ -11,7 +11,7 @@ const vscode = acquireVsCodeApi()
 const target = document.getElementById('app')
 
 if (target === null) {
-  throw new Error('DeepBlue UI target was not found.')
+  throw new Error('Helix UI target was not found.')
 }
 
 mount(App, {

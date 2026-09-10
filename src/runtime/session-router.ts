@@ -84,6 +84,10 @@ export class SessionNotificationRouter {
     this.parents.clear()
   }
 
+  owns(rootSessionId: string, sessionId: string): boolean {
+    return this.isDescendantOf(sessionId, rootSessionId)
+  }
+
   clear(): void {
     this.routes.clear()
     this.parents.clear()

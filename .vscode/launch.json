@@ -7,6 +7,9 @@
       "request": "launch",
       "runtimeExecutable": "${execPath}",
       "args": [
+        // "--disable-extensions",
+        // "--user-data-dir=${workspaceFolder}/.vscode-test-profile",
+        // "--extensions-dir=${workspaceFolder}/.vscode-test-extensions",
         "--extensionDevelopmentPath=${workspaceFolder}"
       ],
       "outFiles": [

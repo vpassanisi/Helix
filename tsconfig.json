@@ -14,6 +14,7 @@
   },
   "include": [
     "src/extension.ts",
+    "src/host/**/*.ts",
     "src/runtime/**/*.ts",
     "src/sidebar/**/*.ts",
     "src/test/**/*.ts"

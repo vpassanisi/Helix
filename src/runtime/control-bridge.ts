@@ -47,11 +47,28 @@ export interface ControlBroker {
 export class ControlBridgeError extends Error {
   constructor(
     message: string,
-    readonly code: 'BRIDGE_UNAVAILABLE' | 'BRIDGE_TIMEOUT' | 'BRIDGE_CLOSED' | 'BRIDGE_PROTOCOL' | 'BRIDGE_REQUEST',
+    readonly code: ControlBridgeErrorCode,
   ) {
     super(message)
     this.name = 'ControlBridgeError'
   }
+}
+
+export type ControlBridgeErrorCode =
+  | 'BRIDGE_UNAVAILABLE'
+  | 'BRIDGE_TIMEOUT'
+  | 'BRIDGE_CLOSED'
+  | 'BRIDGE_PROTOCOL'
+  | 'BRIDGE_REQUEST'
+  | 'SESSION_NOT_FOUND'
+  | 'SESSION_NOT_OWNED'
+  | 'APPROVAL_NOT_PENDING'
+  | 'INVALID_ARGUMENT'
+
+function isControlBridgeErrorCode(value: unknown): value is ControlBridgeErrorCode {
+  return value === 'BRIDGE_UNAVAILABLE' || value === 'BRIDGE_TIMEOUT' || value === 'BRIDGE_CLOSED' ||
+    value === 'BRIDGE_PROTOCOL' || value === 'BRIDGE_REQUEST' || value === 'SESSION_NOT_FOUND' ||
+    value === 'SESSION_NOT_OWNED' || value === 'APPROVAL_NOT_PENDING' || value === 'INVALID_ARGUMENT'
 }
 
 interface PendingRequest {
@@ -63,6 +80,7 @@ interface PendingRequest {
 export class LocalControlBridge implements ControlBroker {
   private server: Server | undefined
   private socket: Socket | undefined
+  private handshakeSocket: Socket | undefined
   private controlDirectory: string | undefined
   private connectionWaiters = new Set<(connected: boolean) => void>()
   private readonly pending = new Map<string, PendingRequest>()
@@ -103,12 +121,17 @@ export class LocalControlBridge implements ControlBroker {
       : await mkdtemp(join(tmpdir(), 'helix-control-'))
 
     const endpoint = this.endpoint
-    if (endpoint === undefined) throw new ControlBridgeError('Control endpoint was not created.', 'BRIDGE_PROTOCOL')
+    if (endpoint === undefined) {
+      const directory = this.controlDirectory
+      this.controlDirectory = undefined
+      this.closed = true
+      if (directory !== undefined && process.platform !== 'win32') await rm(directory, { recursive: true, force: true })
+      throw new ControlBridgeError('Control endpoint was not created.', 'BRIDGE_PROTOCOL')
+    }
 
-    this.server = createServer((socket) => this.handleConnection(socket))
+    const server = createServer((socket) => this.handleConnection(socket))
+    this.server = server
     await new Promise<void>((resolve, reject) => {
-      const server = this.server
-      if (server === undefined) return reject(new Error('Control server was not created.'))
       const onError = (error: Error) => {
         server.off('listening', onListening)
         reject(error)
@@ -120,6 +143,22 @@ export class LocalControlBridge implements ControlBroker {
       server.once('error', onError)
       server.once('listening', onListening)
       server.listen(endpoint)
+    }).catch(async (error) => {
+      this.server = undefined
+      const failedDirectory = this.controlDirectory
+      this.controlDirectory = undefined
+      this.closed = true
+      await new Promise<void>((resolve) => {
+        if (!server.listening) {
+          resolve()
+          return
+        }
+        server.close(() => resolve())
+      })
+      if (failedDirectory !== undefined && process.platform !== 'win32') {
+        await rm(failedDirectory, { recursive: true, force: true }).catch(() => undefined)
+      }
+      throw error
     })
   }
 
@@ -230,9 +269,12 @@ export class LocalControlBridge implements ControlBroker {
 
     const socket = this.socket
     this.socket = undefined
+    const handshakeSocket = this.handshakeSocket
+    this.handshakeSocket = undefined
     this.authenticated = false
     this._capabilities = []
     socket?.destroy()
+    if (handshakeSocket !== socket) handshakeSocket?.destroy()
 
     const server = this.server
     this.server = undefined
@@ -254,10 +296,12 @@ export class LocalControlBridge implements ControlBroker {
   }
 
   private handleConnection(socket: Socket): void {
-    if (this.closed || this.socket !== undefined) {
+    if (this.closed || this.socket !== undefined || this.handshakeSocket !== undefined) {
       socket.destroy()
       return
     }
+
+    this.handshakeSocket = socket
 
     socket.setEncoding('utf8')
     let authenticated = false
@@ -272,12 +316,13 @@ export class LocalControlBridge implements ControlBroker {
       }
 
       if (!authenticated) {
-        if (envelope.type !== 'hello' || envelope.token !== this.authToken) {
+        if (this.handshakeSocket !== socket || envelope.type !== 'hello' || envelope.token !== this.authToken) {
           socket.destroy()
           return
         }
         authenticated = true
         clearTimeout(handshakeTimer)
+        this.handshakeSocket = undefined
         this.socket = socket
         this.authenticated = true
         const offeredCapabilities = Array.isArray(envelope.capabilities)
@@ -311,6 +356,7 @@ export class LocalControlBridge implements ControlBroker {
     socket.on('error', () => undefined)
     socket.on('close', () => {
       clearTimeout(handshakeTimer)
+      if (this.handshakeSocket === socket) this.handshakeSocket = undefined
       if (this.socket !== socket) return
       this.socket = undefined
       this.authenticated = false
@@ -356,7 +402,7 @@ export class LocalControlBridge implements ControlBroker {
     } else {
       pending.reject(new ControlBridgeError(
         response.error?.message ?? 'The DSH bridge rejected the request.',
-        'BRIDGE_REQUEST',
+        isControlBridgeErrorCode(response.error?.code) ? response.error?.code : 'BRIDGE_REQUEST',
       ))
     }
   }

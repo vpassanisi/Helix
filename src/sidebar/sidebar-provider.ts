@@ -4,6 +4,7 @@ import type { CodeChange } from '../runtime/change-tracker.js'
 import type { EditorContext } from '../runtime/prompt-context.js'
 import type { RuntimeState, SandboxMode } from '../runtime/types.js'
 import type { DiscoveredModel } from '../runtime/model-catalog.js'
+import { isRecord } from '../shared/value-utils.js'
 
 export type SidebarMessage =
   | { type: 'ready' }
@@ -75,6 +76,7 @@ export type SidebarOutgoingMessage =
   | { type: 'selection'; selection?: SidebarState['selection'] }
   | { type: 'codeChanges'; sessionId: string; changes: SidebarCodeChange[]; active: boolean }
   | { type: 'notification'; sessionId: string; notification: unknown }
+  | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
   | { type: 'error'; message: string }
   | { type: 'accepted'; sessionId: string }
   | { type: 'models'; models: SidebarModel[]; error?: string }
@@ -228,10 +230,6 @@ function isSidebarMcpServer(value: unknown): value is SidebarMcpServer {
   return value.env.every((entry) => isRecord(entry) && typeof entry.name === 'string' &&
     (!('value' in entry) || typeof entry.value === 'string') &&
     (!('configured' in entry) || typeof entry.configured === 'boolean'))
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }
 
 function isSandboxMode(value: unknown): value is SandboxMode {

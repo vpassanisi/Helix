@@ -30,8 +30,6 @@ export interface RoutedNotification {
   notification: HarnessNotification
 }
 
-export type SessionRouteMode = 'exact' | 'tree'
-
 export interface DisposableLike {
   dispose(): void
 }

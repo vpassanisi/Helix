@@ -92,6 +92,7 @@ export type IncomingMessage =
   | { type: 'selection'; selection?: SelectionMetadata }
   | { type: 'codeChanges'; sessionId: string; changes: CodeChange[]; active: boolean }
   | { type: 'notification'; sessionId: string; notification: unknown }
+  | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
   | { type: 'error'; message: string }
   | { type: 'accepted'; sessionId: string }
   | { type: 'models'; models: SidebarModel[]; error?: string }

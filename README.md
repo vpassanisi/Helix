@@ -22,11 +22,13 @@ This is currently a quick and dirty proof of concept. Most of the code is AI gen
 5. Press `F5` to launch the Extension Development Host.
 6. Open the Helix activity bar view.
 
+To build an installable VSIX, run `npm run package`. The package command stages the production dependency tree, including the bundled DSH runtime, before creating the VSIX. Install the generated `local.helix-vscode-0.0.1.vsix` file in VS Code.
+
 ## Fast UI iteration
 
 After launching the Extension Development Host with `F5`, run `npm run watch:webview` in a separate terminal. While the extension is running, edits to `src/webview` rebuild the bundle and refresh the sidebar automatically. The watcher is enabled only in Extension Development Host mode.
 
-The extension uses `@deepseek-ai/dsh-sdk-client` to launch the SDK profile over stdio JSON-RPC. With no `deepseekHarness.dshBin`, it runs `npx --yes @deepseek-ai/dsh --profile sdk`. Set `deepseekHarness.dshBin` to use a specific `dsh` executable.
+The extension uses `@deepseek-ai/dsh-sdk-client` to launch the matching bundled DSH SDK profile over stdio JSON-RPC. With no `deepseekHarness.dshBin`, it uses the installed `@deepseek-ai/dsh` package. Set `deepseekHarness.dshBin` to use a specific dsh CLI module.
 
 ## Runtime settings
 

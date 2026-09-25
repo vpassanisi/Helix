@@ -10,6 +10,7 @@ import {
   type ControlRequestEnvelope,
   type ControlSandboxMode,
 } from './control-protocol.js'
+import { stringValue } from '../shared/value-utils.js'
 
 interface PendingApproval {
   sessionId: string
@@ -19,18 +20,20 @@ interface PendingApproval {
   settled: boolean
 }
 
-const APPROVAL_OUTCOMES = new Set<ControlApprovalResult>([
-  'allowed-once',
-  'rejected',
-  'cancelled',
-  'unavailable',
-])
 const APPROVAL_POLICIES = new Set(['ask', 'never'])
 const SANDBOX_MODES = new Set<ControlSandboxMode>([
   'read-only',
   'workspace-write',
   'danger-full-access',
 ])
+
+type PluginErrorCode = 'SESSION_NOT_FOUND' | 'SESSION_NOT_OWNED' | 'APPROVAL_NOT_PENDING' | 'INVALID_ARGUMENT' | 'CONTROL_REQUEST_FAILED'
+
+class PluginControlError extends Error {
+  constructor(message: string, readonly code: PluginErrorCode) {
+    super(message)
+  }
+}
 
 /**
  * DSH-side control adapter. It intentionally uses only the runtime services
@@ -45,6 +48,9 @@ export default function helixControlPlugin(ctx: any): void {
   let socket: Socket | undefined
   let socketBuffer = ''
   let connected = false
+  let disposed = false
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let reconnectAttempt = 0
   const approvals = new Map<string, PendingApproval>()
 
   const send = (envelope: ControlEnvelope): boolean => {
@@ -73,7 +79,7 @@ export default function helixControlPlugin(ctx: any): void {
 
   const sendEvent = (
     sessionId: string,
-    method: 'approval.request' | 'approval.resolved',
+    method: 'approval.request' | 'approval.resolved' | 'assistant.stream',
     params: Record<string, unknown>,
   ): boolean => send({
     version: CONTROL_PROTOCOL_VERSION,
@@ -118,10 +124,10 @@ export default function helixControlPlugin(ctx: any): void {
 
   const requireAgent = (request: ControlRequestEnvelope): any => {
     const agent = getAgent(request.sessionId)
-    if (agent === undefined) throw new Error(`Session ${request.sessionId} is not active.`)
+    if (agent === undefined) throw new PluginControlError(`Session ${request.sessionId} is not active.`, 'SESSION_NOT_FOUND')
     const authoritySessionId = stringValue(request.params.authoritySessionId) ?? request.sessionId
     if (!isOwnedBy(agent, authoritySessionId)) {
-      throw new Error(`Session ${request.sessionId} is not owned by ${authoritySessionId}.`)
+      throw new PluginControlError(`Session ${request.sessionId} is not owned by ${authoritySessionId}.`, 'SESSION_NOT_OWNED')
     }
     return agent
   }
@@ -133,69 +139,70 @@ export default function helixControlPlugin(ctx: any): void {
     source: { kind: 'user' },
   })
 
-  const handleRequest = async (request: ControlRequestEnvelope): Promise<void> => {
-    try {
-      if (request.method === 'capabilities.get') {
-        sendResponse(request, {
-          version: CONTROL_PROTOCOL_VERSION,
-          capabilities: CONTROL_CAPABILITIES,
-        })
-        return
-      }
+  const handleCapabilities = (request: ControlRequestEnvelope): void => {
+    sendResponse(request, { version: CONTROL_PROTOCOL_VERSION, capabilities: CONTROL_CAPABILITIES })
+  }
 
-      if (request.method === 'approval.resolve') {
-        const approvalId = stringValue(request.params.approvalId)
-        const outcome = request.params.outcome
-        const pending = approvalId === undefined ? undefined : approvals.get(approvalId)
-        if (approvalId === undefined || pending === undefined || pending.sessionId !== request.sessionId) {
-          throw new Error('Approval request is no longer pending.')
-        }
-        if (outcome !== 'allowed-once' && outcome !== 'rejected') {
-          throw new Error('Approval outcome must be allowed-once or rejected.')
-        }
-        if (!finishApproval(approvalId, pending, outcome)) {
-          throw new Error('Approval request is no longer pending.')
-        }
+  const handleApprovalResolution = (request: ControlRequestEnvelope): void => {
+    const approvalId = stringValue(request.params.approvalId)
+    const pending = approvalId === undefined ? undefined : approvals.get(approvalId)
+    if (approvalId === undefined || pending === undefined || pending.sessionId !== request.sessionId) {
+      throw new PluginControlError('Approval request is no longer pending.', 'APPROVAL_NOT_PENDING')
+    }
+    const outcome = request.params.outcome
+    if (outcome !== 'allowed-once' && outcome !== 'rejected') {
+      throw new PluginControlError('Approval outcome must be allowed-once or rejected.', 'INVALID_ARGUMENT')
+    }
+    if (!finishApproval(approvalId, pending, outcome)) {
+      throw new PluginControlError('Approval request is no longer pending.', 'APPROVAL_NOT_PENDING')
+    }
+    sendResponse(request, { accepted: true })
+  }
+
+  const handleAgentRequest = (request: ControlRequestEnvelope): void => {
+    const agent = requireAgent(request)
+    switch (request.method) {
+      case 'turn.cancel':
+        agent.cancel({ kind: 'user' }, { keepInbox: false })
+        sendResponse(request, { accepted: true, status: agent.status })
+        return
+      case 'session.steer':
+        agent.steer(createUserMessage(requiredString(request.params.text, 'text')))
         sendResponse(request, { accepted: true })
         return
+      case 'session.inject':
+        agent.inject(createUserMessage(requiredString(request.params.text, 'text')))
+        sendResponse(request, { accepted: true })
+        return
+      case 'session.setApprovalPolicy': {
+        const policy = requiredString(request.params.policy, 'policy')
+        if (!APPROVAL_POLICIES.has(policy)) throw new PluginControlError('Approval policy must be ask or never.', 'INVALID_ARGUMENT')
+        const approval = ctx.get?.('approval') ?? ctx.approval
+        if (approval?.setPolicy === undefined) throw new PluginControlError('Approval policy control is unavailable.', 'CONTROL_REQUEST_FAILED')
+        approval.setPolicy(agent, policy)
+        sendResponse(request, { accepted: true, policy })
+        return
       }
+      case 'session.setSandboxMode': {
+        const mode = requiredString(request.params.mode, 'mode') as ControlSandboxMode
+        if (!SANDBOX_MODES.has(mode)) throw new PluginControlError('Sandbox mode is invalid.', 'INVALID_ARGUMENT')
+        agent.session.append('sandbox/mode', { mode })
+        sendResponse(request, { accepted: true, mode })
+        return
+      }
+      default:
+        throw new PluginControlError(`Unsupported control method ${request.method}.`, 'CONTROL_REQUEST_FAILED')
+    }
+  }
 
-      const agent = requireAgent(request)
-      switch (request.method) {
-        case 'turn.cancel':
-          agent.cancel({ kind: 'user' }, { keepInbox: false })
-          sendResponse(request, { accepted: true, status: agent.status })
-          return
-        case 'session.steer':
-          agent.steer(createUserMessage(requiredString(request.params.text, 'text')))
-          sendResponse(request, { accepted: true })
-          return
-        case 'session.inject':
-          agent.inject(createUserMessage(requiredString(request.params.text, 'text')))
-          sendResponse(request, { accepted: true })
-          return
-        case 'session.setApprovalPolicy': {
-          const policy = requiredString(request.params.policy, 'policy')
-          if (!APPROVAL_POLICIES.has(policy)) throw new Error('Approval policy must be ask or never.')
-          const approval = ctx.get?.('approval') ?? ctx.approval
-          if (approval?.setPolicy === undefined) throw new Error('Approval policy control is unavailable.')
-          approval.setPolicy(agent, policy)
-          sendResponse(request, { accepted: true, policy })
-          return
-        }
-        case 'session.setSandboxMode': {
-          const mode = requiredString(request.params.mode, 'mode') as ControlSandboxMode
-          if (!SANDBOX_MODES.has(mode)) throw new Error('Sandbox mode is invalid.')
-          agent.session.append('sandbox/mode', { mode })
-          sendResponse(request, { accepted: true, mode })
-          return
-        }
-        default:
-          throw new Error(`Unsupported control method ${request.method}.`)
-      }
+  const handleRequest = async (request: ControlRequestEnvelope): Promise<void> => {
+    try {
+      if (request.method === 'capabilities.get') return handleCapabilities(request)
+      if (request.method === 'approval.resolve') return handleApprovalResolution(request)
+      handleAgentRequest(request)
     } catch (error) {
       sendResponse(request, undefined, {
-        code: 'CONTROL_REQUEST_FAILED',
+        code: error instanceof PluginControlError ? error.code : 'CONTROL_REQUEST_FAILED',
         message: error instanceof Error ? error.message : String(error),
       })
     }
@@ -204,14 +211,28 @@ export default function helixControlPlugin(ctx: any): void {
   const handleEnvelope = (envelope: ControlEnvelope): void => {
     if (envelope.type === 'helloAck') {
       connected = true
+      reconnectAttempt = 0
       return
     }
     if (envelope.type === 'request') void handleRequest(envelope)
   }
 
+  const scheduleReconnect = (): void => {
+    if (disposed || reconnectTimer !== undefined || reconnectAttempt >= 5) return
+    const delays = [100, 250, 500, 1_000, 1_000]
+    const delay = delays[reconnectAttempt] ?? 1_000
+    reconnectAttempt += 1
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined
+      connect()
+    }, delay)
+  }
+
   const connect = (): void => {
+    if (disposed) return
     const client = createConnection(endpoint)
     socket = client
+    socketBuffer = ''
     client.setEncoding('utf8')
     client.on('connect', () => {
       client.write(encodeControlEnvelope({
@@ -236,11 +257,13 @@ export default function helixControlPlugin(ctx: any): void {
       connected = false
     })
     client.on('close', () => {
+      if (socket !== client) return
       connected = false
       socket = undefined
       for (const [approvalId, pending] of approvals) {
         finishApproval(approvalId, pending, 'unavailable')
       }
+      scheduleReconnect()
     })
   }
 
@@ -285,16 +308,33 @@ export default function helixControlPlugin(ctx: any): void {
     return outcome
   }
 
-  ctx.on?.('approval/request', onApprovalRequest, { global: true })
+  const onAssistantStream = (payload: any): void => {
+    const sessionId = stringValue(payload?.agent?.id)
+    const frame = payload?.frame
+    if (sessionId === undefined || frame === undefined || typeof frame !== 'object' || frame === null) return
+    sendEvent(sessionId, 'assistant.stream', { frame })
+  }
+
+  try {
+    ctx.on?.('approval/request', onApprovalRequest, { global: true })
+    ctx.on?.('agent/assistant-stream', onAssistantStream, { global: true })
+    ctx.effect?.(() => () => {
+      disposed = true
+      if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
+      reconnectTimer = undefined
+      connected = false
+      socket?.destroy()
+      socket = undefined
+      for (const [approvalId, pending] of approvals) {
+        finishApproval(approvalId, pending, 'cancelled')
+      }
+    }, 'helix-control-bridge.lifecycle')
+  } catch (error) {
+    if (!isInactiveContextError(error)) throw error
+    return
+  }
+
   connect()
-  ctx.effect?.(() => () => {
-    connected = false
-    socket?.destroy()
-    socket = undefined
-    for (const [approvalId, pending] of approvals) {
-      finishApproval(approvalId, pending, 'cancelled')
-    }
-  })
 }
 
 function removeAbortListener(pending: PendingApproval): void {
@@ -303,12 +343,15 @@ function removeAbortListener(pending: PendingApproval): void {
   }
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined
-}
-
 function requiredString(value: unknown, name: string): string {
   const result = stringValue(value)
-  if (result === undefined) throw new Error(`${name} is required.`)
+  if (result === undefined) throw new PluginControlError(`${name} is required.`, 'INVALID_ARGUMENT')
   return result
+}
+
+function isInactiveContextError(error: unknown): boolean {
+  return error instanceof Error && (
+    error.message === 'cannot create effect on inactive context' ||
+    (error as { code?: unknown }).code === 'INACTIVE_EFFECT'
+  )
 }

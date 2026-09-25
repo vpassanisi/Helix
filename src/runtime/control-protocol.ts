@@ -1,3 +1,5 @@
+import { isRecord } from '../shared/value-utils.js'
+
 export const CONTROL_PROTOCOL_VERSION = 1
 
 export type ControlRequestMethod =
@@ -26,6 +28,10 @@ export function isControlRequestMethod(value: unknown): value is ControlRequestM
 export type ControlApprovalOutcome = 'allowed-once' | 'rejected'
 export type ControlApprovalResult = ControlApprovalOutcome | 'cancelled' | 'unavailable'
 export type ControlSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+
+export function isControlApprovalResult(value: unknown): value is ControlApprovalResult {
+  return value === 'allowed-once' || value === 'rejected' || value === 'cancelled' || value === 'unavailable'
+}
 
 export interface ControlRequestEnvelope {
   version: typeof CONTROL_PROTOCOL_VERSION
@@ -63,7 +69,7 @@ export interface ControlEventEnvelope {
   type: 'event'
   eventId: string
   sessionId: string
-  method: 'approval.request' | 'approval.resolved'
+  method: 'approval.request' | 'approval.resolved' | 'assistant.stream'
   params: Record<string, unknown>
 }
 
@@ -93,8 +99,4 @@ export function parseControlLine(line: string): ControlEnvelope | undefined {
   }
 
   return value as unknown as ControlEnvelope
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

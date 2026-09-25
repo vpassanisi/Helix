@@ -15,13 +15,14 @@
     Server,
     Send,
     ShieldAlert,
-    Settings2,
     Square,
     Trash2,
     Wrench,
     X,
   } from '@lucide/svelte'
   import { renderMarkdown } from './markdown.js'
+  import Masthead from './components/Masthead.svelte'
+  import { countLines, isRecord, parsePayload, responseKey, stringValue } from '../shared/value-utils.js'
   import type {
     HarnessEvent,
     HarnessNotification,
@@ -127,8 +128,6 @@
   let promptElement = $state<HTMLTextAreaElement>()
   let modelPickerElement = $state<HTMLDivElement>()
   let sandboxPickerElement = $state<HTMLDivElement>()
-  let streamFrame: number | undefined
-  let streamQueue: StreamUpdate[] = []
   let streamedSteps: Record<string, boolean> = {}
   let toolCallsByStep: Record<string, string> = {}
   let pendingCodeChanges: Record<string, CodeChange> = {}
@@ -144,7 +143,6 @@
 
     return () => {
       window.removeEventListener('message', listener)
-      if (streamFrame !== undefined) cancelAnimationFrame(streamFrame)
     }
   })
 
@@ -244,6 +242,12 @@
       return
     }
 
+    if (message.type === 'assistantStream') {
+      if (message.sessionId !== activeSessionId) return
+      handleAssistantStream(message)
+      return
+    }
+
     if (message.type === 'error') {
       isGenerating = false
       settingsRestarting = false
@@ -257,7 +261,6 @@
 
     if (message.type === 'accepted' && message.sessionId === activeSessionId) {
       isGenerating = true
-      runtimeState = 'starting'
     }
   }
 
@@ -287,9 +290,6 @@
   }
 
   function resetTranscript(): void {
-    if (streamFrame !== undefined) cancelAnimationFrame(streamFrame)
-    streamFrame = undefined
-    streamQueue = []
     streamedSteps = {}
     toolCallsByStep = {}
     pendingCodeChanges = {}
@@ -308,13 +308,6 @@
   function setSettingsStatus(text: string, tone: 'success' | 'warning' | ''): void {
     settingsStatus = text
     settingsStatusTone = tone
-  }
-
-  function runtimeLabel(state: RuntimeState): string {
-    if (state === 'ready') return 'ready'
-    if (state === 'starting') return 'starting'
-    if (state === 'error') return 'error'
-    return 'stopped'
   }
 
   function selectionLineLabel(value: SelectionMetadata): string {
@@ -389,45 +382,25 @@
     void scrollToBottom()
   }
 
-  function queueStreamText(role: StreamUpdate['role'], text: string): void {
-    streamQueue.push({ role, text })
-    if (streamFrame !== undefined) return
-    streamFrame = requestAnimationFrame(flushStreamQueue)
-  }
-
-  function flushStreamQueue(): void {
-    streamFrame = undefined
-    const updates = streamQueue
-    streamQueue = []
-    if (updates.length === 0) return
-
-    const next = [...messages]
-    for (const update of updates) {
-      const last = next[next.length - 1]
-      if (last?.role === update.role) {
-        next[next.length - 1] = { ...last, text: last.text + update.text }
-      } else {
-        next.push({
-          id: nextMessageId++,
-          role: update.role,
-          label: update.role === 'reasoning' ? 'Thinking' : 'Helix',
-          text: update.text,
-        })
-      }
+  function appendStreamText(role: StreamUpdate['role'], text: string): void {
+    if (!text) return
+    const last = messages[messages.length - 1]
+    if (last?.role === role) {
+      messages = [...messages.slice(0, -1), { ...last, text: last.text + text }]
+    } else {
+      messages = [...messages, {
+        id: nextMessageId++,
+        role,
+        label: role === 'reasoning' ? 'Thinking' : 'Helix',
+        text,
+      }]
     }
-    messages = next
     void scrollToBottom()
   }
 
   async function scrollToBottom(): Promise<void> {
     await tick()
     if (transcriptElement) transcriptElement.scrollTop = transcriptElement.scrollHeight
-  }
-
-  function responseKey(data: Record<string, unknown>): string {
-    return Number.isInteger(data.turn) && Number.isInteger(data.step)
-      ? `${String(data.turn)}:${String(data.step)}`
-      : ''
   }
 
   function numericValue(value: unknown): number | undefined {
@@ -590,9 +563,25 @@
     if (!Array.isArray(content)) return
     for (const block of content) {
       if (!isRecord(block) || typeof block.type !== 'string' || typeof block.text !== 'string') continue
-      if (block.type === 'text') queueStreamText('assistant', block.text)
-      if (block.type === 'reasoning') queueStreamText('reasoning', block.text)
+      if (block.type === 'text') appendStreamText('assistant', block.text)
+      if (block.type === 'reasoning') appendStreamText('reasoning', block.text)
     }
+  }
+
+  function streamStepKey(sessionId: string | undefined, data: Record<string, unknown>): string | undefined {
+    const key = responseKey(data)
+    return key === undefined ? undefined : `${sessionId ?? ''}:${key}`
+  }
+
+  function handleAssistantStream(message: Extract<IncomingMessage, { type: 'assistantStream' }>): void {
+    const frame = isRecord(message.frame) ? message.frame : undefined
+    if (frame === undefined || frame.type !== 'chunk' || !isRecord(frame.chunk)) return
+    const chunk = frame.chunk
+
+    const key = streamStepKey(message.agentSessionId, frame)
+    if (key !== undefined) streamedSteps[key] = true
+    if (chunk.type === 'text-delta' && typeof chunk.text === 'string') appendStreamText('assistant', chunk.text)
+    if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text)
   }
 
   function upsertToolCall(tool: ToolCallView): void {
@@ -793,10 +782,6 @@
     }
   }
 
-  function stringValue(value: unknown): string | undefined {
-    return typeof value === 'string' && value.length > 0 ? value : undefined
-  }
-
   function toolStatusLabel(tool: ToolCallView): string {
     if (tool.approval?.status === 'pending') return tool.approval.decisionPending ? 'sending' : 'approval'
     if (tool.approval?.status === 'allowed-once') return 'allowed once'
@@ -825,10 +810,8 @@
       if (params.sessionId !== activeSessionId) return
       if (params.status === 'running') {
         isGenerating = true
-        runtimeState = 'starting'
       } else {
         isGenerating = false
-        runtimeState = 'ready'
         if (codeChanges.length > 0) {
           changesActive = false
           void scrollToBottom()
@@ -886,17 +869,17 @@
 
     if (event.type === 'assistant/chunk') {
       const chunk = isRecord(data.chunk) ? data.chunk : undefined
-      const key = responseKey(data)
+      const key = streamStepKey(sessionId, data)
       if (key) streamedSteps[key] = true
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') queueStreamText('assistant', chunk.text)
-      if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') queueStreamText('reasoning', chunk.text)
+      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') appendStreamText('assistant', chunk.text)
+      if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text)
       if (isRootSessionEvent && chunk?.type === 'usage') updateContextUsage(chunk.usage)
       return
     }
 
     if (event.type === 'assistant/message') {
       if (isRootSessionEvent) updateContextUsage(data.usage)
-      const key = responseKey(data)
+      const key = streamStepKey(sessionId, data)
       if (!key || !streamedSteps[key]) {
         const message = isRecord(data.message) ? data.message : {}
         appendAssistantBlocks(message.content)
@@ -1019,21 +1002,6 @@
     setSettingsStatus('Save settings to remove the stored key.', 'warning')
   }
 
-  function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null
-  }
-
-  function parsePayload(value: unknown): Record<string, unknown> | undefined {
-    if (isRecord(value)) return value
-    if (typeof value !== 'string') return undefined
-    try {
-      const parsed: unknown = JSON.parse(value)
-      return isRecord(parsed) ? parsed : undefined
-    } catch {
-      return undefined
-    }
-  }
-
   function toolChange(name: string, argumentsValue: Record<string, unknown>): CodeChange | undefined {
     const normalizedName = name.toLowerCase()
     const filePath = stringValue(argumentsValue.file_path) ?? stringValue(argumentsValue.filePath) ?? stringValue(argumentsValue.path)
@@ -1071,10 +1039,6 @@
     return undefined
   }
 
-  function countLines(value: string): number {
-    return value.length === 0 ? 0 : value.split(/\r\n|\r|\n/).length
-  }
-
   function textValue(value: unknown): string | undefined {
     return typeof value === 'string' ? value : undefined
   }
@@ -1098,25 +1062,11 @@
 {/snippet}
 
 <main class="shell">
-  <header class="masthead">
-    <div class="title-row">
-      <div class="title-copy">
-        <h1>Helix</h1>
-        <div class="runtime-state">
-          <span class:ready={runtimeState === 'ready'} class:starting={runtimeState === 'starting'} class:error={runtimeState === 'error'} class="status-dot"></span>
-          {runtimeLabel(runtimeState)}
-        </div>
-      </div>
-      <div class="title-actions">
-        <button class="btn icon-button" data-variant="ghost" data-size="icon" type="button" aria-label="New session" title="New session" onclick={() => post({ type: 'newSession' })}>
-          <Plus size={15} strokeWidth={1.8} />
-        </button>
-        <button class="btn icon-button" data-variant="ghost" data-size="icon" type="button" aria-label="Settings" title="Settings" onclick={openSettings}>
-          <Settings2 size={15} strokeWidth={1.8} />
-        </button>
-      </div>
-    </div>
-  </header>
+  <Masthead
+    runtimeState={runtimeState}
+    onNewSession={() => post({ type: 'newSession' })}
+    onOpenSettings={openSettings}
+  />
 
   {#if showSettings}
     <section class="settings-view" aria-labelledby="settings-heading">

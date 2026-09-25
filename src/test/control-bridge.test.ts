@@ -121,6 +121,68 @@ test('rejects an unauthenticated connection without preventing a valid one', asy
   accepted.destroy()
 })
 
+test('allows only one socket to complete the handshake', async () => {
+  const bridge = new LocalControlBridge()
+  await bridge.start()
+  const endpoint = bridge.endpoint
+  const token = bridge.token
+  assert.ok(endpoint)
+  assert.ok(token)
+
+  const first = createConnection(endpoint)
+  const firstEnvelopes = readEnvelopes(first)
+  const second = createConnection(endpoint)
+  second.on('error', () => undefined)
+  second.write(encodeControlEnvelope({
+    version: CONTROL_PROTOCOL_VERSION,
+    type: 'hello',
+    token,
+  }))
+  await once(second, 'close')
+  assert.equal(bridge.connected, false)
+
+  first.write(encodeControlEnvelope({
+    version: CONTROL_PROTOCOL_VERSION,
+    type: 'hello',
+    token,
+  }))
+  assert.equal((await firstEnvelopes.next()).value?.type, 'helloAck')
+  assert.equal(await bridge.waitForConnection(), true)
+
+  await bridge.close()
+  first.destroy()
+})
+
+test('preserves structured bridge error codes', async () => {
+  const bridge = new LocalControlBridge()
+  await bridge.start()
+  const endpoint = bridge.endpoint
+  const token = bridge.token
+  assert.ok(endpoint)
+  assert.ok(token)
+
+  const socket = createConnection(endpoint)
+  const envelopes = readEnvelopes(socket)
+  socket.write(encodeControlEnvelope({ version: CONTROL_PROTOCOL_VERSION, type: 'hello', token }))
+  await envelopes.next()
+  await bridge.waitForConnection()
+
+  const requestPromise = bridge.setSandboxMode('session-a', 'read-only')
+  const request = await envelopes.next()
+  assert.equal(request.value?.type, 'request')
+  socket.write(encodeControlEnvelope({
+    version: CONTROL_PROTOCOL_VERSION,
+    type: 'response',
+    requestId: request.value?.type === 'request' ? request.value.requestId : '',
+    ok: false,
+    error: { code: 'SESSION_NOT_FOUND', message: 'Session is not active.' },
+  }))
+  await assert.rejects(requestPromise, (error: { code?: string }) => error.code === 'SESSION_NOT_FOUND')
+
+  await bridge.close()
+  socket.destroy()
+})
+
 test('times out and cleans up a pending request when the peer disconnects', async () => {
   const bridge = new LocalControlBridge()
   await bridge.start()

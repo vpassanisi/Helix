@@ -1,3 +1,5 @@
+import { isRecord, stringValue } from '../shared/value-utils.js'
+
 export interface DiscoveredModel {
   id: string
   displayName?: string
@@ -12,11 +14,11 @@ export function parseModelCatalog(value: unknown): DiscoveredModel[] {
   for (const item of value.data) {
     if (!isRecord(item) || typeof item.id !== 'string' || item.id.trim() === '') continue
 
-    const task = stringValue(item.task)
+    const task = stringValue(item.task)?.trim()
     if (task !== undefined && !['chat', 'text', 'text-generation'].includes(task)) continue
 
     const id = item.id.trim()
-    const displayName = stringValue(item.display_name)
+    const displayName = stringValue(item.display_name)?.trim()
     const contextWindow = positiveInteger(
       item.native_context_length ?? item.max_context_length ?? item.context_length,
     )
@@ -47,12 +49,4 @@ function positiveInteger(value: unknown): number | undefined {
       ? Number(value)
       : Number.NaN
   return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : undefined
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
 }

@@ -43,35 +43,34 @@ export function mcpPatchLines(servers: RuntimeMcpServer[]): string[] {
   if (servers.length === 0) return []
   const lines: string[] = ['- insert:']
 
-  for (const server of servers) {
-    lines.push(
-      `    - id: ${yamlString(mcpServerId(server.serverName))}`,
-      "      name: '@deepseek-ai/dsh-mcp-client'",
-      '      config:',
-      `        serverName: ${yamlString(server.serverName)}`,
-      `        transport: ${yamlString(server.transport)}`,
-      '        failOnStartupError: true',
-    )
+  for (const server of servers) lines.push(...mcpServerPatchLines(server))
 
-    if (server.transport === 'stdio') {
-      lines.push(`        command: ${yamlString(server.command ?? '')}`)
-      if (server.args.length === 0) {
-        lines.push('        args: []')
-      } else {
-        lines.push('        args:', ...server.args.map((argument) => `          - ${yamlString(argument)}`))
-      }
-    } else {
-      lines.push(`        url: ${yamlString(server.url ?? '')}`)
-    }
+  return lines
+}
 
-    const environmentEntries = Object.entries(server.env)
-    if (environmentEntries.length > 0) {
-      lines.push('        env:')
-      for (const [environmentName] of environmentEntries) {
-        lines.push(
-          `          ${environmentName}: !!js process.env.${mcpEnvironmentVariable(server.serverName, environmentName)}`,
-        )
-      }
+function mcpServerPatchLines(server: RuntimeMcpServer): string[] {
+  const lines = [
+    `    - id: ${yamlString(mcpServerId(server.serverName))}`,
+    "      name: '@deepseek-ai/dsh-mcp-client'",
+    '      config:',
+    `        serverName: ${yamlString(server.serverName)}`,
+    `        transport: ${yamlString(server.transport)}`,
+    '        failOnStartupError: false',
+  ]
+
+  if (server.transport === 'stdio') {
+    lines.push(`        command: ${yamlString(server.command ?? '')}`)
+    lines.push(server.args.length === 0 ? '        args: []' : '        args:')
+    if (server.args.length > 0) lines.push(...server.args.map((argument) => `          - ${yamlString(argument)}`))
+  } else {
+    lines.push(`        url: ${yamlString(server.url ?? '')}`)
+  }
+
+  const environmentEntries = Object.keys(server.env)
+  if (environmentEntries.length > 0) {
+    lines.push('        env:')
+    for (const environmentName of environmentEntries) {
+      lines.push(`          ${environmentName}: !!js process.env.${mcpEnvironmentVariable(server.serverName, environmentName)}`)
     }
   }
 

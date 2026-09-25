@@ -32,7 +32,7 @@ test('builds a Docker stdio MCP patch without embedding secret values', () => {
     '      config:',
     '        serverName: "duckduckgo"',
     '        transport: "stdio"',
-    '        failOnStartupError: true',
+    '        failOnStartupError: false',
     '        command: "docker"',
     '        args:',
     '          - "run"',
@@ -58,7 +58,7 @@ test('emits an empty args array for a command without arguments', () => {
     '      config:',
     '        serverName: "local"',
     '        transport: "stdio"',
-    '        failOnStartupError: true',
+    '        failOnStartupError: false',
     '        command: "my-mcp-server"',
     '        args: []',
   ])

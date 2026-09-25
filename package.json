@@ -132,7 +132,7 @@
         "deepseekHarness.dshBin": {
           "type": "string",
           "default": "",
-          "description": "Optional path to the dsh executable. Empty launches @deepseek-ai/dsh through npx."
+          "description": "Optional path to a dsh CLI module. Empty uses the matching bundled @deepseek-ai/dsh runtime."
         },
         "deepseekHarness.dshHome": {
           "type": "string",
@@ -149,17 +149,18 @@
     }
   },
   "scripts": {
-    "compile": "npm run build:webview && tsc -p .",
+    "clean": "node scripts/clean-output.mjs",
+    "compile": "npm run clean && npm run build:webview && tsc -p .",
     "build:webview": "vite build --config vite.webview.config.ts",
     "check:webview": "svelte-check --tsconfig ./tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.ts",
     "watch": "tsc -p . --watch",
-    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/session-router.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/serial-task-queue.test.js",
-    "package": "npm run compile && npx --yes @vscode/vsce package --allow-missing-repository"
+    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/harness-runtime.test.js out/test/session-hierarchy.test.js out/test/serial-task-queue.test.js",
+    "package": "npm run compile && node scripts/package-extension.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-sdk-client": "0.0.1-rc.1",
+    "@deepseek-ai/dsh": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-sdk-client": "0.1.5-rc.1",
     "@lucide/svelte": "^1.43.0",
     "basecoat-css": "^1.0.2",
     "dompurify": "^3.4.15",

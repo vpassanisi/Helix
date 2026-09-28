@@ -1,7 +1,19 @@
 import * as vscode from 'vscode'
 import { ControlBridgeError } from '../runtime/control-bridge.js'
 import { mcpSecretKey } from '../runtime/mcp.js'
-import { modelEndpointCandidates, parseModelCatalog, type DiscoveredModel } from '../runtime/model-catalog.js'
+import {
+  activeSelectionAfterCatalogSave,
+  modelEndpointCandidates,
+  normalizeModelDrafts,
+  parseModelCatalog,
+  parseSavedModelCatalogJson,
+  resolveSavedModelReasoningEffort,
+  selectionForSavedModel,
+  serializeSavedModelCatalog,
+  validateModelDraftSources,
+  type DiscoveredModel,
+  type SavedModel,
+} from '../runtime/model-catalog.js'
 import { HarnessRuntime } from '../runtime/harness-runtime.js'
 import { SerialTaskQueue } from '../runtime/serial-task-queue.js'
 import type { PersistedMcpServer, RuntimeMcpServer, RuntimeOptions, RuntimeState, SandboxMode } from '../runtime/types.js'
@@ -11,11 +23,11 @@ import {
   type SidebarMessage,
   type SidebarMcpServer,
   type SidebarMcpServerSetting,
-  type SidebarModel,
   type SidebarSettings,
 } from '../sidebar/sidebar-provider.js'
 
 const API_KEY_SECRET = 'deepseekHarness.apiKey'
+const MODEL_CATALOG_FILE = 'models.json'
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 const MCP_ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -62,7 +74,7 @@ export class SettingsController {
     const endpoints = modelEndpointCandidates(baseUrl)
 
     if (endpoints.length === 0) {
-      this.postModels([], 'Set an API base URL to discover available models.')
+      this.postDiscoveredModels([], 'Set an API base URL to discover available models.')
       return
     }
 
@@ -74,26 +86,70 @@ export class SettingsController {
     for (const endpoint of endpoints) {
       try {
         const models = await fetchModelEndpoint(endpoint, headers)
-        await this.syncSelectedModelContext(models)
-        this.postModels(models)
+        this.postDiscoveredModels(models)
         return
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error)
       }
     }
 
-    this.postModels([], `Could not fetch models. ${lastError}`)
+    this.postDiscoveredModels([], `Could not fetch models. ${lastError}`)
+  }
+
+  async loadModelCatalog(): Promise<void> {
+    try {
+      this.postModelCatalog(await this.readModelCatalog())
+    } catch (error) {
+      this.postModelCatalog([], `Could not read the models file. ${formatError(error)}`)
+    }
+  }
+
+  async resolveReasoningEffort(selection: string | null): Promise<string | undefined> {
+    const modelId = vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-v4-flash')
+    return resolveSavedModelReasoningEffort(await this.readModelCatalog(), modelId, selection)
+  }
+
+  async saveModelCatalog(message: Extract<SidebarMessage, { type: 'saveModelCatalog' }>): Promise<void> {
+    try {
+      const previousModels = await this.readModelCatalog()
+      const nextDrafts = normalizeModelDrafts(message.models)
+      validateModelDraftSources(previousModels, nextDrafts)
+      const nextModels = nextDrafts.map(({ sourceId: _sourceId, ...model }) => model)
+      const catalogChanged = JSON.stringify(previousModels) !== JSON.stringify(nextModels)
+      const configuration = vscode.workspace.getConfiguration('deepseekHarness')
+      const activeSelection = activeSelectionAfterCatalogSave(
+        previousModels,
+        nextDrafts,
+        {
+          model: configuration.get<string>('model', 'deepseek-v4-flash'),
+          contextWindow: configuration.get<number>('contextWindow', 0),
+        },
+      )
+
+      await this.writeModelCatalog(nextModels)
+
+      if (activeSelection !== undefined) {
+        const globalConfiguration = vscode.workspace.getConfiguration()
+        await globalConfiguration.update('deepseekHarness.model', activeSelection.model, vscode.ConfigurationTarget.Global)
+        await globalConfiguration.update('deepseekHarness.contextWindow', activeSelection.contextWindow, vscode.ConfigurationTarget.Global)
+      }
+
+      const runtimeRestarting = activeSelection !== undefined || catalogChanged
+      this.options.sidebar.post({ type: 'modelCatalogSaved', models: nextModels, runtimeRestarting })
+      if (runtimeRestarting) await this.restartAfterSettings(false)
+    } catch (error) {
+      this.options.onError(error)
+    }
   }
 
   async saveSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
     try {
-      const next = await this.prepareSettings(message)
+      this.prepareSettings(message)
       const previousServers = this.configuredMcpServers()
-      await this.validateMcpSecretReferences(message.mcpServers)
-      const snapshot = await this.createSnapshot(previousServers, next.mcpServers)
+      const snapshot = await this.createSnapshot(previousServers, previousServers)
 
       try {
-        await this.writeSettings(message, next.mcpServers)
+        await this.writeSettings(message)
       } catch (error) {
         await this.restoreSettings(snapshot).catch((rollbackError) => {
           throw new Error(`${formatError(error)} Rollback also failed: ${formatError(rollbackError)}`)
@@ -101,29 +157,50 @@ export class SettingsController {
         throw error
       }
 
-      await this.restartAfterSettings(true)
+      await this.restartAfterSettings(false)
     } catch (error) {
       this.options.onError(error)
     }
   }
 
-  async selectModel(message: Extract<SidebarMessage, { type: 'selectModel' }>): Promise<void> {
-    const model = message.model.trim()
-    if (!model) return
-
-    const contextWindow = message.contextWindow ?? 0
-    if (!Number.isSafeInteger(contextWindow) || contextWindow < 0) {
-      this.options.onError('The selected model reported an invalid context window.')
-      return
-    }
-
+  async saveMcpServers(message: Extract<SidebarMessage, { type: 'saveMcpServers' }>): Promise<void> {
     try {
-      const configuration = vscode.workspace.getConfiguration()
-      await configuration.update('deepseekHarness.model', model, vscode.ConfigurationTarget.Global)
-      await configuration.update('deepseekHarness.contextWindow', contextWindow, vscode.ConfigurationTarget.Global)
+      const previousServers = this.configuredMcpServers()
+      const nextServers = this.normalizeMcpServers(message.mcpServers)
+      await this.validateMcpSecretReferences(message.mcpServers)
+      const snapshot = await this.createSnapshot(previousServers, nextServers)
+
+      try {
+        await this.syncMcpSecrets(nextServers, message.mcpServers)
+        await vscode.workspace.getConfiguration().update('deepseekHarness.mcpServers', nextServers, vscode.ConfigurationTarget.Global)
+      } catch (error) {
+        await this.restoreSettings(snapshot).catch((rollbackError) => {
+          throw new Error(`${formatError(error)} Rollback also failed: ${formatError(rollbackError)}`)
+        })
+        throw error
+      }
+
       await this.restartAfterSettings(false)
     } catch (error) {
       this.options.onError(error)
+    }
+  }
+
+  async selectModel(message: Extract<SidebarMessage, { type: 'selectModel' }>): Promise<boolean> {
+    const model = message.model.trim()
+    if (!model) return false
+
+    try {
+      const savedSelection = selectionForSavedModel(await this.readModelCatalog(), model)
+
+      const configuration = vscode.workspace.getConfiguration()
+      await configuration.update('deepseekHarness.model', savedSelection.model, vscode.ConfigurationTarget.Global)
+      await configuration.update('deepseekHarness.contextWindow', savedSelection.contextWindow, vscode.ConfigurationTarget.Global)
+      await this.restartAfterSettings(false)
+      return true
+    } catch (error) {
+      this.options.onError(error)
+      return false
     }
   }
 
@@ -164,6 +241,7 @@ export class SettingsController {
       apiKey: await this.options.context.secrets.get(API_KEY_SECRET),
       baseUrl: configuration.get<string>('baseUrl', '') || undefined,
       contextWindow: contextWindow > 0 ? contextWindow : undefined,
+      savedModels: await this.readModelCatalog(),
       dshBin: configuration.get<string>('dshBin', '') || undefined,
       dshHome: configuration.get<string>('dshHome', '') || undefined,
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
@@ -185,25 +263,18 @@ export class SettingsController {
     }
   }
 
-  private async prepareSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<{
-    provider: string
-    baseUrl: string
-    mcpServers: PersistedMcpServer[]
-  }> {
+  private prepareSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): void {
     const provider = message.provider.trim()
     const baseUrl = message.baseUrl.trim()
     if (!provider) throw new Error('Provider route is required.')
     validateHttpUrl(baseUrl, 'API URL')
-    return { provider, baseUrl, mcpServers: this.normalizeMcpServers(message.mcpServers) }
   }
 
-  private async writeSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>, mcpServers: PersistedMcpServer[]): Promise<void> {
+  private async writeSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
     const configuration = vscode.workspace.getConfiguration()
-    await this.syncMcpSecrets(mcpServers, message.mcpServers)
     await configuration.update('deepseekHarness.provider', message.provider.trim(), vscode.ConfigurationTarget.Global)
     await configuration.update('deepseekHarness.baseUrl', message.baseUrl.trim(), vscode.ConfigurationTarget.Global)
     await configuration.update('deepseekHarness.sandboxMode', message.sandboxMode, vscode.ConfigurationTarget.Global)
-    await configuration.update('deepseekHarness.mcpServers', mcpServers, vscode.ConfigurationTarget.Global)
 
     if (message.clearApiKey) await this.options.context.secrets.delete(API_KEY_SECRET)
     else if (message.apiKey?.trim()) await this.options.context.secrets.store(API_KEY_SECRET, message.apiKey.trim())
@@ -233,24 +304,31 @@ export class SettingsController {
     }
   }
 
-  private async syncSelectedModelContext(models: SidebarModel[]): Promise<void> {
-    const configuration = vscode.workspace.getConfiguration('deepseekHarness')
-    const selectedModel = configuration.get<string>('model', '').trim()
-    const selected = models.find((model) => model.id === selectedModel)
-    if (selected === undefined) return
-
-    const nextContextWindow = selected.contextWindow ?? 0
-    const current = configuration.get<number>('contextWindow', 0)
-    if (current === nextContextWindow) return
-    await vscode.workspace.getConfiguration().update(
-      'deepseekHarness.contextWindow',
-      nextContextWindow,
-      vscode.ConfigurationTarget.Global,
-    )
+  private postDiscoveredModels(models: DiscoveredModel[], error?: string): void {
+    this.options.sidebar.post({ type: 'discoveredModels', models, error })
   }
 
-  private postModels(models: SidebarModel[], error?: string): void {
-    this.options.sidebar.post({ type: 'models', models, error })
+  private postModelCatalog(models: SavedModel[], error?: string): void {
+    this.options.sidebar.post({ type: 'modelCatalog', models, error })
+  }
+
+  private async readModelCatalog(): Promise<SavedModel[]> {
+    const uri = vscode.Uri.joinPath(this.options.context.globalStorageUri, MODEL_CATALOG_FILE)
+    let contents: Uint8Array
+    try {
+      contents = await vscode.workspace.fs.readFile(uri)
+    } catch (error) {
+      if (isFileNotFoundError(error)) return []
+      throw error
+    }
+
+    return parseSavedModelCatalogJson(new TextDecoder().decode(contents))
+  }
+
+  private async writeModelCatalog(models: SavedModel[]): Promise<void> {
+    await vscode.workspace.fs.createDirectory(this.options.context.globalStorageUri)
+    const uri = vscode.Uri.joinPath(this.options.context.globalStorageUri, MODEL_CATALOG_FILE)
+    await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(serializeSavedModelCatalog(models)))
   }
 
   private configuredMcpServers(): PersistedMcpServer[] {
@@ -450,4 +528,8 @@ function normalizeMcpServer(server: SidebarMcpServer, index: number): PersistedM
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return isRecord(error) && error.code === 'FileNotFound'
 }

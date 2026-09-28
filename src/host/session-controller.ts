@@ -38,6 +38,7 @@ export interface SessionControllerOptions {
   getRuntimeState: () => RuntimeState
   getRuntimeOptions: () => Promise<RuntimeOptions>
   getMaxSelectionCharacters: () => number
+  resolveReasoningEffort: (selection: string | null) => Promise<string | undefined>
   onError: (error: unknown) => void
   onStateChanged: (resetTranscript?: boolean) => void
 }
@@ -50,6 +51,7 @@ export class SessionController {
   private readonly bufferedApprovals = new Map<string, BufferedApproval>()
   private promptGeneration = 0
   private disposed = false
+  private activeReasoningEffort: string | undefined
 
   constructor(private readonly options: SessionControllerOptions) {
     this.registerSessionRoute(this.activeSessionId)
@@ -57,6 +59,14 @@ export class SessionController {
 
   get currentSessionId(): string {
     return this.activeSessionId
+  }
+
+  get currentReasoningEffort(): string | undefined {
+    return this.activeReasoningEffort
+  }
+
+  resetReasoningEffort(): void {
+    this.activeReasoningEffort = undefined
   }
 
   async newSession(): Promise<void> {
@@ -75,11 +85,12 @@ export class SessionController {
     this.sessionHierarchy.clear()
 
     this.activeSessionId = randomUUID()
+    this.activeReasoningEffort = undefined
     this.registerSessionRoute(this.activeSessionId)
     this.options.onStateChanged(true)
   }
 
-  async submit(prompt: string, includeSelection: boolean): Promise<void> {
+  async submit(prompt: string, includeSelection: boolean, reasoningEffortSelection: string | null = null): Promise<void> {
     const generation = ++this.promptGeneration
     const sessionId = this.activeSessionId
     const editor = includeSelection ? vscode.window.activeTextEditor : undefined
@@ -90,13 +101,17 @@ export class SessionController {
     )
 
     try {
+      const reasoningEffort = await this.options.resolveReasoningEffort(reasoningEffortSelection)
       if (this.options.getRuntimeState() !== 'ready') {
         await this.options.runtime.start(await this.options.getRuntimeOptions())
       }
       if (!this.isCurrent(generation, sessionId)) return
+      await this.options.runtime.setReasoningEffort(sessionId, reasoningEffort ?? null)
+      if (!this.isCurrent(generation, sessionId)) return
+      this.activeReasoningEffort = reasoningEffort
       await this.options.runtime.prompt(sessionId, contentBlocks)
       if (!this.isCurrent(generation, sessionId)) return
-      this.options.sidebar.post({ type: 'accepted', sessionId })
+      this.options.sidebar.post({ type: 'accepted', sessionId, reasoningEffort })
     } catch (error) {
       this.options.changeTracker.finish(sessionId)
       if (this.isCurrent(generation, sessionId)) this.options.onError(error)

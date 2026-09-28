@@ -1,5 +1,10 @@
+import type { RequestPreviewResult } from '../runtime/control-protocol.js'
+import type { BinaryThinkingMode, ChatTemplateValue, ReasoningFormat } from '../runtime/model-catalog.js'
+export type { RequestPreviewResult } from '../runtime/control-protocol.js'
+
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+export type SettingsPage = 'connection' | 'models' | 'mcp' | 'preview'
 
 export interface SelectionMetadata {
   fileLabel: string
@@ -48,7 +53,20 @@ export interface SidebarModel {
   id: string
   displayName?: string
   contextWindow?: number
+  reasoningEfforts?: string[]
+  defaultReasoningEffort?: string
+  reasoningFormat?: ReasoningFormat
+  binaryThinkingMode?: BinaryThinkingMode
+  chatTemplateKwargs?: Record<string, ChatTemplateValue>
+  chatTemplateArgs?: Record<string, ChatTemplateValue>
+}
+
+export interface SidebarDiscoveredModel extends SidebarModel {
   loaded?: boolean
+}
+
+export interface ModelDraft extends SidebarModel {
+  sourceId?: string
 }
 
 export type CodeChangeKind = 'created' | 'modified' | 'deleted' | 'renamed'
@@ -71,14 +89,18 @@ export type SidebarMessage =
       apiKey?: string
       clearApiKey: boolean
       sandboxMode: SandboxMode
-      mcpServers: SidebarMcpServer[]
     }
-  | { type: 'submit'; prompt: string; includeSelection: boolean }
+  | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
+  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null }
   | { type: 'newSession' }
   | { type: 'refreshModels' }
-  | { type: 'selectModel'; model: string; contextWindow?: number }
+  | { type: 'loadModelCatalog' }
+  | { type: 'saveModelCatalog'; models: ModelDraft[] }
+  | { type: 'selectModel'; model: string }
   | { type: 'setSandboxMode'; sandboxMode: SandboxMode }
   | { type: 'cancelTurn' }
+  | { type: 'previewRequest'; prompt: string }
+  | { type: 'cancelRequestPreview' }
   | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
 
 export interface WebviewApi {
@@ -86,7 +108,7 @@ export interface WebviewApi {
 }
 
 export type IncomingMessage =
-  | { type: 'state'; state: { activeSessionId: string; runtimeState: RuntimeState; selection?: SelectionMetadata }; resetTranscript?: boolean }
+  | { type: 'state'; state: { activeSessionId: string; runtimeState: RuntimeState; reasoningEffort?: string; selection?: SelectionMetadata }; resetTranscript?: boolean }
   | { type: 'settings'; settings: SidebarSettings }
   | { type: 'settingsSaved'; settings: SidebarSettings; restarting: boolean }
   | { type: 'selection'; selection?: SelectionMetadata }
@@ -94,8 +116,11 @@ export type IncomingMessage =
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
   | { type: 'error'; message: string }
-  | { type: 'accepted'; sessionId: string }
-  | { type: 'models'; models: SidebarModel[]; error?: string }
+  | { type: 'accepted'; sessionId: string; reasoningEffort?: string }
+  | { type: 'discoveredModels'; models: SidebarDiscoveredModel[]; error?: string }
+  | { type: 'modelCatalog'; models: SidebarModel[]; error?: string }
+  | { type: 'modelCatalogSaved'; models: SidebarModel[]; runtimeRestarting: boolean }
+  | { type: 'requestPreviewState'; state: 'loading' | 'success' | 'error' | 'cancelled'; preview?: RequestPreviewResult; message?: string }
   | {
       type: 'approvalRequest'
       sessionId: string

@@ -8,6 +8,9 @@ export type ControlRequestMethod =
   | 'session.inject'
   | 'session.setApprovalPolicy'
   | 'session.setSandboxMode'
+  | 'session.setReasoningEffort'
+  | 'request.preview.arm'
+  | 'provider.request.captureNext'
   | 'capabilities.get'
   | 'approval.resolve'
 
@@ -17,6 +20,9 @@ export const CONTROL_CAPABILITIES = [
   'session.inject',
   'session.setApprovalPolicy',
   'session.setSandboxMode',
+  'session.setReasoningEffort',
+  'request.preview.arm',
+  'provider.request.captureNext',
   'capabilities.get',
   'approval.resolve',
 ] as const satisfies readonly ControlRequestMethod[]
@@ -69,8 +75,38 @@ export interface ControlEventEnvelope {
   type: 'event'
   eventId: string
   sessionId: string
-  method: 'approval.request' | 'approval.resolved' | 'assistant.stream'
+  method: 'approval.request' | 'approval.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured'
   params: Record<string, unknown>
+}
+
+/** Canonical DSH request fields captured before adapter dispatch. */
+export interface PreviewRequest {
+  provider: string
+  model: string
+  reasoningEffort?: string
+  messages: unknown[]
+  system?: string
+  tools?: unknown[]
+  temperature?: number
+  maxTokens?: number
+  stop?: string[]
+}
+
+export interface PreviewPromptSection {
+  name: string
+  text: string
+}
+
+/** Display-only attribution captured from the DSH prompt assembly. */
+export interface PreviewPromptBreakdown {
+  systemSections: PreviewPromptSection[]
+  contextSections: PreviewPromptSection[]
+}
+
+/** The canonical request stays separate from UI-only prompt attribution. */
+export interface RequestPreviewResult {
+  request: PreviewRequest
+  promptBreakdown?: PreviewPromptBreakdown
 }
 
 export type ControlEnvelope =

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { access, readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { HarnessClient, HarnessClientOptions } from '@deepseek-ai/dsh-sdk-client'
 import type { ControlBroker, ControlBridgeOptions } from '../runtime/control-bridge.js'
 import { HarnessRuntime } from '../runtime/harness-runtime.js'
+import { RequestPreviewCancelledError, RequestPreviewController, type RequestPreviewRuntime } from '../host/request-preview-controller.js'
 import type { RuntimeOptions } from '../runtime/types.js'
 
 function runtimeOptions(): RuntimeOptions {
@@ -29,6 +31,9 @@ function fakeBridge(connected: boolean, calls: string[]): ControlBroker {
     inject: async () => undefined,
     setApprovalPolicy: async () => undefined,
     setSandboxMode: async () => undefined,
+    setReasoningEffort: async (sessionId, reasoningEffort) => { calls.push(`bridge.reasoning:${sessionId}:${reasoningEffort ?? 'default'}`) },
+    armRequestPreview: async (sessionId, captureId) => { calls.push(`bridge.preview:${sessionId}:${captureId}`) },
+    captureNextProviderRequest: async (sessionId) => { calls.push(`bridge.capture-provider-request:${sessionId}`) },
     close: async () => { calls.push('bridge.close') },
   }
 }
@@ -81,4 +86,230 @@ test('cleans up a client that fails while prompting', async () => {
   assert.equal(runtime.currentState, 'error')
   assert.equal(calls.filter((call) => call === 'client.close').length, 1)
   await runtime.dispose()
+})
+
+test('stages reasoning effort on the running session without restarting DSH', async () => {
+  const calls: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) => fakeClient(calls),
+  })
+
+  await runtime.start(runtimeOptions())
+  await runtime.setReasoningEffort('active-session', 'high')
+  await runtime.armRequestPreview('active-session', 'capture-id')
+  await runtime.prompt('active-session', [])
+
+  assert.deepEqual(calls, [
+    'bridge.start',
+    'client.start',
+    'client.initialize',
+    'bridge.reasoning:active-session:high',
+    'bridge.preview:active-session:capture-id',
+    'client.prompt',
+  ])
+  await runtime.dispose()
+})
+
+test('writes an isolated DSH sessions root into the runtime patch', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+
+  await runtime.start({ ...runtimeOptions(), sessionStorageRoot: '/tmp/preview-session-store' })
+  const patchPath = clientOptions?.patches?.[0]
+  assert.ok(patchPath)
+  const patch = await readFile(patchPath, 'utf8')
+  assert.match(patch, /- id: sessions\n  config:\n    root: "\/tmp\/preview-session-store"/)
+  await runtime.dispose()
+})
+
+test('writes saved model formats and same-name effort values into the llm-pi-ai route patch', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+
+  await runtime.start({
+    ...runtimeOptions(),
+    provider: 'muse-gateway',
+    savedModels: [
+      {
+        id: 'muse/glimmer',
+        displayName: 'Muse Glimmer',
+        contextWindow: 65536,
+        reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+        defaultReasoningEffort: 'medium',
+        reasoningFormat: 'deepseek',
+      },
+      {
+        id: 'muse/template',
+        reasoningFormat: 'chat-template',
+        reasoningEfforts: ['low', 'medium', 'high'],
+        chatTemplateKwargs: { effort: { $var: 'thinking.effort' }, enabled: true },
+      },
+    ],
+  })
+
+  const patchPath = clientOptions?.patches?.[0]
+  assert.ok(patchPath)
+  const patch = await readFile(patchPath, 'utf8')
+  assert.match(patch, /"muse-gateway":\n        models:/)
+  assert.match(patch, /- id: "muse\/glimmer"\n            name: "Muse Glimmer"\n            contextWindow: 65536/)
+  assert.match(patch, /"medium": "medium"/)
+  assert.match(patch, /thinkingFormat: "deepseek"/)
+  assert.match(patch, /"muse\/template"[\s\S]*?chatTemplateKwargs:[\s\S]*?\$var: "thinking\.effort"/)
+  await runtime.dispose()
+})
+
+test('does not send llm-pi-ai model formats through the fixed deepseek-official route', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+  await runtime.start({
+    ...runtimeOptions(),
+    provider: 'deepseek-official',
+    savedModels: [{ id: 'model-a', reasoningFormat: 'deepseek', reasoningEfforts: ['low', 'medium', 'high'] }],
+  })
+  const patchPath = clientOptions?.patches?.[0]
+  assert.ok(patchPath)
+  const patch = await readFile(patchPath, 'utf8')
+  assert.doesNotMatch(patch, /thinkingFormat:|"deepseek-official":/)
+  await runtime.dispose()
+})
+
+test('previews the selected route and fresh-chat default effort, then removes temporary session data', async () => {
+  let startedOptions: RuntimeOptions | undefined
+  let stagedEffort: string | null | undefined
+  let stagedCapture: { sessionId: string; captureId: string } | undefined
+  let promptData: { sessionId: string; blocks: Array<{ type: 'text'; text: string }> } | undefined
+  let disposed = false
+  let sessionRoot: string | undefined
+  const controller = new RequestPreviewController({
+    getRuntimeOptions: async () => ({ ...runtimeOptions(), provider: 'selected-route', model: 'selected-model', dshHome: '/tmp/dsh-home' }),
+    resolveReasoningEffort: async () => 'configured-default',
+    createRuntime: (onControlEvent) => ({
+      start: async (options) => { startedOptions = options; sessionRoot = options.sessionStorageRoot },
+      setReasoningEffort: async (sessionId, effort) => { stagedEffort = effort; assert.ok(sessionId) },
+      armRequestPreview: async (sessionId, captureId) => { stagedCapture = { sessionId, captureId } },
+      prompt: async (sessionId, blocks) => {
+        promptData = { sessionId, blocks }
+        assert.ok(sessionRoot)
+        await access(sessionRoot)
+        onControlEvent({
+          eventId: 'capture-event',
+          sessionId,
+          method: 'request.previewCaptured',
+          params: {
+            captureId: stagedCapture?.captureId,
+            request: {
+              provider: 'selected-route',
+              model: 'selected-model',
+              reasoningEffort: stagedEffort,
+              messages: [{ role: 'user', content: [{ type: 'text', text: 'preview this request' }] }],
+            },
+            promptBreakdown: {
+              systemSections: [{ name: 'harness:identity', text: 'Harness identity.' }],
+              contextSections: [{ name: 'skills:catalog', text: 'Available skills.' }],
+            },
+          },
+        })
+        return 'preview-turn'
+      },
+      dispose: async () => { disposed = true },
+    } satisfies RequestPreviewRuntime),
+  })
+
+  const preview = await controller.run('  preview this request  ')
+  assert.equal(startedOptions?.provider, 'selected-route')
+  assert.equal(startedOptions?.model, 'selected-model')
+  assert.equal(startedOptions?.dshHome, '/tmp/dsh-home')
+  assert.ok(startedOptions?.sessionStorageRoot)
+  assert.equal(stagedEffort, 'configured-default')
+  assert.deepEqual(promptData?.blocks, [{ type: 'text', text: 'preview this request' }])
+  assert.equal(preview.request.provider, 'selected-route')
+  assert.equal(preview.request.model, 'selected-model')
+  assert.equal(preview.request.reasoningEffort, 'configured-default')
+  assert.deepEqual(preview.promptBreakdown?.systemSections, [{ name: 'harness:identity', text: 'Harness identity.' }])
+  assert.equal(disposed, true)
+  await assert.rejects(access(sessionRoot!), { code: 'ENOENT' })
+})
+
+test('request preview reports startup failures and removes its temporary sessions root', async () => {
+  let sessionRoot: string | undefined
+  let disposed = false
+  const controller = new RequestPreviewController({
+    getRuntimeOptions: async () => runtimeOptions(),
+    resolveReasoningEffort: async () => undefined,
+    createRuntime: () => ({
+      start: async (options) => { sessionRoot = options.sessionStorageRoot; throw new Error('preview startup failed') },
+      setReasoningEffort: async () => undefined,
+      armRequestPreview: async () => undefined,
+      prompt: async () => 'unused',
+      dispose: async () => { disposed = true },
+    }),
+  })
+
+  await assert.rejects(controller.run('hello'), /preview startup failed/)
+  assert.equal(disposed, true)
+  await assert.rejects(access(sessionRoot!), { code: 'ENOENT' })
+})
+
+test('request preview reports capture failures and removes its temporary sessions root', async () => {
+  let sessionRoot: string | undefined
+  let disposed = false
+  const controller = new RequestPreviewController({
+    getRuntimeOptions: async () => runtimeOptions(),
+    resolveReasoningEffort: async () => undefined,
+    createRuntime: () => ({
+      start: async (options) => { sessionRoot = options.sessionStorageRoot },
+      setReasoningEffort: async () => undefined,
+      armRequestPreview: async () => undefined,
+      prompt: async () => { throw new Error('DSH request capture failed') },
+      dispose: async () => { disposed = true },
+    }),
+  })
+
+  await assert.rejects(controller.run('hello'), /DSH request capture failed/)
+  assert.equal(disposed, true)
+  await assert.rejects(access(sessionRoot!), { code: 'ENOENT' })
+})
+
+test('cancelling a request preview disposes the runtime and removes temporary sessions', async () => {
+  let sessionRoot: string | undefined
+  let resolvePromptStarted!: () => void
+  const promptStarted = new Promise<void>((resolve) => { resolvePromptStarted = resolve })
+  let disposed = false
+  const controller = new RequestPreviewController({
+    getRuntimeOptions: async () => runtimeOptions(),
+    resolveReasoningEffort: async () => undefined,
+    createRuntime: () => ({
+      start: async (options) => { sessionRoot = options.sessionStorageRoot },
+      setReasoningEffort: async () => undefined,
+      armRequestPreview: async () => undefined,
+      prompt: async () => { resolvePromptStarted(); return await new Promise<string>(() => undefined) },
+      dispose: async () => { disposed = true },
+    }),
+  })
+
+  const preview = controller.run('hello')
+  await promptStarted
+  await controller.cancel()
+  await assert.rejects(preview, RequestPreviewCancelledError)
+  assert.equal(disposed, true)
+  await assert.rejects(access(sessionRoot!), { code: 'ENOENT' })
 })

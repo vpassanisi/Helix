@@ -6,21 +6,29 @@
     Check,
     ChevronDown,
     Code2,
-    Eye,
     FileDiff,
-    FolderPen,
     LoaderCircle,
     Plus,
     RefreshCw,
     Server,
     Send,
-    ShieldAlert,
     Square,
     Trash2,
     Wrench,
     X,
   } from '@lucide/svelte'
   import { renderMarkdown } from './markdown.js'
+  import { StreamedStepTracker } from '../shared/streamed-step-tracker.js'
+  import { createRequestPreviewView } from '../shared/request-preview-view.js'
+  import {
+    DSH_REASONING_FORMATS,
+    DSH_REASONING_LEVELS,
+    isBinaryReasoningFormat,
+    selectableReasoningEfforts,
+    updateReasoningEffortSelection,
+    type ChatTemplateValue,
+    type ReasoningFormat,
+  } from '../runtime/model-catalog.js'
   import Masthead from './components/Masthead.svelte'
   import { countLines, isRecord, parsePayload, responseKey, stringValue } from '../shared/value-utils.js'
   import type {
@@ -35,8 +43,12 @@
     SidebarMcpEnvironment,
     SidebarMcpServer,
     SidebarMcpServerSetting,
+    SidebarDiscoveredModel,
     SidebarModel,
+    RequestPreviewResult,
+    ModelDraft,
     SidebarSettings,
+    SettingsPage,
     WebviewApi,
   } from './types.js'
 
@@ -91,6 +103,15 @@
     env: McpEnvironmentDraft[]
   }
 
+  interface ModelEditorDraft extends Omit<SidebarModel, 'reasoningEfforts' | 'chatTemplateKwargs' | 'chatTemplateArgs'> {
+    key: number
+    sourceId?: string
+    reasoningEfforts: string[]
+    chatTemplateKwargsText: string
+    chatTemplateArgsText: string
+  }
+  const reasoningFormatOptions: ReasoningFormat[] = ['auto', ...DSH_REASONING_FORMATS]
+
   let { vscode }: Props = $props()
 
   let activeSessionId = $state('')
@@ -100,24 +121,37 @@
   let messages = $state<ChatMessage[]>([])
   let prompt = $state('')
   let isGenerating = $state(false)
-  let showSettings = $state(false)
+  let waitingForFirstResponse = $state(false)
+  let settingsPage = $state<SettingsPage | undefined>()
   let settings = $state<SidebarSettings | undefined>()
   let provider = $state('')
   let model = $state('')
+  let reasoningEffort = $state<string | null>(null)
   let baseUrl = $state('')
   let apiKey = $state('')
   let sandboxMode = $state<SandboxMode>('workspace-write')
   let clearApiKey = $state(false)
   let settingsStatus = $state('')
   let settingsStatusTone = $state<'success' | 'warning' | ''>('')
+  let requestPreviewPrompt = $state('')
+  let requestPreviewState = $state<'idle' | 'loading' | 'success' | 'error' | 'cancelled'>('idle')
+  let requestPreview = $state<RequestPreviewResult | undefined>()
+  let showRawRequestJson = $state(false)
+  let requestPreviewError = $state('')
   let settingsRestarting = $state(false)
+  let mcpSaving = $state(false)
   let contextUsedTokens = $state<number | undefined>()
   let contextWindowTokens = $state<number | undefined>()
   let contextWindowOverride = $state<number | undefined>()
   let modelChanging = $state(false)
   let models = $state<SidebarModel[]>([])
+  let discoveredModels = $state<SidebarDiscoveredModel[]>([])
+  let modelDrafts = $state<ModelEditorDraft[]>([])
   let modelsLoading = $state(false)
   let modelsError = $state('')
+  let modelCatalogLoading = $state(true)
+  let modelCatalogSaving = $state(false)
+  let modelCatalogError = $state('')
   let mcpServers = $state<McpServerDraft[]>([])
   let codeChanges = $state<CodeChange[]>([])
   let changesOpen = $state(false)
@@ -127,18 +161,22 @@
   let transcriptElement = $state<HTMLDivElement>()
   let promptElement = $state<HTMLTextAreaElement>()
   let modelPickerElement = $state<HTMLDivElement>()
+  let reasoningEffortPickerElement = $state<HTMLDivElement>()
+  let modelSourcePickerElement = $state<HTMLDivElement>()
   let sandboxPickerElement = $state<HTMLDivElement>()
-  let streamedSteps: Record<string, boolean> = {}
+  let effortStateNeedsCatalogDefault = false
+  const streamedStepTracker = new StreamedStepTracker()
   let toolCallsByStep: Record<string, string> = {}
   let pendingCodeChanges: Record<string, CodeChange> = {}
   let pendingApprovalRequests: Record<string, Extract<IncomingMessage, { type: 'approvalRequest' }> & { approval: ApprovalView }> = {}
   let toolDerivedPaths = new Set<string>()
+  let nextModelDraftKey = 1
 
   onMount(() => {
     const listener = (event: MessageEvent<IncomingMessage>) => handleMessage(event.data)
     window.addEventListener('message', listener)
-    modelsLoading = true
     vscode.postMessage({ type: 'ready' })
+    post({ type: 'loadModelCatalog' })
     void tick().then(initializeSandboxPicker)
 
     return () => {
@@ -152,9 +190,18 @@
 
   function handleMessage(message: IncomingMessage): void {
     if (message.type === 'state') {
+      const sessionChanged = activeSessionId !== message.state.activeSessionId
       activeSessionId = message.state.activeSessionId
       runtimeState = message.state.runtimeState
-      if (runtimeState === 'stopped' || runtimeState === 'error') isGenerating = false
+      if (sessionChanged || message.resetTranscript) {
+        const savedEffort = models.find((entry) => entry.id === model)?.defaultReasoningEffort
+        reasoningEffort = message.state.reasoningEffort ?? savedEffort ?? null
+        effortStateNeedsCatalogDefault = message.state.reasoningEffort === undefined && !models.some((entry) => entry.id === model)
+      }
+      if (runtimeState === 'stopped' || runtimeState === 'error') {
+        isGenerating = false
+        waitingForFirstResponse = false
+      }
       selection = message.state.selection
       selectionAttached = true
       if (runtimeState === 'ready' && settingsRestarting) {
@@ -176,6 +223,7 @@
 
     if (message.type === 'codeChanges') {
       if (message.sessionId !== activeSessionId) return
+      if (message.changes.length > 0) waitingForFirstResponse = false
       if (message.active && !hostChangesStarted) {
         hostChangesStarted = true
         codeChanges = []
@@ -199,6 +247,7 @@
       applySettings(message.settings)
       if (message.type === 'settingsSaved') {
         settingsRestarting = message.restarting
+        mcpSaving = false
         setSettingsStatus(
           message.restarting ? 'Applying settings…' : 'Saved.',
           message.restarting ? 'warning' : 'success',
@@ -207,23 +256,57 @@
       return
     }
 
-    if (message.type === 'models') {
-      models = message.models
+    if (message.type === 'discoveredModels') {
+      discoveredModels = message.models
       modelsLoading = false
       modelsError = message.error ?? ''
+      void tick().then(refreshModelSourcePicker)
+      return
+    }
+
+    if (message.type === 'modelCatalog') {
+      models = message.models
+      modelDrafts = message.models.map(toModelEditorDraft)
+      modelCatalogLoading = false
+      modelCatalogError = message.error ?? ''
       const selected = models.find((option) => option.id === model)
       if (selected?.contextWindow !== undefined) {
         contextWindowOverride = selected.contextWindow
         contextWindowTokens = selected.contextWindow
-      } else if (contextWindowOverride === undefined) {
-        contextWindowTokens = undefined
       }
+      syncReasoningEffortWithCatalog()
       void tick().then(refreshModelPicker)
+      void tick().then(initializeReasoningEffortPicker)
+      void tick().then(refreshModelSourcePicker)
+      return
+    }
+
+    if (message.type === 'modelCatalogSaved') {
+      models = message.models
+      modelDrafts = message.models.map(toModelEditorDraft)
+      modelCatalogSaving = false
+      modelCatalogError = ''
+      syncReasoningEffortWithCatalog()
+      setSettingsStatus(
+        message.runtimeRestarting ? 'Models saved. Applying model settings…' : 'Models saved.',
+        message.runtimeRestarting ? 'warning' : 'success',
+      )
+      void tick().then(refreshModelPicker)
+      void tick().then(initializeReasoningEffortPicker)
+      void tick().then(refreshModelSourcePicker)
+      return
+    }
+
+    if (message.type === 'requestPreviewState') {
+      requestPreviewState = message.state
+      requestPreview = message.preview
+      requestPreviewError = message.message ?? ''
       return
     }
 
     if (message.type === 'approvalRequest') {
       if (message.sessionId !== activeSessionId) return
+      waitingForFirstResponse = false
       handleApprovalRequest(message)
       return
     }
@@ -250,9 +333,12 @@
 
     if (message.type === 'error') {
       isGenerating = false
+      waitingForFirstResponse = false
       settingsRestarting = false
+      modelCatalogSaving = false
+      mcpSaving = false
       modelChanging = false
-      if (showSettings) {
+      if (settingsPage !== undefined) {
         setSettingsStatus(message.message, 'warning')
       }
       else appendMessage('activity', 'Runtime error', message.message)
@@ -261,6 +347,8 @@
 
     if (message.type === 'accepted' && message.sessionId === activeSessionId) {
       isGenerating = true
+      reasoningEffort = message.reasoningEffort ?? models.find((entry) => entry.id === model)?.defaultReasoningEffort ?? null
+      effortStateNeedsCatalogDefault = false
     }
   }
 
@@ -278,6 +366,20 @@
     mcpServers = next.mcpServers.map(toMcpServerDraft)
   }
 
+  function toModelEditorDraft(entry: SidebarModel): ModelEditorDraft {
+    const { reasoningEfforts, chatTemplateKwargs, chatTemplateArgs, ...modelEntry } = entry
+    return {
+      ...modelEntry,
+      key: nextModelDraftKey++,
+      sourceId: entry.id,
+      reasoningFormat: entry.reasoningFormat ?? 'auto',
+      binaryThinkingMode: entry.binaryThinkingMode ?? 'provider-default',
+      reasoningEfforts: reasoningEfforts ?? [],
+      chatTemplateKwargsText: JSON.stringify(chatTemplateKwargs ?? {}, null, 2),
+      chatTemplateArgsText: JSON.stringify(chatTemplateArgs ?? {}, null, 2),
+    }
+  }
+
   function toMcpServerDraft(server: SidebarMcpServerSetting): McpServerDraft {
     return {
       serverName: server.serverName,
@@ -290,7 +392,7 @@
   }
 
   function resetTranscript(): void {
-    streamedSteps = {}
+    streamedStepTracker.reset()
     toolCallsByStep = {}
     pendingCodeChanges = {}
     toolDerivedPaths = new Set()
@@ -301,6 +403,7 @@
     changesActive = false
     hostChangesStarted = false
     isGenerating = false
+    waitingForFirstResponse = false
     contextUsedTokens = undefined
     contextWindowTokens = contextWindowOverride
   }
@@ -320,6 +423,7 @@
 
   function submit(): void {
     if (isGenerating) {
+      waitingForFirstResponse = false
       post({ type: 'cancelTurn' })
       return
     }
@@ -330,10 +434,21 @@
     const attachedSelection = selectionAttached ? selection : undefined
     appendMessage('user', 'You', text, attachedSelection)
     isGenerating = true
-    post({ type: 'submit', prompt: text, includeSelection: attachedSelection !== undefined })
+    waitingForFirstResponse = true
+    post({
+      type: 'submit',
+      prompt: text,
+      includeSelection: attachedSelection !== undefined,
+      reasoningEffort,
+    })
     prompt = ''
     selectionAttached = true
     void tick().then(() => promptElement?.focus())
+  }
+
+  function startNewSession(): void {
+    waitingForFirstResponse = false
+    post({ type: 'newSession' })
   }
 
   function handlePromptKeydown(event: KeyboardEvent): void {
@@ -357,10 +472,205 @@
     const selected = models.find((option) => option.id === nextModel)
     const selectedContextWindow = selected?.contextWindow
     model = nextModel
+    reasoningEffort = selected?.defaultReasoningEffort ?? null
+    effortStateNeedsCatalogDefault = false
     contextWindowOverride = selectedContextWindow
     contextWindowTokens = selectedContextWindow
     modelChanging = true
-    post({ type: 'selectModel', model: nextModel, contextWindow: selectedContextWindow })
+    post({ type: 'selectModel', model: nextModel })
+    void tick().then(refreshReasoningEffortPicker)
+  }
+
+  function handleAddDiscoveredModel(event: Event): void {
+    const detail = (event as CustomEvent<{ value?: string }>).detail
+    const selectedId = typeof detail?.value === 'string' ? detail.value : ''
+    if (!selectedId) return
+
+    const discovered = discoveredModels.find((entry) => entry.id === selectedId)
+    if (discovered === undefined) return
+
+    const existing = modelDrafts.find((entry) => entry.id === discovered.id)
+    if (existing !== undefined) {
+      setSettingsStatus(`Model "${existing.displayName || existing.id}" is already in the catalog.`, 'warning')
+    } else {
+      const { loaded: _loaded, reasoningEfforts, ...modelEntry } = discovered
+      modelDrafts = [...modelDrafts, {
+        ...modelEntry,
+        key: nextModelDraftKey++,
+        reasoningEfforts: reasoningEfforts ?? [],
+        reasoningFormat: 'auto',
+        binaryThinkingMode: 'provider-default',
+        chatTemplateKwargsText: '{}',
+        chatTemplateArgsText: '{}',
+      }]
+      setSettingsStatus(`Added ${discovered.displayName ?? discovered.id}. Edit its details, then save models.`, 'success')
+    }
+    const picker = modelSourcePickerElement as (HTMLDivElement & { clear?: () => void }) | undefined
+    picker?.clear?.()
+    void tick().then(() => {
+      initializeReasoningEffortPicker()
+      refreshModelSourcePicker()
+    })
+  }
+
+  function removeModelDraft(key: number): void {
+    modelDrafts = modelDrafts.filter((draft) => draft.key !== key)
+  }
+
+  function modelEffortOptions(draft: ModelEditorDraft): string[] {
+    return [...draft.reasoningEfforts]
+  }
+
+  function modelReasoningEffortChoices(draft: ModelEditorDraft): string[] {
+    const legacy = draft.reasoningEfforts.filter((effort) => !(DSH_REASONING_LEVELS as readonly string[]).includes(effort))
+    return [...DSH_REASONING_LEVELS, ...legacy]
+  }
+
+  function isLegacyModelEffort(effort: string): boolean {
+    return !(DSH_REASONING_LEVELS as readonly string[]).includes(effort)
+  }
+
+  function modelEffortSummary(draft: ModelEditorDraft): string {
+    const count = modelEffortOptions(draft).length
+    return count === 0 ? 'Provider default' : `${count} selected`
+  }
+
+  function handleModelReasoningEffortChange(key: number, effort: string, event: Event): void {
+    const draft = modelDrafts.find((entry) => entry.key === key)
+    const input = event.currentTarget
+    if (draft === undefined || !(input instanceof HTMLInputElement)) return
+    const updated = updateReasoningEffortSelection(
+      draft.reasoningEfforts,
+      draft.defaultReasoningEffort,
+      effort,
+      input.checked,
+    )
+    if (updated === undefined) {
+      input.checked = false
+      setSettingsStatus('Select at least one graded level before enabling Off.', 'warning')
+      return
+    }
+    draft.reasoningEfforts = updated.reasoningEfforts
+    draft.defaultReasoningEffort = updated.defaultReasoningEffort
+    void tick().then(refreshModelDefaultEffortPickers)
+  }
+
+  function handleModelReasoningFormatChange(key: number, event: Event): void {
+    const draft = modelDrafts.find((entry) => entry.key === key)
+    const selected = (event as CustomEvent<{ value?: string }>).detail?.value
+    const value = typeof selected === 'string' && selected.startsWith('format-') ? selected.slice('format-'.length) : selected
+    if (draft === undefined || !isReasoningFormatOption(value)) return
+    draft.reasoningFormat = value
+    if (isBinaryReasoningFormat(value)) draft.binaryThinkingMode ??= 'provider-default'
+    void tick().then(initializeReasoningEffortPicker)
+  }
+
+  function handleBinaryThinkingModeChange(key: number, event: Event): void {
+    const draft = modelDrafts.find((entry) => entry.key === key)
+    const value = (event as CustomEvent<{ value?: string }>).detail?.value
+    if (draft === undefined || (value !== 'provider-default' && value !== 'on' && value !== 'off')) return
+    draft.binaryThinkingMode = value
+  }
+
+  function isReasoningFormatOption(value: unknown): value is ReasoningFormat {
+    return typeof value === 'string' && reasoningFormatOptions.includes(value as ReasoningFormat)
+  }
+
+  function parseChatTemplateDraft(value: string, label: string): Record<string, ChatTemplateValue> | undefined {
+    if (!value.trim()) return undefined
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(value)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new Error(`${label} must be valid JSON. ${reason}`)
+    }
+    if (!isRecord(parsed)) throw new Error(`${label} must be a JSON object.`)
+    return parsed as Record<string, ChatTemplateValue>
+  }
+
+  function modelDefaultEffortOption(draft: ModelEditorDraft): string {
+    if (draft.defaultReasoningEffort === undefined) return 'model-default'
+    const index = modelEffortOptions(draft).indexOf(draft.defaultReasoningEffort)
+    return index < 0 ? 'model-default' : `effort-${index}`
+  }
+
+  function handleModelDefaultEffortChange(key: number, event: Event): void {
+    const draft = modelDrafts.find((entry) => entry.key === key)
+    const value = (event as CustomEvent<{ value?: string }>).detail?.value
+    if (draft === undefined || typeof value !== 'string') return
+    if (value === 'model-default') {
+      draft.defaultReasoningEffort = undefined
+      return
+    }
+    const match = /^effort-(\d+)$/.exec(value)
+    const effort = match === null ? undefined : modelEffortOptions(draft)[Number(match[1])]
+    if (effort !== undefined) draft.defaultReasoningEffort = effort
+  }
+
+  function selectedModelEfforts(): string[] {
+    return selectableReasoningEfforts(models.find((entry) => entry.id === model))
+  }
+
+  function showComposerReasoningEffort(): boolean {
+    return selectedModelEfforts().length > 0
+  }
+
+  function reasoningEffortOption(): string {
+    if (reasoningEffort === null) return 'model-default'
+    const index = selectedModelEfforts().indexOf(reasoningEffort)
+    return index < 0 ? 'model-default' : `effort-${index}`
+  }
+
+  function reasoningEffortLabel(): string {
+    return reasoningEffort ?? 'Model default'
+  }
+
+  function handleReasoningEffortChange(event: Event): void {
+    const value = (event as CustomEvent<{ value?: string }>).detail?.value
+    if (value === 'model-default') {
+      reasoningEffort = null
+    } else if (typeof value === 'string') {
+      const match = /^effort-(\d+)$/.exec(value)
+      const effort = match === null ? undefined : selectedModelEfforts()[Number(match[1])]
+      if (effort !== undefined) reasoningEffort = effort
+    }
+  }
+
+  function syncReasoningEffortWithCatalog(): void {
+    const selected = models.find((entry) => entry.id === model)
+    if (effortStateNeedsCatalogDefault) {
+      reasoningEffort = selected?.defaultReasoningEffort ?? null
+      effortStateNeedsCatalogDefault = false
+    } else if (reasoningEffort !== null && !selected?.reasoningEfforts?.includes(reasoningEffort)) {
+      reasoningEffort = selected?.defaultReasoningEffort ?? null
+    }
+    void tick().then(refreshReasoningEffortPicker)
+  }
+
+  function saveModelCatalog(): void {
+    modelCatalogSaving = true
+    setSettingsStatus('Saving models…', 'warning')
+    try {
+      post({
+        type: 'saveModelCatalog',
+        models: modelDrafts.map((draft): ModelDraft => ({
+          id: draft.id,
+          displayName: draft.displayName,
+          contextWindow: draft.contextWindow,
+          sourceId: draft.sourceId,
+          reasoningEfforts: modelEffortOptions(draft),
+          defaultReasoningEffort: draft.defaultReasoningEffort,
+          reasoningFormat: draft.reasoningFormat,
+          binaryThinkingMode: draft.binaryThinkingMode,
+          chatTemplateKwargs: parseChatTemplateDraft(draft.chatTemplateKwargsText, `Model "${draft.id}" chat template kwargs`),
+          chatTemplateArgs: parseChatTemplateDraft(draft.chatTemplateArgsText, `Model "${draft.id}" chat template args`),
+        })),
+      })
+    } catch (error) {
+      modelCatalogSaving = false
+      setSettingsStatus(error instanceof Error ? error.message : String(error), 'warning')
+    }
   }
 
   function sandboxModeLabel(mode: SandboxMode = sandboxMode): string {
@@ -374,16 +684,17 @@
     const nextMode = detail?.value
     if (nextMode !== 'read-only' && nextMode !== 'workspace-write' && nextMode !== 'danger-full-access') return
     sandboxMode = nextMode
-    post({ type: 'setSandboxMode', sandboxMode: nextMode })
   }
 
   function appendMessage(role: ChatMessage['role'], label: string, text: string, context?: SelectionMetadata): void {
+    if (role !== 'user') waitingForFirstResponse = false
     messages = [...messages, { id: nextMessageId++, role, label, text, context }]
     void scrollToBottom()
   }
 
   function appendStreamText(role: StreamUpdate['role'], text: string): void {
     if (!text) return
+    waitingForFirstResponse = false
     const last = messages[messages.length - 1]
     if (last?.role === role) {
       messages = [...messages.slice(0, -1), { ...last, text: last.text + text }]
@@ -525,22 +836,51 @@
   }
 
   function modelPickerLabel(): string {
-    if (modelsLoading) return 'Loading available models'
-    if (modelsError) return modelsError
     const selected = models.find((option) => option.id === model)
+    if (models.length === 0) return 'No saved models. Add one in Settings.'
     return selected === undefined ? `Model: ${model || 'not selected'}` : `Model: ${modelOptionLabel(selected)}`
   }
 
   function selectedModelLabel(): string {
-    if (modelsLoading) return 'Loading models…'
     const selected = models.find((option) => option.id === model)
     if (selected !== undefined) return modelOptionLabel(selected)
     if (model) return model
-    return models.length === 0 ? 'No models found' : 'Select model'
+    return models.length === 0 ? 'No saved models' : 'Select model'
   }
 
   function refreshModelPicker(): void {
     const picker = modelPickerElement as (HTMLDivElement & { refresh?: () => void }) | undefined
+    picker?.refresh?.()
+  }
+
+  function refreshReasoningEffortPicker(): void {
+    const picker = reasoningEffortPickerElement as (HTMLDivElement & { refresh?: () => void }) | undefined
+    picker?.refresh?.()
+  }
+
+  function refreshModelDefaultEffortPickers(): void {
+    document.querySelectorAll<HTMLDivElement>('.model-default-effort-picker').forEach((picker) => {
+      (picker as HTMLDivElement & { refresh?: () => void }).refresh?.()
+    })
+  }
+
+  function refreshModelCardPickers(): void {
+    document.querySelectorAll<HTMLDivElement>('.model-card-select').forEach((picker) => {
+      (picker as HTMLDivElement & { refresh?: () => void }).refresh?.()
+    })
+  }
+
+  function initializeReasoningEffortPicker(): void {
+    const basecoat = (window as Window & { basecoat?: { init?: (component: string) => void } }).basecoat
+    basecoat?.init?.('select')
+    basecoat?.init?.('popover')
+    refreshReasoningEffortPicker()
+    refreshModelDefaultEffortPickers()
+    refreshModelCardPickers()
+  }
+
+  function refreshModelSourcePicker(): void {
+    const picker = modelSourcePickerElement as (HTMLDivElement & { refresh?: () => void }) | undefined
     picker?.refresh?.()
   }
 
@@ -552,6 +892,16 @@
     }).basecoat
     basecoat?.init?.('select')
     refreshSandboxPicker()
+  }
+
+  function initializeModelSourcePicker(): void {
+    const basecoat = (window as Window & {
+      basecoat?: {
+        init?: (component: string) => void
+      }
+    }).basecoat
+    basecoat?.init?.('combobox')
+    refreshModelSourcePicker()
   }
 
   function refreshSandboxPicker(): void {
@@ -568,23 +918,20 @@
     }
   }
 
-  function streamStepKey(sessionId: string | undefined, data: Record<string, unknown>): string | undefined {
-    const key = responseKey(data)
-    return key === undefined ? undefined : `${sessionId ?? ''}:${key}`
-  }
-
   function handleAssistantStream(message: Extract<IncomingMessage, { type: 'assistantStream' }>): void {
     const frame = isRecord(message.frame) ? message.frame : undefined
-    if (frame === undefined || frame.type !== 'chunk' || !isRecord(frame.chunk)) return
+    if (frame === undefined) return
+    streamedStepTracker.recordLiveFrame(message.agentSessionId, frame)
+    if (frame.type === 'start') return
+    if (frame.type !== 'chunk' || !isRecord(frame.chunk)) return
     const chunk = frame.chunk
 
-    const key = streamStepKey(message.agentSessionId, frame)
-    if (key !== undefined) streamedSteps[key] = true
     if (chunk.type === 'text-delta' && typeof chunk.text === 'string') appendStreamText('assistant', chunk.text)
     if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text)
   }
 
   function upsertToolCall(tool: ToolCallView): void {
+    waitingForFirstResponse = false
     const index = messages.findIndex((message) => message.tool?.callId === tool.callId)
     if (index === -1) {
       messages = [...messages, { id: nextMessageId++, role: 'tool', label: 'Tool', text: '', tool }]
@@ -812,6 +1159,7 @@
         isGenerating = true
       } else {
         isGenerating = false
+        waitingForFirstResponse = false
         if (codeChanges.length > 0) {
           changesActive = false
           void scrollToBottom()
@@ -821,6 +1169,7 @@
     }
 
     if (notification.method === 'subagent.started') {
+      waitingForFirstResponse = false
       appendMessage('activity', 'Subagent', `Started ${String(params.childSessionId || 'child session')}`)
       return
     }
@@ -869,8 +1218,7 @@
 
     if (event.type === 'assistant/chunk') {
       const chunk = isRecord(data.chunk) ? data.chunk : undefined
-      const key = streamStepKey(sessionId, data)
-      if (key) streamedSteps[key] = true
+      streamedStepTracker.recordDurableChunk(sessionId, data)
       if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') appendStreamText('assistant', chunk.text)
       if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text)
       if (isRootSessionEvent && chunk?.type === 'usage') updateContextUsage(chunk.usage)
@@ -879,8 +1227,7 @@
 
     if (event.type === 'assistant/message') {
       if (isRootSessionEvent) updateContextUsage(data.usage)
-      const key = streamStepKey(sessionId, data)
-      if (!key || !streamedSteps[key]) {
+      if (!streamedStepTracker.hasStreamedStep(sessionId, data)) {
         const message = isRecord(data.message) ? data.message : {}
         appendAssistantBlocks(message.content)
       }
@@ -933,15 +1280,76 @@
     }
   }
 
-  function openSettings(): void {
-    showSettings = true
+  function openSettings(page: SettingsPage): void {
+    if (settingsPage !== undefined && settingsPage !== page) resetSettingsPageDrafts(settingsPage)
+    settingsPage = page
     setSettingsStatus('', '')
     post({ type: 'openSettings' })
+    if (page === 'models') {
+      modelsLoading = true
+      modelsError = ''
+      modelCatalogLoading = true
+      modelCatalogError = ''
+      discoveredModels = []
+      post({ type: 'loadModelCatalog' })
+      post({ type: 'refreshModels' })
+    }
+    void tick().then(() => {
+      if (page === 'models') initializeModelSourcePicker()
+      if (page === 'connection') initializeSandboxPicker()
+    })
+  }
+
+  function settingsPageTitle(page: SettingsPage): string {
+    switch (page) {
+      case 'connection': return 'Connection settings'
+      case 'models': return 'Model configs'
+      case 'mcp': return 'MCP server configs'
+      case 'preview': return 'Request previewer'
+    }
+  }
+
+  function settingsPageDescription(page: SettingsPage): string {
+    switch (page) {
+      case 'connection': return 'Configure the provider route, credentials, and sandbox permissions.'
+      case 'models': return 'Manage saved models and their reasoning settings.'
+      case 'mcp': return 'Configure the MCP servers available to the DSH runtime.'
+      case 'preview': return 'Inspect the fully assembled request without sending it to the provider.'
+    }
+  }
+
+  function resetSettingsPageDrafts(page: SettingsPage): void {
+    if (page === 'connection' && settings !== undefined) {
+      provider = settings.provider
+      baseUrl = settings.baseUrl
+      sandboxMode = settings.sandboxMode
+      apiKey = ''
+      clearApiKey = false
+    } else if (page === 'models') {
+      modelDrafts = models.map(toModelEditorDraft)
+    } else if (page === 'mcp' && settings !== undefined) {
+      mcpServers = settings.mcpServers.map(toMcpServerDraft)
+    }
   }
 
   function closeSettings(): void {
-    showSettings = false
+    if (settingsPage !== undefined) resetSettingsPageDrafts(settingsPage)
+    settingsPage = undefined
     setSettingsStatus('', '')
+  }
+
+  function submitRequestPreview(): void {
+    const text = requestPreviewPrompt.trim()
+    if (!text || requestPreviewState === 'loading') return
+    requestPreviewState = 'loading'
+    requestPreview = undefined
+    requestPreviewError = ''
+    post({ type: 'previewRequest', prompt: text })
+  }
+
+  function cancelRequestPreview(): void {
+    if (requestPreviewState !== 'loading') return
+    post({ type: 'cancelRequestPreview' })
   }
 
   function saveSettings(): void {
@@ -954,8 +1362,14 @@
       apiKey,
       clearApiKey,
       sandboxMode,
-      mcpServers: mcpServers.map(toMcpServerMessage),
     })
+  }
+
+  function saveMcpServers(): void {
+    mcpSaving = true
+    settingsRestarting = true
+    setSettingsStatus('Applying MCP server settings…', 'warning')
+    post({ type: 'saveMcpServers', mcpServers: mcpServers.map(toMcpServerMessage) })
   }
 
   function toMcpServerMessage(server: McpServerDraft): SidebarMcpServer {
@@ -1064,28 +1478,33 @@
 <main class="shell">
   <Masthead
     runtimeState={runtimeState}
-    onNewSession={() => post({ type: 'newSession' })}
+    onNewSession={startNewSession}
     onOpenSettings={openSettings}
   />
 
-  {#if showSettings}
+  {#if settingsPage}
     <section class="settings-view" aria-labelledby="settings-heading">
       <div class="settings-heading">
         <button class="btn icon-button" data-variant="ghost" data-size="icon" type="button" aria-label="Back to chat" title="Back to chat" onclick={closeSettings}>
           <ArrowLeft size={15} strokeWidth={1.8} />
         </button>
         <div>
-          <h2 id="settings-heading">Connection settings</h2>
-          <p>Configure the provider route and connection. Models and context windows come from the provider's models endpoint.</p>
+          <h2 id="settings-heading">{settingsPageTitle(settingsPage)}</h2>
+          <p>{settingsPageDescription(settingsPage)}</p>
         </div>
       </div>
 
+      {#if settingsPage === 'connection'}
       <form class="settings-form" onsubmit={(event) => { event.preventDefault(); saveSettings() }}>
         <div class="field" role="group">
           <label for="provider">Provider route</label>
           <input id="provider" class="input" type="text" bind:value={provider} placeholder="deepseek-official" />
-          <small>Harness provider route, not the model name.</small>
+          <small>Use the provider key from DSH’s <code>llm-pi-ai</code> settings, such as <code>muse-gateway</code>.</small>
         </div>
+
+        {#if provider.trim() === 'deepseek-official'}
+          <p class="route-warning" role="status">The direct <code>deepseek-official</code> route uses DSH’s fixed adapter. Model reasoning formats here require an existing <code>llm-pi-ai</code> route; this route will not apply the format settings.</p>
+        {/if}
 
         <div class="field" role="group">
           <label for="base-url">API base URL</label>
@@ -1103,6 +1522,294 @@
           </small>
         </div>
 
+        <div class="field" role="group">
+          <label for="sandbox-picker-trigger">Sandbox permissions</label>
+          <div
+            id="sandbox-picker"
+            class="select sandbox-settings-picker"
+            bind:this={sandboxPickerElement}
+            data-placeholder="Sandbox permissions"
+            onchange={handleSandboxModeChange}
+          >
+            <button
+              id="sandbox-picker-trigger"
+              class="btn"
+              data-variant="outline"
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="sandbox-picker-listbox"
+            >
+              <span>{sandboxModeLabel()}</span>
+              <ChevronDown size={13} strokeWidth={1.7} />
+            </button>
+            <div id="sandbox-picker-popover" data-popover data-side="bottom" data-align="start" aria-hidden="true">
+              <div
+                id="sandbox-picker-listbox"
+                class="sandbox-picker-listbox"
+                role="listbox"
+                aria-orientation="vertical"
+                aria-labelledby="sandbox-picker-trigger"
+              >
+                <div role="option" data-value="read-only" aria-selected={sandboxMode === 'read-only' ? 'true' : undefined}><span>Read-only</span></div>
+                <div role="option" data-value="workspace-write" aria-selected={sandboxMode === 'workspace-write' ? 'true' : undefined}><span>Workspace write</span></div>
+                <div role="option" data-value="danger-full-access" aria-selected={sandboxMode === 'danger-full-access' ? 'true' : undefined}><span>Danger full access</span></div>
+              </div>
+            </div>
+            <input type="hidden" name="sandbox-mode" value={sandboxMode} />
+          </div>
+          <small>Changes apply when you save connection settings.</small>
+        </div>
+
+        <div class="settings-footer">
+          <button class="btn clear-key" data-variant="ghost" type="button" onclick={clearStoredKey} disabled={!settings?.apiKeyConfigured && !apiKey}>
+            <Trash2 size={13} strokeWidth={1.8} /> Clear key
+          </button>
+          <button class="btn save-settings" type="submit" disabled={settingsRestarting}>
+            {#if settingsRestarting}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Applying…{:else}Save connection settings <Check size={13} strokeWidth={1.8} />{/if}
+          </button>
+        </div>
+      </form>
+      {:else if settingsPage === 'models'}
+        <div class="settings-form">
+        <section class="model-settings" aria-labelledby="model-settings-title">
+          <div class="model-settings-heading">
+            <div>
+              <h3 id="model-settings-title">Models</h3>
+              <p>Choose a fetched model to add it to your saved catalog. The composer uses saved models only. DSH’s format overrides require an <code>llm-pi-ai</code> OpenAI Chat Completions route.</p>
+            </div>
+            <button class="btn mcp-add" data-variant="outline" type="button" onclick={refreshModels} disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}>
+              {#if modelsLoading}<LoaderCircle class="spin" size={13} strokeWidth={1.8} />{:else}<RefreshCw size={13} strokeWidth={1.8} />{/if}
+              Refresh list
+            </button>
+          </div>
+
+          {#if modelsError}<p class="model-error" role="status">{modelsError}</p>{/if}
+          {#if modelCatalogError}<p class="model-error" role="alert">{modelCatalogError} Model edits are disabled to protect the saved file.</p>{/if}
+
+          <div
+            id="model-source-picker"
+            class="combobox model-source-picker"
+            bind:this={modelSourcePickerElement}
+            onchange={handleAddDiscoveredModel}
+          >
+            <input
+              type="text"
+              class="input"
+              role="combobox"
+              placeholder={modelsLoading ? 'Loading endpoint models…' : 'Search fetched models to add'}
+              autocomplete="off"
+              autocorrect="off"
+              spellcheck="false"
+              aria-autocomplete="list"
+              aria-expanded="false"
+              aria-controls="model-source-listbox"
+              aria-label="Add a fetched model"
+              disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}
+            />
+            <ChevronDown class="combobox-trigger-icon" size={14} strokeWidth={1.7} aria-hidden="true" />
+            <div id="model-source-popover" data-popover aria-hidden="true">
+              <div
+                id="model-source-listbox"
+                role="listbox"
+                aria-orientation="vertical"
+                data-empty={modelsLoading ? 'Loading endpoint models…' : modelsError || 'No endpoint models found.'}
+              >
+                {#each discoveredModels as option (option.id)}
+                  <div
+                    role="option"
+                    data-value={option.id}
+                    data-filter={`${option.displayName ?? ''} ${option.id}`}
+                    aria-selected="false"
+                    aria-disabled={modelDrafts.some((draft) => draft.id === option.id) ? 'true' : undefined}
+                  >
+                    {modelOptionLabel(option)}
+                  </div>
+                {/each}
+              </div>
+            </div>
+            <input type="hidden" name="discovered-model" value="" />
+          </div>
+
+          {#if modelCatalogLoading}
+            <div class="mcp-empty"><LoaderCircle class="spin" size={14} strokeWidth={1.8} /> Loading saved models…</div>
+          {:else if modelDrafts.length === 0}
+            <div class="mcp-empty"><Server size={14} strokeWidth={1.7} /> No saved models yet. Add one from the fetched list above.</div>
+          {:else}
+            <div class="model-list">
+              {#each modelDrafts as draft (draft.key)}
+                <fieldset class="model-card">
+                  <legend>
+                    <span>{draft.displayName || draft.id || 'New model'}</span>
+                    <button class="btn icon-button mcp-remove" data-variant="ghost" data-size="icon" type="button" aria-label={`Remove ${draft.displayName || draft.id || 'model'}`} title="Remove model" onclick={() => removeModelDraft(draft.key)} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
+                      <Trash2 size={13} strokeWidth={1.8} />
+                    </button>
+                  </legend>
+                  <div class="model-card-fields">
+                    <div class="field" role="group">
+                      <label for={`model-id-${draft.key}`}>Model ID</label>
+                      <input id={`model-id-${draft.key}`} class="input" bind:value={draft.id} autocomplete="off" disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
+                    </div>
+                    <div class="field" role="group">
+                      <label for={`model-label-${draft.key}`}>Display name</label>
+                      <input id={`model-label-${draft.key}`} class="input" bind:value={draft.displayName} placeholder="Optional" autocomplete="off" disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
+                    </div>
+                    <div class="field" role="group">
+                      <label for={`model-context-${draft.key}`}>Context window</label>
+                      <input id={`model-context-${draft.key}`} class="input" type="number" min="1" step="1" bind:value={draft.contextWindow} placeholder="Unknown" disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
+                    </div>
+                    <div class="field" role="group">
+                      <label for={`model-reasoning-format-trigger-${draft.key}`}>Reasoning format</label>
+                      <div
+                        id={`model-reasoning-format-${draft.key}`}
+                        class="select model-card-select"
+                        data-placeholder="Auto / DSH default"
+                        onchange={(event) => handleModelReasoningFormatChange(draft.key, event)}
+                      >
+                        <button
+                          id={`model-reasoning-format-trigger-${draft.key}`}
+                          class="btn"
+                          data-variant="outline"
+                          type="button"
+                          aria-haspopup="listbox"
+                          aria-expanded="false"
+                          aria-controls={`model-reasoning-format-listbox-${draft.key}`}
+                          disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}
+                        >
+                          <span>{draft.reasoningFormat === 'auto' || draft.reasoningFormat === undefined ? 'Auto / DSH default' : draft.reasoningFormat}</span>
+                          <ChevronDown size={13} strokeWidth={1.7} />
+                        </button>
+                        <div data-popover aria-hidden="true" data-side="bottom" data-align="start">
+                          <div id={`model-reasoning-format-listbox-${draft.key}`} role="listbox" aria-orientation="vertical" aria-labelledby={`model-reasoning-format-trigger-${draft.key}`}>
+                            {#each reasoningFormatOptions as format (`${draft.key}-${format}`)}
+                              <div role="option" data-value={`format-${format}`} aria-selected={(draft.reasoningFormat ?? 'auto') === format ? 'true' : undefined}>{format === 'auto' ? 'Auto / DSH default' : format}</div>
+                            {/each}
+                          </div>
+                        </div>
+                        <input type="hidden" name={`model-reasoning-format-${draft.key}`} value={`format-${draft.reasoningFormat ?? 'auto'}`} />
+                      </div>
+                      <small>Formats apply to OpenAI Chat Completions routes. Auto lets DSH choose; graded formats can use the provider default or selected levels.</small>
+                    </div>
+                    {#if isBinaryReasoningFormat(draft.reasoningFormat)}
+                      <div class="field" role="group">
+                        <label for={`model-binary-thinking-trigger-${draft.key}`}>Thinking mode</label>
+                        <div
+                          id={`model-binary-thinking-${draft.key}`}
+                          class="select model-card-select"
+                          data-placeholder="Provider default"
+                          onchange={(event) => handleBinaryThinkingModeChange(draft.key, event)}
+                        >
+                          <button id={`model-binary-thinking-trigger-${draft.key}`} class="btn" data-variant="outline" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls={`model-binary-thinking-listbox-${draft.key}`} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
+                            <span>{draft.binaryThinkingMode === 'on' ? 'On' : draft.binaryThinkingMode === 'off' ? 'Off' : 'Provider default'}</span>
+                            <ChevronDown size={13} strokeWidth={1.7} />
+                          </button>
+                          <div data-popover aria-hidden="true" data-side="bottom" data-align="start">
+                            <div id={`model-binary-thinking-listbox-${draft.key}`} role="listbox" aria-orientation="vertical" aria-labelledby={`model-binary-thinking-trigger-${draft.key}`}>
+                              <div role="option" data-value="provider-default" aria-selected={(draft.binaryThinkingMode ?? 'provider-default') === 'provider-default' ? 'true' : undefined}>Provider default</div>
+                              <div role="option" data-value="on" aria-selected={draft.binaryThinkingMode === 'on' ? 'true' : undefined}>On</div>
+                              <div role="option" data-value="off" aria-selected={draft.binaryThinkingMode === 'off' ? 'true' : undefined}>Off</div>
+                            </div>
+                          </div>
+                          <input type="hidden" name={`model-binary-thinking-${draft.key}`} value={draft.binaryThinkingMode ?? 'provider-default'} />
+                        </div>
+                        <small>This format has a binary control, so the composer has no effort selector.</small>
+                      </div>
+                    {:else}
+                      <div class="field model-reasoning-level-field" role="group">
+                        <label id={`model-reasoning-level-label-${draft.key}`} for={`model-reasoning-level-trigger-${draft.key}`}>Supported reasoning levels</label>
+                        <div
+                          id={`model-reasoning-level-picker-${draft.key}`}
+                          class="popover model-reasoning-level-picker"
+                        >
+                          <button id={`model-reasoning-level-trigger-${draft.key}`} class="btn" data-variant="outline" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls={`model-reasoning-level-popover-${draft.key}`} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
+                            <span>{modelEffortSummary(draft)}</span>
+                            <ChevronDown size={13} strokeWidth={1.7} />
+                          </button>
+                          <div id={`model-reasoning-level-popover-${draft.key}`} data-popover aria-hidden="true" data-side="bottom" data-align="start" role="dialog" aria-labelledby={`model-reasoning-level-label-${draft.key}`}>
+                            <fieldset class="model-reasoning-level-options">
+                              <legend>Choose supported levels</legend>
+                              {#each modelReasoningEffortChoices(draft) as effort, index (`${draft.key}-${effort}`)}
+                                <div class="field model-reasoning-level-option" data-orientation="horizontal">
+                                  <input id={`model-reasoning-level-${draft.key}-${index}`} class="input" type="checkbox" checked={draft.reasoningEfforts.includes(effort)} onchange={(event) => handleModelReasoningEffortChange(draft.key, effort, event)} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
+                                  <label for={`model-reasoning-level-${draft.key}-${index}`}>{effort}{#if isLegacyModelEffort(effort)} <span>(saved ID)</span>{/if}</label>
+                                </div>
+                              {/each}
+                            </fieldset>
+                          </div>
+                        </div>
+                        <small>Selected levels keep their DSH IDs. Off requires at least one graded level.</small>
+                      </div>
+                    {/if}
+                    {#if draft.reasoningFormat === 'chat-template'}
+                      <div class="field template-settings-field" role="group">
+                        <label for={`model-chat-template-kwargs-${draft.key}`}>chatTemplateKwargs (JSON)</label>
+                        <textarea id={`model-chat-template-kwargs-${draft.key}`} class="textarea model-template-input" rows="4" bind:value={draft.chatTemplateKwargsText} placeholder={'{\n  "enable_thinking": { "$var": "thinking.enabled", "omitWhenOff": true }\n}'} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}></textarea>
+                        <small>Values may be strings, numbers, booleans, null, or DSH variables: thinking.enabled, thinking.effort, thinking.budget.</small>
+                      </div>
+                    {/if}
+                    {#if draft.reasoningFormat === 'baseten'}
+                      <div class="field template-settings-field" role="group">
+                        <label for={`model-chat-template-args-${draft.key}`}>chatTemplateArgs (JSON)</label>
+                        <textarea id={`model-chat-template-args-${draft.key}`} class="textarea model-template-input" rows="4" bind:value={draft.chatTemplateArgsText} placeholder={'{\n  "reasoning_effort": { "$var": "thinking.effort" }\n}'} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}></textarea>
+                        <small>Values may be strings, numbers, booleans, null, or DSH variables: thinking.enabled, thinking.effort, thinking.budget.</small>
+                      </div>
+                    {/if}
+                    {#if !isBinaryReasoningFormat(draft.reasoningFormat) && modelEffortOptions(draft).length > 0}
+                    <div class="field model-default-effort-field" role="group">
+                      <label for={`model-default-effort-trigger-${draft.key}`}>Default reasoning effort</label>
+                      <div
+                        id={`model-default-effort-${draft.key}`}
+                        class="select model-default-effort-picker"
+                        data-placeholder="Model default"
+                        onchange={(event) => handleModelDefaultEffortChange(draft.key, event)}
+                      >
+                        <button
+                          id={`model-default-effort-trigger-${draft.key}`}
+                          class="btn"
+                          data-variant="outline"
+                          type="button"
+                          aria-haspopup="listbox"
+                          aria-expanded="false"
+                          aria-controls={`model-default-effort-listbox-${draft.key}`}
+                          disabled={modelEffortOptions(draft).length === 0 || modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}
+                        >
+                          <span>{draft.defaultReasoningEffort ?? 'Model default'}</span>
+                          <ChevronDown size={13} strokeWidth={1.7} />
+                        </button>
+                        <div data-popover aria-hidden="true" data-side="bottom" data-align="start">
+                          <div
+                            id={`model-default-effort-listbox-${draft.key}`}
+                            class="model-default-effort-listbox"
+                            role="listbox"
+                            aria-orientation="vertical"
+                            aria-labelledby={`model-default-effort-trigger-${draft.key}`}
+                          >
+                            <div role="option" data-value="model-default" aria-selected={draft.defaultReasoningEffort === undefined ? 'true' : undefined}>Model default</div>
+                            {#each modelEffortOptions(draft) as effort, index (`${draft.key}-${index}`)}
+                              <div role="option" data-value={`effort-${index}`} aria-selected={draft.defaultReasoningEffort === effort ? 'true' : undefined}>{effort}</div>
+                            {/each}
+                          </div>
+                        </div>
+                        <input type="hidden" name={`model-default-effort-${draft.key}`} value={modelDefaultEffortOption(draft)} />
+                      </div>
+                    </div>
+                    {/if}
+                  </div>
+                </fieldset>
+              {/each}
+            </div>
+          {/if}
+
+          <div class="model-save-row">
+            <small>Saved models are stored in this VS Code profile’s extension data.</small>
+            <button class="btn save-settings" type="button" onclick={saveModelCatalog} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
+              {#if modelCatalogSaving}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Saving…{:else}Save models <Check size={13} strokeWidth={1.8} />{/if}
+            </button>
+          </div>
+        </section>
+        </div>
+      {:else if settingsPage === 'mcp'}
+<div class="settings-form">
         <section class="mcp-settings" aria-labelledby="mcp-settings-title">
           <h3 id="mcp-settings-title">MCP servers</h3>
           <div class="mcp-settings-heading">
@@ -1196,16 +1903,112 @@
             </div>
           {/if}
         </section>
-
         <div class="settings-footer">
-          <button class="btn clear-key" data-variant="ghost" type="button" onclick={clearStoredKey} disabled={!settings?.apiKeyConfigured && !apiKey}>
-            <Trash2 size={13} strokeWidth={1.8} /> Clear key
-          </button>
-          <button class="btn save-settings" type="submit" disabled={settingsRestarting}>
-            {#if settingsRestarting}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Applying…{:else}Save settings <Check size={13} strokeWidth={1.8} />{/if}
+          <span></span>
+          <button class="btn save-settings" type="button" onclick={saveMcpServers} disabled={mcpSaving || settingsRestarting}>
+            {#if mcpSaving || settingsRestarting}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Applying…{:else}Save MCP servers <Check size={13} strokeWidth={1.8} />{/if}
           </button>
         </div>
-      </form>
+      </div>
+      {:else}
+          <div class="request-preview-panel">
+            <div class="request-preview-heading">
+              <h3>Preview the first model request</h3>
+              <p>Build the DSH request for a fresh chat using the selected provider, model, and configured default reasoning effort. Nothing is sent to the model.</p>
+            </div>
+            <form class="request-preview-form" onsubmit={(event) => { event.preventDefault(); submitRequestPreview() }}>
+              <label for="request-preview-prompt">Prompt</label>
+              <div class="request-preview-input-row">
+                <input id="request-preview-prompt" class="input" type="text" bind:value={requestPreviewPrompt} placeholder="Enter a prompt and press Enter" autocomplete="off" disabled={requestPreviewState === 'loading'} />
+                <button class="btn request-preview-submit" type="submit" disabled={requestPreviewState === 'loading' || !requestPreviewPrompt.trim()}>
+                  {#if requestPreviewState === 'loading'}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Building…{:else}Preview{/if}
+                </button>
+                {#if requestPreviewState === 'loading'}
+                  <button class="btn" data-variant="outline" type="button" onclick={cancelRequestPreview}>Cancel</button>
+                {/if}
+              </div>
+            </form>
+            {#if requestPreviewState === 'loading'}
+              <p class="request-preview-status" role="status"><LoaderCircle class="spin" size={12} strokeWidth={1.8} /> Starting an isolated DSH session and assembling the request…</p>
+            {:else if requestPreviewState === 'error'}
+              <p class="request-preview-status error" role="alert">{requestPreviewError}</p>
+            {:else if requestPreviewState === 'cancelled'}
+              <p class="request-preview-status" role="status">Preview cancelled.</p>
+            {:else if requestPreview}
+              {@const previewView = createRequestPreviewView(requestPreview)}
+              <div class="request-preview-result-toggle field" role="group" data-orientation="horizontal">
+                <section>
+                  <label for="request-preview-raw-json">Show raw JSON</label>
+                  <p>Switch between the readable breakdown and the captured request.</p>
+                </section>
+                <input id="request-preview-raw-json" type="checkbox" role="switch" class="input" bind:checked={showRawRequestJson} />
+              </div>
+              {#if showRawRequestJson}
+                <pre class="request-preview-output" aria-label="Canonical DSH request"><code>{JSON.stringify(requestPreview.request, null, 2)}</code></pre>
+              {:else}
+                <div class="request-preview-readable" aria-label="Readable DSH request">
+                  <div class="request-preview-route">
+                    <div><span>Provider</span><strong>{previewView.provider}</strong></div>
+                    <div><span>Model</span><strong>{previewView.model}</strong></div>
+                  </div>
+                  <div class="request-preview-options" aria-label="Generation settings">
+                    {#each previewView.details as detail (detail.label)}
+                      <div><span>{detail.label}</span><strong>{detail.value}</strong></div>
+                    {/each}
+                  </div>
+                  <section class="request-preview-prompt" aria-labelledby="request-preview-prompt-heading">
+                    <h4 id="request-preview-prompt-heading">Prompt</h4>
+                    {#if previewView.promptItems.length === 0}
+                      <p class="request-preview-status">No prompt messages were captured.</p>
+                    {:else}
+                      {#each previewView.promptItems as item, index (`${index}:${item.role}`)}
+                        <article class="request-preview-message">
+                          <header>
+                            <strong>{item.role}</strong>
+                            {#if item.source}<span>{item.source}</span>{/if}
+                          </header>
+                          {#if item.sections && item.sections.length > 0}
+                            <div class="request-preview-sections">
+                              {#each item.sections as section, sectionIndex (`${index}:${sectionIndex}:${section.name}`)}
+                                <section class="request-preview-section-card">
+                                  <h5>{section.name}</h5>
+                                  <pre>{section.text}</pre>
+                                </section>
+                              {/each}
+                            </div>
+                          {:else}
+                            <pre>{item.text}</pre>
+                          {/if}
+                        </article>
+                      {/each}
+                    {/if}
+                  </section>
+                  <section class="request-preview-tools" aria-labelledby="request-preview-tools-heading">
+                    <h4 id="request-preview-tools-heading">Tools available to the model <span>{previewView.tools.length}</span></h4>
+                    {#if previewView.tools.length === 0}
+                      <p class="request-preview-status">No tools are available for this request.</p>
+                    {:else}
+                      <section class="accordion request-preview-tool-list" data-multiple>
+                        {#each previewView.tools as tool, index (`${index}:${tool.name}`)}
+                          <details>
+                            <summary><span>{tool.name}</span><ChevronDown size={13} strokeWidth={1.8} /></summary>
+                            <section class="request-preview-tool-content">
+                              {#if tool.description}<p>{tool.description}</p>{/if}
+                              <h5>Parameters</h5>
+                              <pre>{JSON.stringify(tool.parameters, null, 2)}</pre>
+                            </section>
+                          </details>
+                        {/each}
+                      </section>
+                    {/if}
+                  </section>
+                </div>
+              {/if}
+            {:else}
+              <p class="request-preview-status">The assembled request will appear here.</p>
+            {/if}
+          </div>
+      {/if}
       <p class:success={settingsStatusTone === 'success'} class:warning={settingsStatusTone === 'warning'} class="settings-status" role="status">{settingsStatus}</p>
     </section>
   {:else}
@@ -1286,6 +2089,12 @@
             {/if}
           </article>
         {/each}
+        {#if waitingForFirstResponse}
+          <article class="message activity waiting-for-response" role="status">
+            <LoaderCircle class="spin" size={13} strokeWidth={1.8} aria-hidden="true" />
+            <span>Waiting for the model…</span>
+          </article>
+        {/if}
         {#if codeChanges.length > 0 && !isGenerating}
           <section class="changes-summary-card" aria-label="Agent changes summary">
             <div class="changes-summary-header">
@@ -1336,60 +2145,6 @@
         <div class="composer-box">
           <textarea bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
           <div class="composer-footer">
-            <div
-              class="select sandbox-picker"
-              bind:this={sandboxPickerElement}
-              data-placeholder="Sandbox permissions"
-              onchange={handleSandboxModeChange}
-            >
-              <button
-                id="sandbox-picker-trigger"
-                class="btn icon-button"
-                data-variant="ghost"
-                data-size="icon"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded="false"
-                aria-controls="sandbox-picker-listbox"
-                aria-label="Sandbox permissions"
-                title={sandboxModeLabel()}
-              >
-                <span class="sandbox-picker-label">{sandboxModeLabel()}</span>
-                {#if sandboxMode === 'read-only'}
-                  <Eye size={14} strokeWidth={1.8} aria-hidden="true" />
-                {:else if sandboxMode === 'workspace-write'}
-                  <FolderPen size={14} strokeWidth={1.8} aria-hidden="true" />
-                {:else}
-                  <ShieldAlert size={14} strokeWidth={1.8} aria-hidden="true" />
-                {/if}
-              </button>
-              <div
-                id="sandbox-picker-popover"
-                data-popover
-                data-side="top"
-                data-align="start"
-                aria-hidden="true"
-              >
-                <div
-                  id="sandbox-picker-listbox"
-                  class="sandbox-picker-listbox"
-                  role="listbox"
-                  aria-orientation="vertical"
-                  aria-labelledby="sandbox-picker-trigger"
-                >
-                  <div role="option" data-value="read-only" aria-selected={sandboxMode === 'read-only' ? 'true' : undefined}>
-                    <span>Read-only</span>
-                  </div>
-                  <div role="option" data-value="workspace-write" aria-selected={sandboxMode === 'workspace-write' ? 'true' : undefined}>
-                    <span>Workspace write</span>
-                  </div>
-                  <div role="option" data-value="danger-full-access" aria-selected={sandboxMode === 'danger-full-access' ? 'true' : undefined}>
-                    <span>Danger full access</span>
-                  </div>
-                </div>
-              </div>
-              <input type="hidden" name="sandbox-mode" value={sandboxMode} />
-            </div>
             <div class="model-picker-wrap">
               <div
                 bind:this={modelPickerElement}
@@ -1407,7 +2162,7 @@
                   aria-controls="model-picker-listbox"
                   aria-label="Model"
                   title={modelPickerLabel()}
-                  disabled={modelsLoading || modelChanging}
+                  disabled={modelChanging}
                 >
                   <span>{selectedModelLabel()}</span>
                   <ChevronDown size={13} strokeWidth={1.7} />
@@ -1428,12 +2183,9 @@
                   >
                     {#if models.length === 0}
                       <div class="model-picker-status" role="status">
-                        {modelsLoading ? 'Loading models…' : modelsError || 'No models found'}
+                        No saved models. Add one in Settings.
                       </div>
                     {:else}
-                      {#if model && !models.some((option) => option.id === model)}
-                        <div role="option" data-value={model} aria-selected="true">{model}</div>
-                      {/if}
                       {#each models as option (option.id)}
                         <div role="option" data-value={option.id} aria-selected={model === option.id ? 'true' : undefined}>
                           {modelOptionLabel(option)}
@@ -1444,10 +2196,46 @@
                 </div>
                 <input type="hidden" name="model" value={model} />
               </div>
-              <button class="btn model-refresh" data-variant="ghost" data-size="icon" type="button" aria-label="Refresh models" title="Refresh models" onclick={refreshModels} disabled={modelsLoading || modelChanging}>
-                {#if modelsLoading}<LoaderCircle class="spin" size={13} strokeWidth={1.8} />{:else}<RefreshCw size={13} strokeWidth={1.8} />{/if}
-              </button>
             </div>
+            {#if showComposerReasoningEffort()}
+              <div
+                id="reasoning-effort-picker"
+                class="select reasoning-effort-picker"
+                bind:this={reasoningEffortPickerElement}
+                data-placeholder="Reasoning effort"
+                onchange={handleReasoningEffortChange}
+              >
+                <button
+                  id="reasoning-effort-picker-trigger"
+                  class="btn"
+                  data-variant="ghost"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-controls="reasoning-effort-picker-listbox"
+                  aria-label="Reasoning effort"
+                  title={`Reasoning effort: ${reasoningEffortLabel()}`}
+                >
+                  <span>{reasoningEffortLabel()}</span>
+                  <ChevronDown size={13} strokeWidth={1.7} />
+                </button>
+                <div data-popover aria-hidden="true" data-side="top" data-align="end">
+                  <div
+                    id="reasoning-effort-picker-listbox"
+                    class="reasoning-effort-listbox"
+                    role="listbox"
+                    aria-orientation="vertical"
+                    aria-labelledby="reasoning-effort-picker-trigger"
+                  >
+                    <div role="option" data-value="model-default" aria-selected={reasoningEffort === null ? 'true' : undefined}>Model default</div>
+                    {#each selectedModelEfforts() as effort, index (`${model}-${index}`)}
+                      <div role="option" data-value={`effort-${index}`} aria-selected={reasoningEffort === effort ? 'true' : undefined}>{effort}</div>
+                    {/each}
+                  </div>
+                </div>
+                <input type="hidden" name="reasoning-effort" value={reasoningEffortOption()} />
+              </div>
+            {/if}
             <div
               class="context-meter"
               role="img"

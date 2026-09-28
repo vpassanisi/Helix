@@ -17,6 +17,7 @@ import {
 import { builtInWebPatchLines, mcpEnvironmentVariable, mcpPatchLines } from './mcp.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
 import { stringValue } from '../shared/value-utils.js'
+import { piAiRuntimeModelProfiles, type ChatTemplateValue } from './model-catalog.js'
 import type {
   DisposableLike,
   RoutedNotification,
@@ -216,6 +217,21 @@ export class HarnessRuntime {
     await handle.controlBridge.setSandboxMode(sessionId, mode)
   }
 
+  async setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void> {
+    const handle = this.requireHandle()
+    await handle.controlBridge.setReasoningEffort(sessionId, reasoningEffort)
+  }
+
+  async armRequestPreview(sessionId: string, captureId: string): Promise<void> {
+    const handle = this.requireHandle()
+    await handle.controlBridge.armRequestPreview(sessionId, captureId)
+  }
+
+  async captureNextProviderRequest(sessionId: string): Promise<void> {
+    const handle = this.requireHandle()
+    await handle.controlBridge.captureNextProviderRequest(sessionId)
+  }
+
   async restart(options: RuntimeOptions): Promise<void> {
     return this.enqueueLifecycle(async () => {
       await this.stopInternal()
@@ -386,19 +402,57 @@ export class HarnessRuntime {
         '    models:',
         `      - id: ${yamlString(options.model)}`,
         `        contextWindow: ${contextWindow}`,
-        '- id: llm-pi-ai',
-        '  config:',
-        `    defaultContextWindow: ${contextWindow}`,
       )
-      if (options.provider !== 'deepseek-official') {
+    }
+    if (options.provider !== 'deepseek-official') {
+      const modelProfiles = piAiRuntimeModelProfiles(options.savedModels ?? [])
+      if (hasContextWindow || modelProfiles.length > 0) {
         patchLines.push(
+          '- id: llm-pi-ai',
+          '  config:',
           '    providers:',
           `      ${yamlString(options.provider)}:`,
-          `        defaultContextWindow: ${contextWindow}`,
-          '        models:',
-          `          - id: ${yamlString(options.model)}`,
-          `            contextWindow: ${contextWindow}`,
         )
+        if (modelProfiles.length > 0) {
+          patchLines.push('        models:')
+          for (const profile of modelProfiles) {
+            patchLines.push(`          - id: ${yamlString(profile.id)}`)
+            if (profile.name !== undefined) patchLines.push(`            name: ${yamlString(profile.name)}`)
+            if (profile.contextWindow !== undefined) patchLines.push(`            contextWindow: ${profile.contextWindow}`)
+            if (profile.reasoningEfforts === false) {
+              patchLines.push('            reasoningEfforts: false')
+            } else if (profile.reasoningEfforts !== undefined) {
+              patchLines.push('            reasoningEfforts:')
+              for (const [level, wireValue] of Object.entries(profile.reasoningEfforts)) {
+                patchLines.push(`              ${yamlString(level)}: ${wireValue === null ? 'null' : yamlString(wireValue)}`)
+              }
+            }
+            if (profile.compat !== undefined) {
+              patchLines.push('            compat:')
+              if (profile.compat.thinkingFormat !== undefined) {
+                patchLines.push(`              thinkingFormat: ${yamlString(profile.compat.thinkingFormat)}`)
+              }
+              if (profile.compat.supportsReasoningEffort !== undefined) {
+                patchLines.push(`              supportsReasoningEffort: ${profile.compat.supportsReasoningEffort}`)
+              }
+              if (profile.compat.chatTemplateKwargs !== undefined) {
+                patchLines.push('              chatTemplateKwargs:')
+                patchLines.push(...chatTemplateYamlLines(profile.compat.chatTemplateKwargs, 16))
+              }
+              if (profile.compat.chatTemplateArgs !== undefined) {
+                patchLines.push('              chatTemplateArgs:')
+                patchLines.push(...chatTemplateYamlLines(profile.compat.chatTemplateArgs, 16))
+              }
+            }
+          }
+        } else if (hasContextWindow) {
+          patchLines.push(
+            `        defaultContextWindow: ${contextWindow}`,
+            '        models:',
+            `          - id: ${yamlString(options.model)}`,
+            `            contextWindow: ${contextWindow}`,
+          )
+        }
       }
     }
     patchLines.push(
@@ -406,6 +460,13 @@ export class HarnessRuntime {
       '    - id: helix-control-bridge',
       `      name: ${yamlString(new URL('./dsh-control-plugin.js', import.meta.url).href)}`,
     )
+    if (options.sessionStorageRoot !== undefined) {
+      patchLines.push(
+        '- id: sessions',
+        '  config:',
+        `    root: ${yamlString(options.sessionStorageRoot)}`,
+      )
+    }
     patchLines.push(...builtInWebPatchLines())
     patchLines.push(
       '- id: sandbox-policy',
@@ -499,4 +560,25 @@ function createRuntimeEnvironment(options: RuntimeOptions, controlBridge: Contro
 
 function yamlString(value: string): string {
   return JSON.stringify(value)
+}
+
+function chatTemplateYamlLines(values: Record<string, ChatTemplateValue>, indentation: number): string[] {
+  const prefix = ' '.repeat(indentation)
+  return Object.entries(values).flatMap(([key, value]) => {
+    const keyLine = `${prefix}${yamlString(key)}:`
+    if (typeof value === 'object' && value !== null) {
+      return [
+        keyLine,
+        `${prefix}  $var: ${yamlString(value.$var)}`,
+        ...(value.omitWhenOff === undefined ? [] : [`${prefix}  omitWhenOff: ${value.omitWhenOff}`]),
+      ]
+    }
+    return [`${keyLine} ${yamlScalar(value)}`]
+  })
+}
+
+function yamlScalar(value: string | number | boolean | null): string {
+  if (value === null) return 'null'
+  if (typeof value === 'string') return yamlString(value)
+  return String(value)
 }

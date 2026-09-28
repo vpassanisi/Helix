@@ -6,6 +6,7 @@ import type { RuntimeState } from './runtime/types.js'
 import { SidebarProvider, type SidebarMessage, type SidebarState } from './sidebar/sidebar-provider.js'
 import { SessionController } from './host/session-controller.js'
 import { SettingsController } from './host/settings-controller.js'
+import { RequestPreviewCancelledError, RequestPreviewController } from './host/request-preview-controller.js'
 
 type SidebarHandler = (message: SidebarMessage) => Promise<void>
 
@@ -15,13 +16,17 @@ class ExtensionApp {
   private readonly subscriptions: vscode.Disposable[] = []
   private readonly changeTracker: WorkspaceChangeTracker
   private readonly settings: SettingsController
+  private readonly requestPreview: RequestPreviewController
   private readonly session: SessionController
   private readonly messageHandlers: Record<SidebarMessage['type'], SidebarHandler>
+  private readonly outputChannel: vscode.OutputChannel
   private runtimeState: RuntimeState = 'stopped'
   private selection: SidebarState['selection']
   private disposed = false
 
   constructor(private readonly context: vscode.ExtensionContext) {
+    this.outputChannel = vscode.window.createOutputChannel('Helix Provider Requests')
+    this.subscriptions.push(this.outputChannel)
     this.sidebar = new SidebarProvider(
       context.extensionUri,
       () => this.getSidebarState(),
@@ -36,7 +41,13 @@ class ExtensionApp {
 
     this.runtime = new HarnessRuntime({
       onHandlerError: (error) => this.postError(error),
-      onControlEvent: (event) => this.session.handleControlEvent(event),
+      onControlEvent: (event) => {
+        if (event.method === 'provider.requestCaptured') {
+          this.handleProviderRequestCaptured(event.params)
+          return
+        }
+        this.session.handleControlEvent(event)
+      },
       onLifecycleError: (error) => this.postError(error),
     })
     this.settings = new SettingsController({
@@ -47,6 +58,10 @@ class ExtensionApp {
       getActiveSessionId: () => this.session.currentSessionId,
       onError: (error) => this.postError(error),
     })
+    this.requestPreview = new RequestPreviewController({
+      getRuntimeOptions: () => this.settings.runtimeOptions(),
+      resolveReasoningEffort: () => this.settings.resolveReasoningEffort(null),
+    })
     this.session = new SessionController({
       runtime: this.runtime,
       sidebar: this.sidebar,
@@ -56,6 +71,7 @@ class ExtensionApp {
       getMaxSelectionCharacters: () => vscode.workspace
         .getConfiguration('deepseekHarness')
         .get<number>('maxSelectionCharacters', 32_000),
+      resolveReasoningEffort: (selection) => this.settings.resolveReasoningEffort(selection),
       onError: (error) => this.postError(error),
       onStateChanged: (resetTranscript) => {
         this.selection = editorSelection()
@@ -73,14 +89,28 @@ class ExtensionApp {
       ready: () => this.handleReady(),
       openSettings: () => this.handleOpenSettings(),
       saveSettings: (message) => this.settings.run(() => this.settings.saveSettings(message as Extract<SidebarMessage, { type: 'saveSettings' }>)),
+      saveMcpServers: (message) => this.settings.run(() => this.settings.saveMcpServers(message as Extract<SidebarMessage, { type: 'saveMcpServers' }>)),
       refreshModels: () => this.settings.run(() => this.settings.fetchModels()),
-      selectModel: (message) => this.settings.run(() => this.settings.selectModel(message as Extract<SidebarMessage, { type: 'selectModel' }>)),
+      loadModelCatalog: () => this.settings.run(() => this.settings.loadModelCatalog()),
+      saveModelCatalog: (message) => this.settings.run(() => this.settings.saveModelCatalog(message as Extract<SidebarMessage, { type: 'saveModelCatalog' }>)),
+      selectModel: (message) => this.settings.run(async () => {
+        const selected = await this.settings.selectModel(message as Extract<SidebarMessage, { type: 'selectModel' }>)
+        if (!selected) return
+        this.session.resetReasoningEffort()
+        this.sidebar.post({ type: 'state', state: this.getSidebarState() })
+      }),
       setSandboxMode: (message) => this.settings.run(() => this.settings.setSandboxMode(message as Extract<SidebarMessage, { type: 'setSandboxMode' }>)),
       submit: (message) => {
         const submit = message as Extract<SidebarMessage, { type: 'submit' }>
-        return this.session.submit(submit.prompt, submit.includeSelection)
+        return this.settings.run(() => this.session.submit(
+          submit.prompt,
+          submit.includeSelection,
+          submit.reasoningEffort ?? null,
+        ))
       },
       cancelTurn: () => this.session.cancelTurn(),
+      previewRequest: (message) => this.handleRequestPreview(message as Extract<SidebarMessage, { type: 'previewRequest' }>),
+      cancelRequestPreview: () => this.requestPreview.cancel(),
       approvalDecision: (message) => this.session.resolveApproval(message as Extract<SidebarMessage, { type: 'approvalDecision' }>),
       newSession: () => this.session.newSession(),
     }
@@ -112,18 +142,63 @@ class ExtensionApp {
     this.refreshSelection()
     this.session.replayPendingApprovals()
     await this.settings.postSettings()
-    await this.settings.run(() => this.settings.fetchModels())
   }
 
   private async handleOpenSettings(): Promise<void> {
     await this.settings.postSettings()
-    await this.settings.run(() => this.settings.fetchModels())
+  }
+
+  private async handleRequestPreview(message: Extract<SidebarMessage, { type: 'previewRequest' }>): Promise<void> {
+    this.sidebar.post({ type: 'requestPreviewState', state: 'loading' })
+    try {
+      const preview = await this.requestPreview.run(message.prompt)
+      this.sidebar.post({ type: 'requestPreviewState', state: 'success', preview })
+    } catch (error) {
+      this.sidebar.post({
+        type: 'requestPreviewState',
+        state: error instanceof RequestPreviewCancelledError ? 'cancelled' : 'error',
+        ...(error instanceof RequestPreviewCancelledError ? {} : { message: error instanceof Error ? error.message : String(error) }),
+      })
+    }
+  }
+
+  async captureNextProviderRequest(): Promise<void> {
+    if (this.runtimeState !== 'ready') {
+      void vscode.window.showErrorMessage('Start a chat before arming provider request capture.')
+      return
+    }
+    try {
+      this.outputChannel.clear()
+      this.outputChannel.appendLine('Waiting for the next OpenAI Chat Completions request. Send one message in Helix.')
+      this.outputChannel.appendLine('The capture includes prompt and workspace context. Authorization headers are not captured.')
+      this.outputChannel.show(true)
+      await this.runtime.captureNextProviderRequest(this.session.currentSessionId)
+    } catch (error) {
+      this.outputChannel.appendLine(`Could not arm capture: ${error instanceof Error ? error.message : String(error)}`)
+      this.outputChannel.show(true)
+    }
+  }
+
+  private handleProviderRequestCaptured(params: Record<string, unknown>): void {
+    const url = typeof params.url === 'string' ? params.url : '(unknown URL)'
+    this.outputChannel.appendLine(`Captured provider request: POST ${url}`)
+    if (typeof params.body !== 'string') {
+      this.outputChannel.appendLine('The request body was not available as text.')
+      return
+    }
+    try {
+      this.outputChannel.appendLine(JSON.stringify(JSON.parse(params.body), null, 2))
+    } catch {
+      this.outputChannel.appendLine(params.body)
+    }
+    this.outputChannel.show(true)
   }
 
   private getSidebarState(): SidebarState {
     return {
       activeSessionId: this.session.currentSessionId,
       runtimeState: this.runtimeState,
+      reasoningEffort: this.session.currentReasoningEffort,
       selection: this.selection,
     }
   }
@@ -151,6 +226,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('dsh.openSidebar', () => vscode.commands.executeCommand('workbench.view.extension.dsh')),
     vscode.commands.registerCommand('dsh.newSession', () => app.newSession()),
+    vscode.commands.registerCommand('dsh.captureNextProviderRequest', () => app.captureNextProviderRequest()),
     vscode.commands.registerCommand('dsh.askSelection', async () => {
       await vscode.commands.executeCommand('dsh.openSidebar')
       app.refreshSelection()

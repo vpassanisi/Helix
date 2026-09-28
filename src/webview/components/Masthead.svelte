@@ -1,16 +1,22 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { Plus, Settings2 } from '@lucide/svelte'
-  import type { RuntimeState } from '../types.js'
+  import type { RuntimeState, SettingsPage } from '../types.js'
 
   interface Props {
     runtimeState: RuntimeState
     onNewSession: () => void
-    onOpenSettings: () => void
+    onOpenSettings: (page: SettingsPage) => void
   }
 
   // The status-dot halo color tracks the dot color per state. `starting` keeps
   // the base gray halo from the original CSS and only swaps the fill + pulse.
   let { runtimeState, onNewSession, onOpenSettings }: Props = $props()
+
+  onMount(() => {
+    const basecoat = (window as Window & { basecoat?: { init?: (component: string) => void } }).basecoat
+    basecoat?.init?.('dropdown-menu')
+  })
 
   const dotClass = $derived(
     runtimeState === 'ready'
@@ -44,16 +50,29 @@
         data-size="icon" >
         <Plus size={15} strokeWidth={1.8} />
       </button>
-      <button
-        type="button"
-        title="Settings"
-        aria-label="Settings"
-        onclick={onOpenSettings}
-        class="btn icon-button"
-        data-variant="ghost"
-        data-size="icon" >
-        <Settings2 size={15} strokeWidth={1.8} />
-      </button>
+      <div class="dropdown-menu settings-dropdown">
+        <button
+          type="button"
+          id="settings-menu-trigger"
+          title="Settings"
+          aria-label="Settings"
+          aria-haspopup="menu"
+          aria-controls="settings-menu-list"
+          aria-expanded="false"
+          class="btn icon-button"
+          data-variant="ghost"
+          data-size="icon">
+          <Settings2 size={15} strokeWidth={1.8} />
+        </button>
+        <div id="settings-menu-popover" data-popover data-side="bottom" data-align="end" aria-hidden="true">
+          <div role="menu" id="settings-menu-list" aria-labelledby="settings-menu-trigger" aria-label="Settings pages">
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('connection')}>Connection settings</button>
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('models')}>Model configs</button>
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('mcp')}>MCP server configs</button>
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('preview')}>Request previewer</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </header>

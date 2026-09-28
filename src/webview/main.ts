@@ -1,5 +1,8 @@
 import 'basecoat-css/basecoat'
+import 'basecoat-css/combobox'
+import 'basecoat-css/dropdown-menu'
 import 'basecoat-css/select'
+import 'basecoat-css/popover'
 import { mount } from 'svelte'
 import App from './App.svelte'
 import './app.css'

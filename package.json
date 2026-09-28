@@ -11,11 +11,8 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onView:dsh.sidebar",
-    "onCommand:dsh.openSidebar",
-    "onCommand:dsh.newSession"
-  ],
+  "icon": "media/extension-icon.png",
+  "activationEvents": [],
   "main": "./out/extension.js",
   "type": "module",
   "contributes": {
@@ -33,7 +30,8 @@
         {
           "type": "webview",
           "id": "dsh.sidebar",
-          "name": "Helix"
+          "name": "Helix",
+          "icon": ""
         }
       ]
     },
@@ -45,6 +43,10 @@
       {
         "command": "dsh.newSession",
         "title": "Helix: New Session"
+      },
+      {
+        "command": "dsh.captureNextProviderRequest",
+        "title": "Helix: Capture Next Provider Request Body"
       },
       {
         "command": "dsh.askSelection",
@@ -155,12 +157,13 @@
     "check:webview": "svelte-check --tsconfig ./tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.ts",
     "watch": "tsc -p . --watch",
-    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/harness-runtime.test.js out/test/session-hierarchy.test.js out/test/serial-task-queue.test.js",
+    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/harness-runtime.test.js out/test/session-hierarchy.test.js out/test/serial-task-queue.test.js out/test/streamed-step-tracker.test.js out/test/request-preview-view.test.js out/test/reasoning-effort-request.test.js",
     "package": "npm run compile && node scripts/package-extension.mjs"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.5-rc.1",
     "@deepseek-ai/dsh-sdk-client": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
     "@lucide/svelte": "^1.43.0",
     "basecoat-css": "^1.0.2",
     "dompurify": "^3.4.15",

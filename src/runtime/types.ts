@@ -3,6 +3,7 @@ import type {
   HarnessNotification,
 } from '@deepseek-ai/dsh-sdk-client'
 import type { PersistedMcpServer, RuntimeMcpServer } from './mcp.js'
+import type { SavedModel } from './model-catalog.js'
 
 export type { ContentBlock, HarnessNotification }
 export type { PersistedMcpServer, RuntimeMcpServer } from './mcp.js'
@@ -16,8 +17,11 @@ export interface RuntimeOptions {
   apiKey?: string
   baseUrl?: string
   contextWindow?: number
+  savedModels?: SavedModel[]
   dshBin?: string
   dshHome?: string
+  /** Optional isolated session store used by short-lived tooling runtimes. */
+  sessionStorageRoot?: string
   sandboxMode: SandboxMode
   mcpServers: RuntimeMcpServer[]
 }

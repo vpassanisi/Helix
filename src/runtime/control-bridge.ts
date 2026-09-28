@@ -41,6 +41,9 @@ export interface ControlBroker {
   inject(sessionId: string, text: string, authoritySessionId?: string): Promise<void>
   setApprovalPolicy(sessionId: string, policy: 'ask' | 'never', authoritySessionId?: string): Promise<void>
   setSandboxMode(sessionId: string, mode: 'read-only' | 'workspace-write' | 'danger-full-access', authoritySessionId?: string): Promise<void>
+  setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void>
+  armRequestPreview(sessionId: string, captureId: string): Promise<void>
+  captureNextProviderRequest(sessionId: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -254,6 +257,18 @@ export class LocalControlBridge implements ControlBroker {
     authoritySessionId = sessionId,
   ): Promise<void> {
     await this.request('session.setSandboxMode', sessionId, { mode, authoritySessionId })
+  }
+
+  async setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void> {
+    await this.request('session.setReasoningEffort', sessionId, { reasoningEffort })
+  }
+
+  async armRequestPreview(sessionId: string, captureId: string): Promise<void> {
+    await this.request('request.preview.arm', sessionId, { captureId })
+  }
+
+  async captureNextProviderRequest(sessionId: string): Promise<void> {
+    await this.request('provider.request.captureNext', sessionId, {})
   }
 
   async close(): Promise<void> {

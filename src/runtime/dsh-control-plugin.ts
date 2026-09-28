@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createConnection, type Socket } from 'node:net'
+import { renderContextSections, renderPrompt, type PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 import {
   CONTROL_PROTOCOL_VERSION,
   CONTROL_CAPABILITIES,
@@ -9,8 +10,10 @@ import {
   type ControlEnvelope,
   type ControlRequestEnvelope,
   type ControlSandboxMode,
+  type PreviewPromptBreakdown,
+  type PreviewRequest,
 } from './control-protocol.js'
-import { stringValue } from '../shared/value-utils.js'
+import { isRecord, stringValue } from '../shared/value-utils.js'
 
 interface PendingApproval {
   sessionId: string
@@ -52,6 +55,32 @@ export default function helixControlPlugin(ctx: any): void {
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let reconnectAttempt = 0
   const approvals = new Map<string, PendingApproval>()
+  const reasoningEfforts = new Map<string, string | null>()
+  const requestPreviews = new Map<string, string>()
+  const requestPreviewBreakdowns = new Map<string, PreviewPromptBreakdown>()
+  let providerRequestCaptureSessionId: string | undefined
+
+  const originalFetch = globalThis.fetch
+  if (typeof originalFetch === 'function') {
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url = typeof input === 'string' || input instanceof URL
+        ? String(input)
+        : stringValue(input?.url) ?? String(input)
+      const captureSessionId = providerRequestCaptureSessionId
+      if (
+        captureSessionId !== undefined &&
+        init?.method?.toUpperCase() === 'POST' &&
+        /\/chat\/completions\/?(?:\?|$)/i.test(url)
+      ) {
+        providerRequestCaptureSessionId = undefined
+        sendEvent(captureSessionId, 'provider.requestCaptured', {
+          url,
+          body: typeof init.body === 'string' ? init.body : null,
+        })
+      }
+      return originalFetch.call(undefined, input, init)
+    }) as typeof fetch
+  }
 
   const send = (envelope: ControlEnvelope): boolean => {
     if (!connected || socket === undefined || socket.destroyed) return false
@@ -79,7 +108,7 @@ export default function helixControlPlugin(ctx: any): void {
 
   const sendEvent = (
     sessionId: string,
-    method: 'approval.request' | 'approval.resolved' | 'assistant.stream',
+    method: 'approval.request' | 'approval.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured',
     params: Record<string, unknown>,
   ): boolean => send({
     version: CONTROL_PROTOCOL_VERSION,
@@ -159,7 +188,30 @@ export default function helixControlPlugin(ctx: any): void {
     sendResponse(request, { accepted: true })
   }
 
+  const handlePreviewArm = (request: ControlRequestEnvelope): void => {
+    const captureId = stringValue(request.params.captureId)
+    if (captureId === undefined) throw new PluginControlError('Preview capture ID is required.', 'INVALID_ARGUMENT')
+    requestPreviews.set(request.sessionId, captureId)
+    requestPreviewBreakdowns.delete(request.sessionId)
+    sendResponse(request, { accepted: true })
+  }
+
+  const handleProviderRequestCapture = (request: ControlRequestEnvelope): void => {
+    providerRequestCaptureSessionId = request.sessionId
+    sendResponse(request, { accepted: true })
+  }
+
   const handleAgentRequest = (request: ControlRequestEnvelope): void => {
+    if (request.method === 'session.setReasoningEffort') {
+      const reasoningEffort = request.params.reasoningEffort
+      if (reasoningEffort !== null && (typeof reasoningEffort !== 'string' || !reasoningEffort.trim())) {
+        throw new PluginControlError('Reasoning effort must be a non-empty ID or null for the model default.', 'INVALID_ARGUMENT')
+      }
+      reasoningEfforts.set(request.sessionId, reasoningEffort === null ? null : reasoningEffort.trim())
+      sendResponse(request, { accepted: true })
+      return
+    }
+
     const agent = requireAgent(request)
     switch (request.method) {
       case 'turn.cancel':
@@ -199,6 +251,8 @@ export default function helixControlPlugin(ctx: any): void {
     try {
       if (request.method === 'capabilities.get') return handleCapabilities(request)
       if (request.method === 'approval.resolve') return handleApprovalResolution(request)
+      if (request.method === 'request.preview.arm') return handlePreviewArm(request)
+      if (request.method === 'provider.request.captureNext') return handleProviderRequestCapture(request)
       handleAgentRequest(request)
     } catch (error) {
       sendResponse(request, undefined, {
@@ -315,11 +369,61 @@ export default function helixControlPlugin(ctx: any): void {
     sendEvent(sessionId, 'assistant.stream', { frame })
   }
 
+  const onLlmStream = (options: any, next: () => AsyncIterable<unknown>): AsyncIterable<unknown> => {
+    const sessionId = stringValue(options?.sessionId)
+    if (sessionId === undefined || options?.purpose !== undefined) return next()
+    const captureId = requestPreviews.get(sessionId)
+    if (captureId === undefined) return next()
+
+    requestPreviews.delete(sessionId)
+    const promptBreakdown = requestPreviewBreakdowns.get(sessionId)
+    requestPreviewBreakdowns.delete(sessionId)
+    sendEvent(sessionId, 'request.previewCaptured', {
+      captureId,
+      request: canonicalPreviewRequest(options),
+      ...(promptBreakdown === undefined ? {} : { promptBreakdown }),
+    })
+    return (async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })()
+  }
+
+  const onSystemPromptAssemble = async (
+    assembly: any,
+    context: any,
+    next: () => Promise<any>,
+  ): Promise<any> => {
+    const sessionId = stringValue(context?.agent?.id)
+    if (sessionId === undefined || requestPreviews.get(sessionId) === undefined) return next()
+
+    const assembled = await next()
+    if (requestPreviews.has(sessionId) && !requestPreviewBreakdowns.has(sessionId)) {
+      const breakdown = canonicalPromptBreakdown(assembled)
+      if (breakdown !== undefined) requestPreviewBreakdowns.set(sessionId, breakdown)
+    }
+    return assembled
+  }
+
+  const onAgentRequest = async (payload: any, next: () => Promise<Record<string, unknown>>): Promise<Record<string, unknown>> => {
+    const sessionId = stringValue(payload?.agent?.id)
+    if (sessionId === undefined || !reasoningEfforts.has(sessionId)) return next()
+
+    const config = { ...await next() }
+    const reasoningEffort = reasoningEfforts.get(sessionId)
+    if (reasoningEffort === null) delete config.reasoningEffort
+    else if (reasoningEffort !== undefined) config.reasoningEffort = reasoningEffort
+    return config
+  }
+
   try {
     ctx.on?.('approval/request', onApprovalRequest, { global: true })
     ctx.on?.('agent/assistant-stream', onAssistantStream, { global: true })
+    ctx.on?.('agent/request', onAgentRequest, { global: true })
+    ctx.on?.('system-prompt/assemble', onSystemPromptAssemble, { global: true })
+    ctx.on?.('llm/stream', onLlmStream, { global: true })
     ctx.effect?.(() => () => {
       disposed = true
+      if (originalFetch !== undefined) globalThis.fetch = originalFetch
       if (reconnectTimer !== undefined) clearTimeout(reconnectTimer)
       reconnectTimer = undefined
       connected = false
@@ -328,6 +432,8 @@ export default function helixControlPlugin(ctx: any): void {
       for (const [approvalId, pending] of approvals) {
         finishApproval(approvalId, pending, 'cancelled')
       }
+      requestPreviews.clear()
+      requestPreviewBreakdowns.clear()
     }, 'helix-control-bridge.lifecycle')
   } catch (error) {
     if (!isInactiveContextError(error)) throw error
@@ -335,6 +441,40 @@ export default function helixControlPlugin(ctx: any): void {
   }
 
   connect()
+}
+
+function canonicalPreviewRequest(options: any): PreviewRequest {
+  const request: PreviewRequest = {
+    provider: stringValue(options?.provider) ?? '',
+    model: stringValue(options?.model) ?? '',
+    messages: Array.isArray(options?.messages) ? options.messages : [],
+  }
+  if (typeof options?.reasoningEffort === 'string') request.reasoningEffort = options.reasoningEffort
+  if (typeof options?.system === 'string') request.system = options.system
+  if (Array.isArray(options?.tools)) request.tools = options.tools
+  if (typeof options?.temperature === 'number') request.temperature = options.temperature
+  if (typeof options?.maxTokens === 'number') request.maxTokens = options.maxTokens
+  if (Array.isArray(options?.stop)) request.stop = options.stop
+  return request
+}
+
+function canonicalPromptBreakdown(value: unknown): PreviewPromptBreakdown | undefined {
+  if (!isRecord(value) || !Array.isArray(value.sections) || !Array.isArray(value.contexts) || !isRecord(value.variables)) {
+    return undefined
+  }
+
+  try {
+    const assembly = value as unknown as PromptAssembly
+    const systemSections = assembly.sections.flatMap((section) => {
+      if (typeof section.name !== 'string') return []
+      const text = renderPrompt({ ...assembly, sections: [section] })
+      return text.length === 0 ? [] : [{ name: section.name, text }]
+    })
+    const contextSections = renderContextSections(assembly).map(({ name, text }) => ({ name, text }))
+    return { systemSections, contextSections }
+  } catch {
+    return undefined
+  }
 }
 
 function removeAbortListener(pending: PendingApproval): void {

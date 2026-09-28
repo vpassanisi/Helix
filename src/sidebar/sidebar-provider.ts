@@ -3,7 +3,8 @@ import * as vscode from 'vscode'
 import type { CodeChange } from '../runtime/change-tracker.js'
 import type { EditorContext } from '../runtime/prompt-context.js'
 import type { RuntimeState, SandboxMode } from '../runtime/types.js'
-import type { DiscoveredModel } from '../runtime/model-catalog.js'
+import { isReasoningFormat, type DiscoveredModel, type ModelDraft, type SavedModel } from '../runtime/model-catalog.js'
+import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import { isRecord } from '../shared/value-utils.js'
 
 export type SidebarMessage =
@@ -16,19 +17,24 @@ export type SidebarMessage =
       apiKey?: string
       clearApiKey: boolean
       sandboxMode: SandboxMode
-      mcpServers: SidebarMcpServer[]
     }
-  | { type: 'submit'; prompt: string; includeSelection: boolean }
+  | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
+  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null }
   | { type: 'newSession' }
   | { type: 'cancelTurn' }
+  | { type: 'previewRequest'; prompt: string }
+  | { type: 'cancelRequestPreview' }
   | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
   | { type: 'refreshModels' }
-  | { type: 'selectModel'; model: string; contextWindow?: number }
+  | { type: 'loadModelCatalog' }
+  | { type: 'saveModelCatalog'; models: ModelDraft[] }
+  | { type: 'selectModel'; model: string }
   | { type: 'setSandboxMode'; sandboxMode: SandboxMode }
 
 export interface SidebarState {
   activeSessionId: string
   runtimeState: RuntimeState
+  reasoningEffort?: string
   selection?: Omit<EditorContext, 'ranges'> & {
     ranges: Array<Omit<EditorContext['ranges'][number], 'text'>>
   }
@@ -66,7 +72,8 @@ export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env'> {
   env: Array<{ name: string; configured: boolean }>
 }
 
-export type SidebarModel = DiscoveredModel
+export type SidebarModel = SavedModel
+export type SidebarDiscoveredModel = DiscoveredModel
 export type SidebarCodeChange = CodeChange
 
 export type SidebarOutgoingMessage =
@@ -78,8 +85,11 @@ export type SidebarOutgoingMessage =
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
   | { type: 'error'; message: string }
-  | { type: 'accepted'; sessionId: string }
-  | { type: 'models'; models: SidebarModel[]; error?: string }
+  | { type: 'accepted'; sessionId: string; reasoningEffort?: string }
+  | { type: 'discoveredModels'; models: SidebarDiscoveredModel[]; error?: string }
+  | { type: 'modelCatalog'; models: SidebarModel[]; error?: string }
+  | { type: 'modelCatalogSaved'; models: SidebarModel[]; runtimeRestarting: boolean }
+  | { type: 'requestPreviewState'; state: 'loading' | 'success' | 'error' | 'cancelled'; preview?: RequestPreviewResult; message?: string }
   | {
       type: 'approvalRequest'
       sessionId: string
@@ -124,7 +134,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = getHtml(webviewView.webview, this.extensionUri)
     webviewView.webview.onDidReceiveMessage((message: unknown) => {
       if (!isSidebarMessage(message)) {
-        if (isRecord(message) && message.type === 'saveSettings') {
+        if (isRecord(message) && (message.type === 'saveSettings' || message.type === 'saveMcpServers')) {
           this.post({
             type: 'error',
             message: 'Could not save settings. Reload the Extension Development Host and try again.',
@@ -191,17 +201,21 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
       'baseUrl' in value && typeof value.baseUrl === 'string' &&
       'clearApiKey' in value && typeof value.clearApiKey === 'boolean' &&
       'sandboxMode' in value && isSandboxMode(value.sandboxMode) &&
-      'mcpServers' in value && Array.isArray(value.mcpServers) && value.mcpServers.every(isSidebarMcpServer) &&
       (!('apiKey' in value) || typeof value.apiKey === 'string')
+  }
+  if (type === 'saveMcpServers') {
+    return 'mcpServers' in value && Array.isArray(value.mcpServers) && value.mcpServers.every(isSidebarMcpServer)
   }
   if (type === 'submit') {
     return 'prompt' in value && typeof value.prompt === 'string' &&
-      'includeSelection' in value && typeof value.includeSelection === 'boolean'
+      'includeSelection' in value && typeof value.includeSelection === 'boolean' &&
+      (!('reasoningEffort' in value) || value.reasoningEffort === null || typeof value.reasoningEffort === 'string')
   }
   if (type === 'selectModel') {
-    return 'model' in value && typeof value.model === 'string' &&
-      (!('contextWindow' in value) || value.contextWindow === undefined ||
-        (typeof value.contextWindow === 'number' && Number.isSafeInteger(value.contextWindow) && value.contextWindow > 0))
+    return 'model' in value && typeof value.model === 'string'
+  }
+  if (type === 'saveModelCatalog') {
+    return 'models' in value && Array.isArray(value.models) && value.models.every(isModelDraft)
   }
   if (type === 'setSandboxMode') {
     return 'sandboxMode' in value && isSandboxMode(value.sandboxMode)
@@ -213,11 +227,33 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
       (value.outcome === 'allowed-once' || value.outcome === 'rejected')
   }
 
+  if (type === 'previewRequest') return 'prompt' in value && typeof value.prompt === 'string'
+
   return type === 'ready' ||
     type === 'openSettings' ||
+    type === 'loadModelCatalog' ||
     type === 'newSession' ||
     type === 'cancelTurn' ||
+    type === 'cancelRequestPreview' ||
     type === 'refreshModels'
+}
+
+function isModelDraft(value: unknown): value is ModelDraft {
+  if (!isRecord(value) || typeof value.id !== 'string') return false
+  if ('displayName' in value && value.displayName !== undefined && typeof value.displayName !== 'string') return false
+  if ('sourceId' in value && value.sourceId !== undefined && typeof value.sourceId !== 'string') return false
+  if ('contextWindow' in value && value.contextWindow !== undefined &&
+    (typeof value.contextWindow !== 'number' || !Number.isSafeInteger(value.contextWindow) || value.contextWindow <= 0)) return false
+  if ('reasoningEfforts' in value && value.reasoningEfforts !== undefined &&
+    (!Array.isArray(value.reasoningEfforts) || !value.reasoningEfforts.every((effort) => typeof effort === 'string'))) return false
+  if ('defaultReasoningEffort' in value && value.defaultReasoningEffort !== undefined &&
+    typeof value.defaultReasoningEffort !== 'string') return false
+  if ('reasoningFormat' in value && value.reasoningFormat !== undefined && !isReasoningFormat(value.reasoningFormat)) return false
+  if ('binaryThinkingMode' in value && value.binaryThinkingMode !== undefined &&
+    value.binaryThinkingMode !== 'provider-default' && value.binaryThinkingMode !== 'on' && value.binaryThinkingMode !== 'off') return false
+  if ('chatTemplateKwargs' in value && value.chatTemplateKwargs !== undefined && !isRecord(value.chatTemplateKwargs)) return false
+  if ('chatTemplateArgs' in value && value.chatTemplateArgs !== undefined && !isRecord(value.chatTemplateArgs)) return false
+  return true
 }
 
 function isSidebarMcpServer(value: unknown): value is SidebarMcpServer {

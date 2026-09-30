@@ -29,7 +29,7 @@
   )
 </script>
 
-<header class="p-1 px-3 border-b border-[var(--border)]">
+<header class="relative z-10 p-1 px-3 border-b border-[var(--border)]">
   <div class="relative flex min-h-[27px] items-center justify-start gap-2.5">
     <div class="flex min-w-0 items-center gap-[9px]">
       <h1 class="text-[17px] leading-[1.05] tracking-[-.035em] font-[650] text-[var(--thinking-border)]">Helix</h1>

@@ -147,6 +147,7 @@ test('writes saved model formats and same-name effort values into the llm-pi-ai 
         id: 'muse/glimmer',
         displayName: 'Muse Glimmer',
         contextWindow: 65536,
+        acceptsImages: true,
         reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
         defaultReasoningEffort: 'medium',
         reasoningFormat: 'deepseek',
@@ -165,6 +166,8 @@ test('writes saved model formats and same-name effort values into the llm-pi-ai 
   const patch = await readFile(patchPath, 'utf8')
   assert.match(patch, /"muse-gateway":\n        models:/)
   assert.match(patch, /- id: "muse\/glimmer"\n            name: "Muse Glimmer"\n            contextWindow: 65536/)
+  assert.match(patch, /"muse\/glimmer"[\s\S]*?input: \["text", "image"\]/)
+  assert.match(patch, /"muse\/template"\n            input: \["text"\]/)
   assert.match(patch, /"medium": "medium"/)
   assert.match(patch, /thinkingFormat: "deepseek"/)
   assert.match(patch, /"muse\/template"[\s\S]*?chatTemplateKwargs:[\s\S]*?\$var: "thinking\.effort"/)
@@ -189,6 +192,43 @@ test('does not send llm-pi-ai model formats through the fixed deepseek-official 
   assert.ok(patchPath)
   const patch = await readFile(patchPath, 'utf8')
   assert.doesNotMatch(patch, /thinkingFormat:|"deepseek-official":/)
+  assert.match(patch, /- id: "model-a"\n        inputModalities: \["text"\]/)
+  await runtime.dispose()
+})
+
+test('direct DeepSeek Vision settings preserve built-in metadata and add custom models', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+
+  await runtime.start({
+    ...runtimeOptions(),
+    provider: 'deepseek-official',
+    model: 'deepseek-flash',
+    contextWindow: 65536,
+    savedModels: [
+      { id: 'deepseek-flash', acceptsImages: false },
+      { id: 'custom-vision', acceptsImages: true },
+    ],
+  })
+
+  const patchPath = clientOptions?.patches?.[0]
+  assert.ok(patchPath)
+  const patch = await readFile(patchPath, 'utf8')
+  const builtIn = patch.split('      - id: "deepseek-flash"')[1]?.split('      - id: ')[0]
+  assert.ok(builtIn)
+  assert.match(builtIn, /name: "DeepSeek-V41-Flash"/)
+  assert.match(builtIn, /contextWindow: 65536/)
+  assert.match(builtIn, /inputModalities: \["text"\]/)
+  assert.match(builtIn, /systemPromptUpdate: "in-history"/)
+  assert.doesNotMatch(builtIn, /imagePixelBudget:|imageMaxBytes:/)
+  assert.match(patch, /- id: "custom-vision"\n        inputModalities: \["text", "image"\]/)
+  assert.match(patch, /- id: "deepseek-v4-flash-vision-exp"[\s\S]*?inputModalities: \["text", "image"\]/)
   await runtime.dispose()
 })
 

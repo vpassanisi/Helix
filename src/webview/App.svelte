@@ -155,10 +155,10 @@
   let mcpServers = $state<McpServerDraft[]>([])
   let codeChanges = $state<CodeChange[]>([])
   let changesOpen = $state(false)
-  let changesActive = $state(false)
   let hostChangesStarted = false
   let nextMessageId = 1
   let transcriptElement = $state<HTMLDivElement>()
+  let followTranscript = true
   let promptElement = $state<HTMLTextAreaElement>()
   let modelPickerElement = $state<HTMLDivElement>()
   let reasoningEffortPickerElement = $state<HTMLDivElement>()
@@ -227,15 +227,10 @@
       if (message.active && !hostChangesStarted) {
         hostChangesStarted = true
         codeChanges = []
-        changesOpen = false
         pendingCodeChanges = {}
         toolDerivedPaths = new Set()
       }
       if (message.changes.length > 0) codeChanges = mergeHostChanges(codeChanges, message.changes)
-      changesActive = message.active
-      if (codeChanges.length > 0 && !changesOpen) {
-        changesOpen = true
-      }
       if (!message.active) {
         hostChangesStarted = false
         void scrollToBottom()
@@ -372,6 +367,7 @@
       ...modelEntry,
       key: nextModelDraftKey++,
       sourceId: entry.id,
+      acceptsImages: entry.acceptsImages ?? false,
       reasoningFormat: entry.reasoningFormat ?? 'auto',
       binaryThinkingMode: entry.binaryThinkingMode ?? 'provider-default',
       reasoningEfforts: reasoningEfforts ?? [],
@@ -392,6 +388,7 @@
   }
 
   function resetTranscript(): void {
+    followTranscript = true
     streamedStepTracker.reset()
     toolCallsByStep = {}
     pendingCodeChanges = {}
@@ -400,7 +397,6 @@
     messages = []
     codeChanges = []
     changesOpen = false
-    changesActive = false
     hostChangesStarted = false
     isGenerating = false
     waitingForFirstResponse = false
@@ -497,6 +493,7 @@
       modelDrafts = [...modelDrafts, {
         ...modelEntry,
         key: nextModelDraftKey++,
+        acceptsImages: false,
         reasoningEfforts: reasoningEfforts ?? [],
         reasoningFormat: 'auto',
         binaryThinkingMode: 'provider-default',
@@ -658,6 +655,7 @@
           id: draft.id,
           displayName: draft.displayName,
           contextWindow: draft.contextWindow,
+          acceptsImages: draft.acceptsImages ?? false,
           sourceId: draft.sourceId,
           reasoningEfforts: modelEffortOptions(draft),
           defaultReasoningEffort: draft.defaultReasoningEffort,
@@ -709,9 +707,40 @@
     void scrollToBottom()
   }
 
+  function isNearBottom(element: HTMLElement): boolean {
+    return element.scrollHeight - element.clientHeight - element.scrollTop <= 24
+  }
+
+  function followThinkingStream(element: HTMLDivElement) {
+    const details = element.parentElement as HTMLDetailsElement
+    let following = true
+    const scrollToLatest = () => {
+      if (details.open && following) element.scrollTop = element.scrollHeight
+    }
+    const onScroll = () => { following = isNearBottom(element) }
+    const observer = new MutationObserver(scrollToLatest)
+
+    element.addEventListener('scroll', onScroll)
+    details.addEventListener('toggle', scrollToLatest)
+    observer.observe(element, { childList: true, characterData: true, subtree: true })
+
+    return {
+      destroy() {
+        observer.disconnect()
+        element.removeEventListener('scroll', onScroll)
+        details.removeEventListener('toggle', scrollToLatest)
+      },
+    }
+  }
+
+  function handleTranscriptScroll(event: Event): void {
+    followTranscript = isNearBottom(event.currentTarget as HTMLDivElement)
+  }
+
   async function scrollToBottom(): Promise<void> {
+    if (!followTranscript) return
     await tick()
-    if (transcriptElement) transcriptElement.scrollTop = transcriptElement.scrollHeight
+    if (followTranscript && transcriptElement) transcriptElement.scrollTop = transcriptElement.scrollHeight
   }
 
   function numericValue(value: unknown): number | undefined {
@@ -819,8 +848,6 @@
     codeChanges = existing === undefined
       ? [...codeChanges, nextChange].sort((left, right) => left.path.localeCompare(right.path))
       : codeChanges.map((current) => current.path === change.path ? nextChange : current)
-    changesActive = true
-    changesOpen = true
   }
 
   function contextMeterLabel(): string {
@@ -1161,7 +1188,6 @@
         isGenerating = false
         waitingForFirstResponse = false
         if (codeChanges.length > 0) {
-          changesActive = false
           void scrollToBottom()
         }
       }
@@ -1658,6 +1684,13 @@
                       <label for={`model-context-${draft.key}`}>Context window</label>
                       <input id={`model-context-${draft.key}`} class="input" type="number" min="1" step="1" bind:value={draft.contextWindow} placeholder="Unknown" disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
                     </div>
+                    <div class="field model-vision-field">
+                      <div class="model-vision-control">
+                        <label for={`model-vision-${draft.key}`}>Vision</label>
+                        <input id={`model-vision-${draft.key}`} class="input" type="checkbox" role="switch" data-size="sm" bind:checked={draft.acceptsImages} aria-describedby={`model-vision-help-${draft.key}`} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
+                      </div>
+                      <small id={`model-vision-help-${draft.key}`}>Allow image input if the endpoint supports it.</small>
+                    </div>
                     <div class="field" role="group">
                       <label for={`model-reasoning-format-trigger-${draft.key}`}>Reasoning format</label>
                       <div
@@ -2013,13 +2046,13 @@
     </section>
   {:else}
     <section class="chat-view">
-      <div class="transcript" bind:this={transcriptElement} aria-live="polite">
+      <div class="transcript" bind:this={transcriptElement} onscroll={handleTranscriptScroll} aria-live="polite">
         {#each messages as message (message.id)}
           <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'}>
             {#if message.role === 'reasoning'}
               <details class="thinking">
                 <summary><span>{message.label}</span><ChevronDown class="thinking-chevron" size={13} strokeWidth={1.8} /></summary>
-                <div class="message-body">{message.text}</div>
+                <div class="message-body" use:followThinkingStream>{message.text}</div>
               </details>
             {:else if message.role === 'tool' && message.tool}
               <details open={message.tool.approval?.status === 'pending'} class:completed={message.tool.status === 'completed'} class:failed={message.tool.status === 'error'} class="tool-details">
@@ -2096,13 +2129,18 @@
           </article>
         {/if}
         {#if codeChanges.length > 0 && !isGenerating}
-          <section class="changes-summary-card" aria-label="Agent changes summary">
-            <div class="changes-summary-header">
+          <section class:open={changesOpen} class="changes-summary-card" aria-label="Agent changes summary">
+            <button class="btn changes-toggle" data-variant="ghost" type="button" aria-expanded={changesOpen} onclick={() => { changesOpen = !changesOpen }}>
               <span class="changes-title"><FileDiff size={13} strokeWidth={1.8} /> <span>Changes</span><span class="changes-count">{codeChanges.length}</span></span>
               <span class="changes-summary">{changeSummaryLabel()}</span>
-            </div>
-            <div class="changes-list changes-summary-list">
-              {@render changeRows()}
+              <ChevronDown class="changes-chevron" size={13} strokeWidth={1.8} />
+            </button>
+            <div class="changes-panel">
+              <div class="changes-panel-inner">
+                <div class="changes-list changes-summary-list">
+                  {@render changeRows()}
+                </div>
+              </div>
             </div>
           </section>
         {/if}
@@ -2130,7 +2168,7 @@
           <section class:open={changesOpen} class="changes-drawer" aria-label="Agent changes">
             <button class="btn changes-toggle" data-variant="ghost" type="button" aria-expanded={changesOpen} onclick={() => { changesOpen = !changesOpen }}>
               <span class="changes-title"><FileDiff size={13} strokeWidth={1.8} /> <span>Changes</span><span class="changes-count">{codeChanges.length}</span></span>
-              <span class="changes-summary">{changesActive ? 'Updating…' : changeSummaryLabel()}</span>
+              <span class="changes-summary">{changeSummaryLabel()}</span>
               <ChevronDown class="changes-chevron" size={13} strokeWidth={1.8} />
             </button>
             <div class="changes-panel">
@@ -2251,7 +2289,6 @@
             </button>
           </div>
         </div>
-        <div class="session-id">session {activeSessionId || 'waiting for runtime'}</div>
       </div>
     </section>
   {/if}

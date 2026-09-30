@@ -244,6 +244,7 @@ function isModelDraft(value: unknown): value is ModelDraft {
   if ('sourceId' in value && value.sourceId !== undefined && typeof value.sourceId !== 'string') return false
   if ('contextWindow' in value && value.contextWindow !== undefined &&
     (typeof value.contextWindow !== 'number' || !Number.isSafeInteger(value.contextWindow) || value.contextWindow <= 0)) return false
+  if ('acceptsImages' in value && value.acceptsImages !== undefined && typeof value.acceptsImages !== 'boolean') return false
   if ('reasoningEfforts' in value && value.reasoningEfforts !== undefined &&
     (!Array.isArray(value.reasoningEfforts) || !value.reasoningEfforts.every((effort) => typeof effort === 'string'))) return false
   if ('defaultReasoningEffort' in value && value.defaultReasoningEffort !== undefined &&

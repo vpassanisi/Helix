@@ -44,6 +44,7 @@ export type ChatTemplateValue = string | number | boolean | null | {
 
 export interface PiAiModelRuntimeProfile {
   id: string
+  input: Array<'text' | 'image'>
   name?: string
   contextWindow?: number
   reasoningEfforts?: Partial<Record<DshReasoningLevel, string | null>> | false
@@ -59,6 +60,7 @@ export interface SavedModel {
   id: string
   displayName?: string
   contextWindow?: number
+  acceptsImages?: boolean
   reasoningEfforts?: string[]
   defaultReasoningEffort?: string
   reasoningFormat?: ReasoningFormat
@@ -124,6 +126,10 @@ export function normalizeSavedModels(value: unknown): SavedModel[] {
       const contextWindow = positiveInteger(entry.contextWindow)
       if (contextWindow === undefined) throw new Error(`Model "${id}" needs a positive whole-number context window.`)
       model.contextWindow = contextWindow
+    }
+    if ('acceptsImages' in entry && entry.acceptsImages !== undefined) {
+      if (typeof entry.acceptsImages !== 'boolean') throw new Error(`Model "${id}" has an invalid Vision setting.`)
+      model.acceptsImages = entry.acceptsImages
     }
     const savedReasoningEfforts = entry.reasoningEfforts
     const legacyPreset = entry.reasoningPreset
@@ -251,7 +257,10 @@ export function updateReasoningEffortSelection(
 
 export function piAiRuntimeModelProfiles(models: SavedModel[]): PiAiModelRuntimeProfile[] {
   return models.map((model) => {
-    const profile: PiAiModelRuntimeProfile = { id: model.id }
+    const profile: PiAiModelRuntimeProfile = {
+      id: model.id,
+      input: model.acceptsImages === true ? ['text', 'image'] : ['text'],
+    }
     if (model.displayName !== undefined) profile.name = model.displayName
     if (model.contextWindow !== undefined) profile.contextWindow = model.contextWindow
 

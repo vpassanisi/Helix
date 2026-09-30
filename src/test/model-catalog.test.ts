@@ -72,12 +72,25 @@ test('loads an empty saved catalog and round-trips editable model metadata', () 
 
 test('loads legacy models without effort metadata and round-trips model-specific effort choices', () => {
   assert.deepEqual(parseSavedModelCatalogJson('{"version":1,"models":[{"id":"legacy"}]}'), [{ id: 'legacy' }])
+  assert.deepEqual(piAiRuntimeModelProfiles(parseSavedModelCatalogJson('{"version":1,"models":[{"id":"legacy"}]}'))[0].input, ['text'])
   const models: SavedModel[] = [{
     id: 'provider/model-a',
     reasoningEfforts: ['low', 'high'],
     defaultReasoningEffort: 'high',
   }]
   assert.deepEqual(parseSavedModelCatalogJson(serializeSavedModelCatalog(models)), models)
+})
+
+test('saves Vision on and off, and rejects non-boolean values', () => {
+  const models: SavedModel[] = [
+    { id: 'vision-on', acceptsImages: true },
+    { id: 'vision-off', acceptsImages: false },
+  ]
+  const serialized = serializeSavedModelCatalog(models)
+  assert.match(serialized, /"version": 1/)
+  assert.deepEqual(parseSavedModelCatalogJson(serialized), models)
+  assert.deepEqual(piAiRuntimeModelProfiles(models).map((model) => model.input), [['text', 'image'], ['text']])
+  assert.throws(() => parseSavedModelCatalogJson('{"version":1,"models":[{"id":"invalid","acceptsImages":"true"}]}'), /invalid Vision setting/)
 })
 
 test('round-trips per-model selected reasoning levels, format, binary mode, and template values', () => {
@@ -156,7 +169,7 @@ test('empty effort configuration omits the composer selector and lets the provid
   const model: SavedModel = { id: 'provider-default', reasoningEfforts: [], reasoningFormat: 'openai' }
   assert.deepEqual(selectableReasoningEfforts(model), [])
   assert.equal(resolveSavedModelReasoningEffort([model], model.id, null), undefined)
-  assert.deepEqual(piAiRuntimeModelProfiles([model]), [{ id: model.id, compat: { thinkingFormat: 'openai' } }])
+  assert.deepEqual(piAiRuntimeModelProfiles([model]), [{ id: model.id, input: ['text'], compat: { thinkingFormat: 'openai' } }])
 })
 
 test('off can only be selected with a graded level and is cleared when the last graded level is removed', () => {
@@ -195,23 +208,27 @@ test('generates identity DSH effort maps, per-model format settings, and binary 
   const profiles = piAiRuntimeModelProfiles(models)
   assert.deepEqual(profiles[0], {
     id: 'graded',
+    input: ['text'],
     contextWindow: 8192,
     reasoningEfforts: { off: null, low: 'low', high: 'high' },
     compat: { thinkingFormat: 'deepseek' },
   })
-  assert.deepEqual(profiles[1], { id: 'auto', reasoningEfforts: { low: 'low', high: 'high' } })
+  assert.deepEqual(profiles[1], { id: 'auto', input: ['text'], reasoningEfforts: { low: 'low', high: 'high' } })
   assert.deepEqual(profiles[2], {
     id: 'qwen-on',
+    input: ['text'],
     reasoningEfforts: { low: 'low' },
     compat: { thinkingFormat: 'qwen', supportsReasoningEffort: false },
   })
   assert.deepEqual(profiles[3], {
     id: 'qwen-off',
+    input: ['text'],
     reasoningEfforts: { low: 'low', off: null },
     compat: { thinkingFormat: 'qwen-chat-template' },
   })
   assert.deepEqual(profiles[4], {
     id: 'qwen-default',
+    input: ['text'],
     reasoningEfforts: false,
     compat: { thinkingFormat: 'qwen', supportsReasoningEffort: false },
   })

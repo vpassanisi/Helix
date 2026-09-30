@@ -53,6 +53,7 @@ export interface SidebarModel {
   id: string
   displayName?: string
   contextWindow?: number
+  acceptsImages?: boolean
   reasoningEfforts?: string[]
   defaultReasoningEffort?: string
   reasoningFormat?: ReasoningFormat

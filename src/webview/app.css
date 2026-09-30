@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "basecoat-css/components/combobox.css";
 @import "basecoat-css/components/checkbox.css";
+@import "basecoat-css/components/switch.css";
 @import "basecoat-css/components/dropdown-menu.css";
 @import "basecoat-css/components/popover.css";
 @import "./theme.css";
@@ -126,14 +127,12 @@ h1, h2, p { margin: 0; }
 .changes-count { display: inline-grid; min-width: 16px; height: 16px; place-items: center; padding: 0 4px; border-radius: 999px; color: var(--muted-foreground); background: var(--secondary); font-size: 9px; font-weight: 500; }
 .changes-summary { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .changes-chevron { flex: 0 0 auto; margin-left: auto; transition: transform .18s ease; }
-.changes-drawer.open .changes-chevron { transform: rotate(180deg); }
+.changes-drawer.open .changes-chevron, .changes-summary-card.open .changes-chevron { transform: rotate(180deg); }
 .changes-panel { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .2s ease, opacity .15s ease; }
-.changes-drawer.open .changes-panel { grid-template-rows: 1fr; opacity: 1; }
+.changes-drawer.open .changes-panel, .changes-summary-card.open .changes-panel { grid-template-rows: 1fr; opacity: 1; }
 .changes-panel-inner { min-height: 0; overflow: hidden; }
 .changes-list { display: grid; max-height: 180px; gap: 2px; overflow: auto; padding: 0 8px 8px; }
 .changes-summary-card { margin: 0 7px 14px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--composer); animation: changes-drawer-in .18s ease-out both; }
-.changes-summary-header { display: flex; align-items: center; min-height: 29px; gap: 8px; padding: 6px 8px; }
-.changes-summary-header .changes-summary { margin-left: auto; }
 .changes-summary-list { max-height: 180px; }
 .change-row { display: flex; min-width: 0; align-items: center; gap: 7px; padding: 5px 0; border-top: 1px solid var(--border); font-size: 10px; }
 .change-kind { display: inline-grid; flex: 0 0 auto; width: 16px; height: 16px; place-items: center; border-radius: 3px; color: var(--muted-foreground); background: var(--secondary); font-family: var(--vscode-editor-font-family, monospace); font-size: 9px; font-weight: 700; }
@@ -218,7 +217,6 @@ h1, h2, p { margin: 0; }
 .model-refresh { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 25px; height: 27px; padding: 0; border: 0; color: var(--muted-foreground); }
 .model-refresh:hover:not(:disabled) { color: var(--foreground); background: var(--color-muted, var(--muted)); }
 .send { display: inline-flex; align-items: center; justify-content: center; border: 0; color: var(--primary-foreground); background: var(--primary); font-weight: 650; }
-.session-id { margin-top: 7px; overflow: hidden; color: #656565; font-family: var(--vscode-editor-font-family, monospace); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 
 .settings-view { flex: 1; min-height: 0; overflow: auto; padding: 16px 14px 20px; }
 .settings-heading { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 18px; }
@@ -315,6 +313,10 @@ h1, h2, p { margin: 0; }
 .model-card .field { min-width: 0; }
 .model-card .input { min-width: 0; height: 28px; padding: 0 7px; font-size: 10px; }
 .model-card .field label { font-size: 9px; }
+.model-vision-field { grid-column: 1 / -1; }
+.model-vision-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.model-card .model-vision-control .input[role='switch'] { flex: none; width: 24px; height: 14px; padding: 0; }
+.model-vision-field small { color: var(--muted-foreground); font-size: 9px; line-height: 1.35; }
 .model-save-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
 .model-save-row small { color: var(--muted-foreground); font-size: 9px; line-height: 1.35; }
 .key-status { color: #aaa !important; }

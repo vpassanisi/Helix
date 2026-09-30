@@ -2,7 +2,7 @@
   "name": "helix-vscode",
   "displayName": "Helix",
   "description": "A VS Code sidebar Webview UI for Helix.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -162,6 +162,7 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.5-rc.1",
     "@deepseek-ai/dsh-sdk-client": "0.1.5-rc.1",
     "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
     "@lucide/svelte": "^1.43.0",

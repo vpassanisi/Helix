@@ -7,6 +7,7 @@ import {
   type HarnessClientOptions,
   type HarnessNotification,
 } from '@deepseek-ai/dsh-sdk-client'
+import { resolveAdapterOptions, type DeepSeekCatalogModel } from '@deepseek-ai/dsh-llm-deepseek'
 import {
   ControlBridgeError,
   LocalControlBridge,
@@ -394,7 +395,30 @@ export class HarnessRuntime {
     const directory = await mkdtemp(join(tmpdir(), 'dsh-vscode-'))
     const patchPath = join(directory, 'runtime.patch.yml')
     const patchLines: string[] = []
-    if (hasContextWindow) {
+    if (options.provider === 'deepseek-official' && (hasContextWindow || (options.savedModels?.length ?? 0) > 0)) {
+      const catalog: DeepSeekCatalogModel[] = resolveAdapterOptions({}).models.map((model) => ({ ...model }))
+      for (const saved of options.savedModels ?? []) {
+        const existing = catalog.find((model) => model.id === saved.id)
+        const model: DeepSeekCatalogModel = existing ?? { id: saved.id }
+        if (existing === undefined) catalog.push(model)
+        if (saved.displayName !== undefined) model.name = saved.displayName
+        if (saved.contextWindow !== undefined) model.contextWindow = saved.contextWindow
+        model.inputModalities = saved.acceptsImages === true ? ['text', 'image'] : ['text']
+        if (saved.acceptsImages !== true) {
+          model.imagePixelBudget = undefined
+          model.imageMaxBytes = undefined
+        }
+      }
+      if (hasContextWindow) {
+        const active = catalog.find((model) => model.id === options.model)
+        if (active !== undefined) active.contextWindow = contextWindow
+        else catalog.push({ id: options.model, contextWindow })
+      }
+      patchLines.push('- id: llm-deepseek', '  config:')
+      if (hasContextWindow) patchLines.push(`    defaultContextWindow: ${contextWindow}`)
+      patchLines.push('    models:')
+      for (const model of catalog) patchLines.push(...directDeepSeekModelYamlLines(model))
+    } else if (hasContextWindow) {
       patchLines.push(
         '- id: llm-deepseek',
         '  config:',
@@ -419,6 +443,7 @@ export class HarnessRuntime {
             patchLines.push(`          - id: ${yamlString(profile.id)}`)
             if (profile.name !== undefined) patchLines.push(`            name: ${yamlString(profile.name)}`)
             if (profile.contextWindow !== undefined) patchLines.push(`            contextWindow: ${profile.contextWindow}`)
+            patchLines.push(`            input: [${profile.input.map(yamlString).join(', ')}]`)
             if (profile.reasoningEfforts === false) {
               patchLines.push('            reasoningEfforts: false')
             } else if (profile.reasoningEfforts !== undefined) {
@@ -560,6 +585,21 @@ function createRuntimeEnvironment(options: RuntimeOptions, controlBridge: Contro
 
 function yamlString(value: string): string {
   return JSON.stringify(value)
+}
+
+function directDeepSeekModelYamlLines(model: DeepSeekCatalogModel): string[] {
+  const lines = [`      - id: ${yamlString(model.id)}`]
+  if (model.name !== undefined) lines.push(`        name: ${yamlString(model.name)}`)
+  if (model.description !== undefined) lines.push(`        description: ${yamlString(model.description)}`)
+  if (model.contextWindow !== undefined) lines.push(`        contextWindow: ${model.contextWindow}`)
+  if (model.maxTokens !== undefined) lines.push(`        maxTokens: ${model.maxTokens}`)
+  if (model.inputModalities !== undefined) {
+    lines.push(`        inputModalities: [${model.inputModalities.map(yamlString).join(', ')}]`)
+  }
+  if (model.imagePixelBudget !== undefined) lines.push(`        imagePixelBudget: ${yamlScalar(model.imagePixelBudget)}`)
+  if (model.imageMaxBytes !== undefined) lines.push(`        imageMaxBytes: ${model.imageMaxBytes}`)
+  if (model.systemPromptUpdate !== undefined) lines.push(`        systemPromptUpdate: ${yamlString(model.systemPromptUpdate)}`)
+  return lines
 }
 
 function chatTemplateYamlLines(values: Record<string, ChatTemplateValue>, indentation: number): string[] {

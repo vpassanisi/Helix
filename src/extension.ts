@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import { WorkspaceChangeTracker } from './runtime/change-tracker.js'
-import { editorContextMetadata } from './runtime/editor-context.js'
+import { captureEditorContext, editorContextMetadata } from './runtime/editor-context.js'
 import { HarnessRuntime } from './runtime/harness-runtime.js'
 import type { RuntimeState } from './runtime/types.js'
 import { SidebarProvider, type SidebarMessage, type SidebarState } from './sidebar/sidebar-provider.js'
@@ -68,10 +68,19 @@ class ExtensionApp {
       changeTracker: this.changeTracker,
       getRuntimeState: () => this.runtimeState,
       getRuntimeOptions: () => this.settings.runtimeOptions(),
+      getEditorContext: (includeSelection) => captureEditorContext(includeSelection ? vscode.window.activeTextEditor : undefined),
       getMaxSelectionCharacters: () => vscode.workspace
         .getConfiguration('deepseekHarness')
         .get<number>('maxSelectionCharacters', 32_000),
-      resolveReasoningEffort: (selection) => this.settings.resolveReasoningEffort(selection),
+      getSelectedModelId: () => vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-v4-flash'),
+      resolveReasoningEffort: (selection, modelId) => this.settings.resolveReasoningEffort(selection, modelId),
+      rememberReasoningEffort: async (modelId, effort) => {
+        try {
+          await this.settings.rememberReasoningEffort(modelId, effort)
+        } catch (error) {
+          void vscode.window.showWarningMessage(`Could not remember the reasoning effort: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      },
       onError: (error) => this.postError(error),
       onStateChanged: (resetTranscript) => {
         this.selection = editorSelection()

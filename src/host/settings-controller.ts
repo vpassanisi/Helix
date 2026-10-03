@@ -6,8 +6,11 @@ import {
   modelEndpointCandidates,
   normalizeModelDrafts,
   parseModelCatalog,
-  parseSavedModelCatalogJson,
+  parseSavedModelCatalogJsonWithLegacy,
+  reconcileReasoningEffortHistory,
   resolveSavedModelReasoningEffort,
+  selectableReasoningEfforts,
+  seedReasoningEffortHistory,
   selectionForSavedModel,
   serializeSavedModelCatalog,
   validateModelDraftSources,
@@ -28,6 +31,7 @@ import {
 
 const API_KEY_SECRET = 'deepseekHarness.apiKey'
 const MODEL_CATALOG_FILE = 'models.json'
+const REASONING_HISTORY_KEY = 'helix.lastUsedReasoningEfforts'
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 const MCP_ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -55,6 +59,7 @@ interface SettingsSnapshot {
 
 export class SettingsController {
   private readonly queue = new SerialTaskQueue()
+  private catalogReadInFlight: Promise<SavedModel[]> | undefined
 
   constructor(private readonly options: SettingsControllerOptions) {}
 
@@ -104,9 +109,26 @@ export class SettingsController {
     }
   }
 
-  async resolveReasoningEffort(selection: string | null): Promise<string | undefined> {
-    const modelId = vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-v4-flash')
-    return resolveSavedModelReasoningEffort(await this.readModelCatalog(), modelId, selection)
+  reasoningEffortHistory(): Record<string, string> {
+    const stored = this.options.context.globalState.get<unknown>(REASONING_HISTORY_KEY)
+    if (!isRecord(stored)) return {}
+    return Object.fromEntries(Object.entries(stored).filter((entry): entry is [string, string] =>
+      entry[0] !== '' && typeof entry[1] === 'string' && entry[1].trim() !== ''))
+  }
+
+  async resolveReasoningEffort(selection: string | null, modelId = vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-v4-flash')): Promise<string | undefined> {
+    const models = await this.readModelCatalog()
+    return resolveSavedModelReasoningEffort(models, modelId, selection, this.reasoningEffortHistory()[modelId])
+  }
+
+  async rememberReasoningEffort(modelId: string, effort: string | undefined): Promise<void> {
+    if (effort === undefined) return
+    const models = await this.readModelCatalog()
+    const model = models.find((entry) => entry.id === modelId)
+    if (!selectableReasoningEfforts(model).includes(effort)) return
+    const history = this.reasoningEffortHistory()
+    if (history[modelId] === effort) return
+    await this.options.context.globalState.update(REASONING_HISTORY_KEY, { ...history, [modelId]: effort })
   }
 
   async saveModelCatalog(message: Extract<SidebarMessage, { type: 'saveModelCatalog' }>): Promise<void> {
@@ -115,6 +137,8 @@ export class SettingsController {
       const nextDrafts = normalizeModelDrafts(message.models)
       validateModelDraftSources(previousModels, nextDrafts)
       const nextModels = nextDrafts.map(({ sourceId: _sourceId, ...model }) => model)
+      const previousHistory = this.reasoningEffortHistory()
+      const nextHistory = reconcileReasoningEffortHistory(previousHistory, nextDrafts)
       const catalogChanged = JSON.stringify(previousModels) !== JSON.stringify(nextModels)
       const configuration = vscode.workspace.getConfiguration('deepseekHarness')
       const activeSelection = activeSelectionAfterCatalogSave(
@@ -126,7 +150,14 @@ export class SettingsController {
         },
       )
 
-      await this.writeModelCatalog(nextModels)
+      const historyChanged = JSON.stringify(previousHistory) !== JSON.stringify(nextHistory)
+      if (historyChanged) await this.options.context.globalState.update(REASONING_HISTORY_KEY, nextHistory)
+      try {
+        await this.writeModelCatalog(nextModels)
+      } catch (error) {
+        if (historyChanged) await this.options.context.globalState.update(REASONING_HISTORY_KEY, previousHistory)
+        throw error
+      }
 
       if (activeSelection !== undefined) {
         const globalConfiguration = vscode.workspace.getConfiguration()
@@ -135,7 +166,7 @@ export class SettingsController {
       }
 
       const runtimeRestarting = activeSelection !== undefined || catalogChanged
-      this.options.sidebar.post({ type: 'modelCatalogSaved', models: nextModels, runtimeRestarting })
+      this.options.sidebar.post({ type: 'modelCatalogSaved', models: nextModels, reasoningHistory: nextHistory, runtimeRestarting })
       if (runtimeRestarting) await this.restartAfterSettings(false)
     } catch (error) {
       this.options.onError(error)
@@ -309,10 +340,21 @@ export class SettingsController {
   }
 
   private postModelCatalog(models: SavedModel[], error?: string): void {
-    this.options.sidebar.post({ type: 'modelCatalog', models, error })
+    this.options.sidebar.post({ type: 'modelCatalog', models, reasoningHistory: this.reasoningEffortHistory(), error })
   }
 
   private async readModelCatalog(): Promise<SavedModel[]> {
+    if (this.catalogReadInFlight !== undefined) return this.catalogReadInFlight
+    const read = this.readModelCatalogOnce()
+    this.catalogReadInFlight = read
+    try {
+      return await read
+    } finally {
+      if (this.catalogReadInFlight === read) this.catalogReadInFlight = undefined
+    }
+  }
+
+  private async readModelCatalogOnce(): Promise<SavedModel[]> {
     const uri = vscode.Uri.joinPath(this.options.context.globalStorageUri, MODEL_CATALOG_FILE)
     let contents: Uint8Array
     try {
@@ -322,7 +364,16 @@ export class SettingsController {
       throw error
     }
 
-    return parseSavedModelCatalogJson(new TextDecoder().decode(contents))
+    const { models, legacyDefaults, needsMigration } = parseSavedModelCatalogJsonWithLegacy(new TextDecoder().decode(contents))
+    if (needsMigration) {
+      const history = this.reasoningEffortHistory()
+      const migrated = seedReasoningEffortHistory(history, legacyDefaults)
+      if (JSON.stringify(history) !== JSON.stringify(migrated)) {
+        await this.options.context.globalState.update(REASONING_HISTORY_KEY, migrated)
+      }
+      await this.writeModelCatalog(models)
+    }
+    return models
   }
 
   private async writeModelCatalog(models: SavedModel[]): Promise<void> {

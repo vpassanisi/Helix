@@ -169,7 +169,6 @@ function savedModel(format: 'openai' | 'chat-template', id: string): SavedModel 
   return {
     id,
     reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-    defaultReasoningEffort: 'medium',
     reasoningFormat: format,
     ...(format === 'chat-template'
       ? { chatTemplateKwargs: { reasoning_strength: { $var: 'thinking.effort' as const } } }
@@ -225,11 +224,11 @@ test('sends saved reasoning efforts in the configured OpenAI and chat-template r
           mcpServers: [],
         })
 
-        // A null composer selection resolves to the model-card default; the remaining
-        // selections exercise every configured level in the same chat session.
+        // A null composer selection resolves to the highest configured level; the
+        // remaining selections exercise every level in the same chat session.
         for (const selection of [null, ...(model.reasoningEfforts ?? [])]) {
           const expectedEffort = resolveSavedModelReasoningEffort(models, model.id, selection)
-          assert.ok(expectedEffort, 'the configured model default and levels resolve to an effort ID')
+          assert.ok(expectedEffort, 'the highest configured level and explicit levels resolve to an effort ID')
           const requestWaiter = endpoint.waitForRequest()
           const turnWaiter = createIdleWaiter()
           currentTurn = turnWaiter

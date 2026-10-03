@@ -149,7 +149,6 @@ test('writes saved model formats and same-name effort values into the llm-pi-ai 
         contextWindow: 65536,
         acceptsImages: true,
         reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-        defaultReasoningEffort: 'medium',
         reasoningFormat: 'deepseek',
       },
       {

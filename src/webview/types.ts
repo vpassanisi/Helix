@@ -55,7 +55,6 @@ export interface SidebarModel {
   contextWindow?: number
   acceptsImages?: boolean
   reasoningEfforts?: string[]
-  defaultReasoningEffort?: string
   reasoningFormat?: ReasoningFormat
   binaryThinkingMode?: BinaryThinkingMode
   chatTemplateKwargs?: Record<string, ChatTemplateValue>
@@ -117,10 +116,10 @@ export type IncomingMessage =
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
   | { type: 'error'; message: string }
-  | { type: 'accepted'; sessionId: string; reasoningEffort?: string }
+  | { type: 'accepted'; sessionId: string; modelId: string; reasoningEffort?: string }
   | { type: 'discoveredModels'; models: SidebarDiscoveredModel[]; error?: string }
-  | { type: 'modelCatalog'; models: SidebarModel[]; error?: string }
-  | { type: 'modelCatalogSaved'; models: SidebarModel[]; runtimeRestarting: boolean }
+  | { type: 'modelCatalog'; models: SidebarModel[]; reasoningHistory: Record<string, string>; error?: string }
+  | { type: 'modelCatalogSaved'; models: SidebarModel[]; reasoningHistory: Record<string, string>; runtimeRestarting: boolean }
   | { type: 'requestPreviewState'; state: 'loading' | 'success' | 'error' | 'cancelled'; preview?: RequestPreviewResult; message?: string }
   | {
       type: 'approvalRequest'

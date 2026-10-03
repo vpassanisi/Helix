@@ -85,10 +85,10 @@ export type SidebarOutgoingMessage =
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
   | { type: 'error'; message: string }
-  | { type: 'accepted'; sessionId: string; reasoningEffort?: string }
+  | { type: 'accepted'; sessionId: string; modelId: string; reasoningEffort?: string }
   | { type: 'discoveredModels'; models: SidebarDiscoveredModel[]; error?: string }
-  | { type: 'modelCatalog'; models: SidebarModel[]; error?: string }
-  | { type: 'modelCatalogSaved'; models: SidebarModel[]; runtimeRestarting: boolean }
+  | { type: 'modelCatalog'; models: SidebarModel[]; reasoningHistory: Record<string, string>; error?: string }
+  | { type: 'modelCatalogSaved'; models: SidebarModel[]; reasoningHistory: Record<string, string>; runtimeRestarting: boolean }
   | { type: 'requestPreviewState'; state: 'loading' | 'success' | 'error' | 'cancelled'; preview?: RequestPreviewResult; message?: string }
   | {
       type: 'approvalRequest'
@@ -247,11 +247,9 @@ function isModelDraft(value: unknown): value is ModelDraft {
   if ('acceptsImages' in value && value.acceptsImages !== undefined && typeof value.acceptsImages !== 'boolean') return false
   if ('reasoningEfforts' in value && value.reasoningEfforts !== undefined &&
     (!Array.isArray(value.reasoningEfforts) || !value.reasoningEfforts.every((effort) => typeof effort === 'string'))) return false
-  if ('defaultReasoningEffort' in value && value.defaultReasoningEffort !== undefined &&
-    typeof value.defaultReasoningEffort !== 'string') return false
   if ('reasoningFormat' in value && value.reasoningFormat !== undefined && !isReasoningFormat(value.reasoningFormat)) return false
   if ('binaryThinkingMode' in value && value.binaryThinkingMode !== undefined &&
-    value.binaryThinkingMode !== 'provider-default' && value.binaryThinkingMode !== 'on' && value.binaryThinkingMode !== 'off') return false
+    value.binaryThinkingMode !== 'on' && value.binaryThinkingMode !== 'off') return false
   if ('chatTemplateKwargs' in value && value.chatTemplateKwargs !== undefined && !isRecord(value.chatTemplateKwargs)) return false
   if ('chatTemplateArgs' in value && value.chatTemplateArgs !== undefined && !isRecord(value.chatTemplateArgs)) return false
   return true

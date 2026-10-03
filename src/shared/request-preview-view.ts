@@ -70,7 +70,7 @@ export function createRequestPreviewView(preview: RequestPreviewResult): Request
   }
 
   const details: RequestPreviewDetail[] = [
-    { label: 'Reasoning effort', value: request.reasoningEffort ?? 'Model default' },
+    { label: 'Reasoning effort', value: request.reasoningEffort ?? 'Provider controlled' },
   ]
   if (request.temperature !== undefined) details.push({ label: 'Temperature', value: String(request.temperature) })
   if (request.maxTokens !== undefined) details.push({ label: 'Max tokens', value: String(request.maxTokens) })

@@ -29,10 +29,10 @@
   )
 </script>
 
-<header class="relative z-10 p-1 px-3 border-b border-[var(--border)]">
+<header class="relative z-30 p-1 px-3 border-b border-[var(--border)]">
   <div class="relative flex min-h-[27px] items-center justify-start gap-2.5">
     <div class="flex min-w-0 items-center gap-[9px]">
-      <h1 class="text-[17px] leading-[1.05] tracking-[-.035em] font-[650] text-[var(--thinking-border)]">Helix</h1>
+      <h1 class="text-[17px] leading-[1.05] tracking-[-.035em] font-[650] text-[var(--brand-gold)]">Helix</h1>
       <div class="flex items-center gap-1.5 text-xs text-[var(--muted-foreground)] whitespace-nowrap">
         <span class={`size-1.5 rounded-full ${dotClass}`}></span>
         <span>{runtimeState}</span>
@@ -66,10 +66,10 @@
         </button>
         <div id="settings-menu-popover" data-popover data-side="bottom" data-align="end" aria-hidden="true">
           <div role="menu" id="settings-menu-list" aria-labelledby="settings-menu-trigger" aria-label="Settings pages">
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('connection')}>Connection settings</button>
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('models')}>Model configs</button>
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('mcp')}>MCP server configs</button>
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('preview')}>Request previewer</button>
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('connection')}>Connection Settings</button>
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('models')}>Models</button>
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('mcp')}>MCP Servers</button>
+            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('preview')}>Request Previewer</button>
           </div>
         </div>
       </div>

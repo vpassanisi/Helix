@@ -36,7 +36,7 @@ export const REASONING_EFFORT_PRESETS = {
 } as const satisfies Record<string, readonly DshReasoningLevel[]>
 export type ReasoningEffortPreset = keyof typeof REASONING_EFFORT_PRESETS
 
-export type BinaryThinkingMode = 'provider-default' | 'on' | 'off'
+export type BinaryThinkingMode = 'on' | 'off'
 export type ChatTemplateValue = string | number | boolean | null | {
   $var: 'thinking.enabled' | 'thinking.effort' | 'thinking.budget'
   omitWhenOff?: boolean
@@ -62,7 +62,6 @@ export interface SavedModel {
   contextWindow?: number
   acceptsImages?: boolean
   reasoningEfforts?: string[]
-  defaultReasoningEffort?: string
   reasoningFormat?: ReasoningFormat
   binaryThinkingMode?: BinaryThinkingMode
   chatTemplateKwargs?: Record<string, ChatTemplateValue>
@@ -152,6 +151,7 @@ export function normalizeSavedModels(value: unknown): SavedModel[] {
     } else if (legacyPreset !== undefined) {
       model.reasoningEfforts = [...REASONING_EFFORT_PRESETS[legacyPreset]]
     }
+    // Read the old field for validation, but never keep or write it again.
     if ('defaultReasoningEffort' in entry && entry.defaultReasoningEffort !== undefined) {
       if (typeof entry.defaultReasoningEffort !== 'string' || !entry.defaultReasoningEffort.trim()) {
         throw new Error(`Model "${id}" has an invalid default reasoning effort.`)
@@ -160,7 +160,6 @@ export function normalizeSavedModels(value: unknown): SavedModel[] {
       if (model.reasoningEfforts === undefined || !model.reasoningEfforts.includes(defaultReasoningEffort)) {
         throw new Error(`Model "${id}" default reasoning effort must be one of its configured effort IDs.`)
       }
-      model.defaultReasoningEffort = defaultReasoningEffort
     }
     if ('reasoningFormat' in entry && entry.reasoningFormat !== undefined) {
       if (!isReasoningFormat(entry.reasoningFormat)) throw new Error(`Model "${id}" has an unsupported reasoning format.`)
@@ -170,8 +169,9 @@ export function normalizeSavedModels(value: unknown): SavedModel[] {
       if (entry.binaryThinkingMode !== 'provider-default' && entry.binaryThinkingMode !== 'on' && entry.binaryThinkingMode !== 'off') {
         throw new Error(`Model "${id}" has an invalid binary thinking mode.`)
       }
-      model.binaryThinkingMode = entry.binaryThinkingMode
+      model.binaryThinkingMode = entry.binaryThinkingMode === 'off' ? 'off' : 'on'
     }
+    if (isBinaryReasoningFormat(model.reasoningFormat)) model.binaryThinkingMode ??= 'on'
     if ('chatTemplateKwargs' in entry && entry.chatTemplateKwargs !== undefined) {
       model.chatTemplateKwargs = normalizeChatTemplateValues(entry.chatTemplateKwargs, id, 'chatTemplateKwargs')
     }
@@ -195,19 +195,49 @@ export function resolveSavedModelReasoningEffort(
   models: SavedModel[],
   modelId: string,
   selection: string | null,
+  lastUsed?: string,
 ): string | undefined {
   const model = models.find((entry) => entry.id === modelId)
   if (model !== undefined && isBinaryReasoningFormat(model.reasoningFormat)) {
-    const mode = model.binaryThinkingMode ?? 'provider-default'
-    if (mode === 'provider-default') return undefined
+    const mode = model.binaryThinkingMode ?? 'on'
     if (mode === 'off') return 'off'
-    return model.reasoningEfforts?.find((effort) => effort !== 'off') ?? 'low'
+    return model.reasoningEfforts?.find((effort) => isDshReasoningLevel(effort) && effort !== 'off') ?? 'low'
   }
-  if (selection === null) return model?.defaultReasoningEffort
+  if (selection === null) return preferredReasoningEffort(model, lastUsed)
   if (model === undefined || !model.reasoningEfforts?.includes(selection)) {
     throw new Error(`Reasoning effort "${selection}" is not configured for model "${modelId}".`)
   }
   return selection
+}
+
+export function preferredReasoningEffort(model: SavedModel | undefined, lastUsed?: string): string | undefined {
+  if (model === undefined || isBinaryReasoningFormat(model.reasoningFormat)) return undefined
+  const efforts = model.reasoningEfforts ?? []
+  if (lastUsed !== undefined && efforts.includes(lastUsed)) return lastUsed
+  return [...DSH_REASONING_LEVELS].reverse().find((level) => efforts.includes(level)) ?? efforts.at(-1)
+}
+
+export function reconcileReasoningEffortHistory(
+  history: Record<string, string>,
+  nextModels: readonly ModelDraft[],
+): Record<string, string> {
+  const entries: Array<[string, string]> = []
+  for (const model of nextModels) {
+    if (isBinaryReasoningFormat(model.reasoningFormat)) continue
+    const previous = history[model.sourceId ?? model.id]
+    if (previous !== undefined && model.reasoningEfforts?.includes(previous)) entries.push([model.id, previous])
+  }
+  return Object.fromEntries(entries)
+}
+
+export function seedReasoningEffortHistory(
+  history: Record<string, string>,
+  legacyDefaults: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries([
+    ...Object.entries(history),
+    ...Object.entries(legacyDefaults).filter(([id]) => !Object.hasOwn(history, id)),
+  ])
 }
 
 export function isReasoningEffortPreset(value: unknown): value is ReasoningEffortPreset {
@@ -229,10 +259,9 @@ export function selectableReasoningEfforts(model: SavedModel | undefined): strin
 
 export function updateReasoningEffortSelection(
   selected: readonly string[],
-  defaultReasoningEffort: string | undefined,
   effort: string,
   checked: boolean,
-): { reasoningEfforts: string[]; defaultReasoningEffort?: string } | undefined {
+): string[] | undefined {
   const isKnownLevel = isDshReasoningLevel(effort)
   if (!isKnownLevel && !selected.includes(effort)) return undefined
 
@@ -248,11 +277,7 @@ export function updateReasoningEffortSelection(
     ...DSH_REASONING_LEVELS.filter((level) => next.has(level)),
     ...selected.filter((value) => !isDshReasoningLevel(value) && next.has(value)),
   ]
-  const result: { reasoningEfforts: string[]; defaultReasoningEffort?: string } = { reasoningEfforts }
-  if (defaultReasoningEffort !== undefined && next.has(defaultReasoningEffort)) {
-    result.defaultReasoningEffort = defaultReasoningEffort
-  }
-  return result
+  return reasoningEfforts
 }
 
 export function piAiRuntimeModelProfiles(models: SavedModel[]): PiAiModelRuntimeProfile[] {
@@ -266,15 +291,10 @@ export function piAiRuntimeModelProfiles(models: SavedModel[]): PiAiModelRuntime
 
     const format = model.reasoningFormat
     if (isBinaryReasoningFormat(format)) {
-      const mode = model.binaryThinkingMode ?? 'provider-default'
-      if (mode === 'provider-default') {
-        profile.reasoningEfforts = false
-      } else {
-        const levels = new Set<DshReasoningLevel>(model.reasoningEfforts?.filter(isDshReasoningLevel) ?? [])
-        if (![...levels].some((level) => level !== 'off')) levels.add('low')
-        if (mode === 'off') levels.add('off')
-        profile.reasoningEfforts = identityEffortMap([...levels])
-      }
+      const levels = new Set<DshReasoningLevel>(model.reasoningEfforts?.filter(isDshReasoningLevel) ?? [])
+      if (![...levels].some((level) => level !== 'off')) levels.add('low')
+      if (model.binaryThinkingMode === 'off') levels.add('off')
+      profile.reasoningEfforts = identityEffortMap([...levels])
     } else if (model.reasoningEfforts !== undefined) {
       const levels = model.reasoningEfforts.filter(isDshReasoningLevel)
       if (levels.some((level) => level !== 'off')) profile.reasoningEfforts = identityEffortMap(levels)
@@ -358,6 +378,14 @@ export function parseSavedModelCatalog(value: unknown): SavedModel[] {
 }
 
 export function parseSavedModelCatalogJson(value: string): SavedModel[] {
+  return parseSavedModelCatalogJsonWithLegacy(value).models
+}
+
+export function parseSavedModelCatalogJsonWithLegacy(value: string): {
+  models: SavedModel[]
+  legacyDefaults: Record<string, string>
+  needsMigration: boolean
+} {
   let parsed: unknown
   try {
     parsed = JSON.parse(value)
@@ -365,7 +393,24 @@ export function parseSavedModelCatalogJson(value: string): SavedModel[] {
     const reason = error instanceof Error ? error.message : String(error)
     throw new Error(`The models file contains invalid JSON. ${reason}`)
   }
-  return parseSavedModelCatalog(parsed)
+  const models = parseSavedModelCatalog(parsed)
+  const entries = (parsed as { models: unknown[] }).models
+  const legacyEntries: Array<[string, string]> = []
+  let needsMigration = false
+  for (const [index, model] of models.entries()) {
+    const entry = entries[index] as Record<string, unknown>
+    if (typeof entry.defaultReasoningEffort === 'string') {
+      needsMigration = true
+      if (!isBinaryReasoningFormat(model.reasoningFormat)) {
+        legacyEntries.push([model.id, entry.defaultReasoningEffort.trim()])
+      }
+    }
+    if (entry.binaryThinkingMode === 'provider-default' ||
+      (isBinaryReasoningFormat(model.reasoningFormat) && entry.binaryThinkingMode === undefined)) {
+      needsMigration = true
+    }
+  }
+  return { models, legacyDefaults: Object.fromEntries(legacyEntries), needsMigration }
 }
 
 export function serializeSavedModelCatalog(models: unknown): string {

@@ -50,7 +50,7 @@ test('builds ordered prompt cards from DSH system sections and runtime context w
   assert.equal(view.promptItems[2]?.text, undefined, 'the flattened snapshot is replaced by its named source sections')
   assert.equal(view.promptItems[2]?.source, 'dsh-agent-runtime-context')
   assert.deepEqual(view.details, [
-    { label: 'Reasoning effort', value: 'Model default' },
+    { label: 'Reasoning effort', value: 'Provider controlled' },
     { label: 'Temperature', value: '0.2' },
     { label: 'Max tokens', value: '2048' },
     { label: 'Stop sequences', value: '<END>' },
@@ -80,7 +80,7 @@ test('falls back to captured prompt text when DSH provenance is unavailable', ()
     ['user', 'First block.\n\n[image block]\n{\n  "type": "image",\n  "url": "image-ref"\n}'],
   ])
   assert.deepEqual(view.tools, [])
-  assert.equal(view.details[0]?.value, 'Model default')
+  assert.equal(view.details[0]?.value, 'Provider controlled')
 })
 
 test('uses named DSH sections for a top-level system prompt only when their rendered text matches', () => {

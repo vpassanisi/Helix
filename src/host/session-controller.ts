@@ -1,18 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import * as vscode from 'vscode'
-import { captureEditorContext } from '../runtime/editor-context.js'
-import { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
+import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
 import { ControlBridgeError, type ControlEvent } from '../runtime/control-bridge.js'
-import { HarnessRuntime } from '../runtime/harness-runtime.js'
-import { buildPromptContent } from '../runtime/prompt-context.js'
+import type { HarnessRuntime } from '../runtime/harness-runtime.js'
+import { buildPromptContent, type EditorContext } from '../runtime/prompt-context.js'
 import { isControlApprovalResult } from '../runtime/control-protocol.js'
 import type { RoutedNotification, RuntimeOptions, RuntimeState } from '../runtime/types.js'
 import { SessionHierarchy } from '../runtime/session-hierarchy.js'
 import { stringValue } from '../shared/value-utils.js'
-import {
+import type {
   SidebarProvider,
-  type SidebarMessage,
-  type SidebarOutgoingMessage,
+  SidebarMessage,
+  SidebarOutgoingMessage,
 } from '../sidebar/sidebar-provider.js'
 
 const APPROVAL_LINEAGE_TIMEOUT_MS = 2_000
@@ -37,8 +35,11 @@ export interface SessionControllerOptions {
   changeTracker: WorkspaceChangeTracker
   getRuntimeState: () => RuntimeState
   getRuntimeOptions: () => Promise<RuntimeOptions>
+  getEditorContext: (includeSelection: boolean) => EditorContext | undefined
   getMaxSelectionCharacters: () => number
-  resolveReasoningEffort: (selection: string | null) => Promise<string | undefined>
+  getSelectedModelId: () => string
+  resolveReasoningEffort: (selection: string | null, modelId: string) => Promise<string | undefined>
+  rememberReasoningEffort: (modelId: string, effort: string | undefined) => Promise<void>
   onError: (error: unknown) => void
   onStateChanged: (resetTranscript?: boolean) => void
 }
@@ -93,25 +94,26 @@ export class SessionController {
   async submit(prompt: string, includeSelection: boolean, reasoningEffortSelection: string | null = null): Promise<void> {
     const generation = ++this.promptGeneration
     const sessionId = this.activeSessionId
-    const editor = includeSelection ? vscode.window.activeTextEditor : undefined
+    const modelId = this.options.getSelectedModelId()
     const contentBlocks = buildPromptContent(
       prompt,
-      captureEditorContext(editor),
+      this.options.getEditorContext(includeSelection),
       this.options.getMaxSelectionCharacters(),
     )
 
     try {
-      const reasoningEffort = await this.options.resolveReasoningEffort(reasoningEffortSelection)
+      const reasoningEffort = await this.options.resolveReasoningEffort(reasoningEffortSelection, modelId)
       if (this.options.getRuntimeState() !== 'ready') {
         await this.options.runtime.start(await this.options.getRuntimeOptions())
       }
       if (!this.isCurrent(generation, sessionId)) return
       await this.options.runtime.setReasoningEffort(sessionId, reasoningEffort ?? null)
       if (!this.isCurrent(generation, sessionId)) return
-      this.activeReasoningEffort = reasoningEffort
       await this.options.runtime.prompt(sessionId, contentBlocks)
       if (!this.isCurrent(generation, sessionId)) return
-      this.options.sidebar.post({ type: 'accepted', sessionId, reasoningEffort })
+      this.activeReasoningEffort = reasoningEffort
+      await this.options.rememberReasoningEffort(modelId, reasoningEffort)
+      this.options.sidebar.post({ type: 'accepted', sessionId, modelId, reasoningEffort })
     } catch (error) {
       this.options.changeTracker.finish(sessionId)
       if (this.isCurrent(generation, sessionId)) this.options.onError(error)

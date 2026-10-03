@@ -6,9 +6,13 @@ import {
   normalizeModelDrafts,
   parseModelCatalog,
   parseSavedModelCatalogJson,
+  parseSavedModelCatalogJsonWithLegacy,
   piAiRuntimeModelProfiles,
+  preferredReasoningEffort,
+  reconcileReasoningEffortHistory,
   selectableReasoningEfforts,
   resolveSavedModelReasoningEffort,
+  seedReasoningEffortHistory,
   selectionForSavedModel,
   serializeSavedModelCatalog,
   updateReasoningEffortSelection,
@@ -76,7 +80,6 @@ test('loads legacy models without effort metadata and round-trips model-specific
   const models: SavedModel[] = [{
     id: 'provider/model-a',
     reasoningEfforts: ['low', 'high'],
-    defaultReasoningEffort: 'high',
   }]
   assert.deepEqual(parseSavedModelCatalogJson(serializeSavedModelCatalog(models)), models)
 })
@@ -98,7 +101,6 @@ test('round-trips per-model selected reasoning levels, format, binary mode, and 
     {
       id: 'chat-template-model',
       reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-      defaultReasoningEffort: 'medium',
       reasoningFormat: 'chat-template',
       chatTemplateKwargs: {
         enable_thinking: { $var: 'thinking.enabled', omitWhenOff: true },
@@ -137,32 +139,29 @@ test('validates reasoning formats, selected levels, and supported template varia
   assert.throws(() => serializeSavedModelCatalog([{ id: 'bad', chatTemplateArgs: { effort: { $var: 'thinking.effort', extra: true } } }]), /supported DSH \$var/)
 })
 
-test('migrates legacy presets to individual levels and writes catalogs without the preset field', () => {
-  const presetOnly = parseSavedModelCatalogJson('{"version":1,"models":[{"id":"preset-only","reasoningPreset":"low-medium-high-xhigh","defaultReasoningEffort":"medium"}]}')
+test('reads legacy defaults for one-time history migration and omits them on write', () => {
+  const { models: presetOnly, legacyDefaults, needsMigration } = parseSavedModelCatalogJsonWithLegacy('{"version":1,"models":[{"id":"preset-only","reasoningPreset":"low-medium-high-xhigh","defaultReasoningEffort":"medium"}]}')
   assert.deepEqual(presetOnly, [{
     id: 'preset-only',
     reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-    defaultReasoningEffort: 'medium',
   }])
+  assert.deepEqual(legacyDefaults, { 'preset-only': 'medium' })
+  assert.equal(needsMigration, true)
+  assert.deepEqual(seedReasoningEffortHistory({ 'preset-only': 'low' }, legacyDefaults), { 'preset-only': 'low' })
+  assert.deepEqual(seedReasoningEffortHistory({}, legacyDefaults), { 'preset-only': 'medium' })
 
   const savedListWins = parseSavedModelCatalogJson('{"version":1,"models":[{"id":"saved-list","reasoningPreset":"all-levels","reasoningEfforts":["low","max"]}]}')
   assert.deepEqual(savedListWins, [{ id: 'saved-list', reasoningEfforts: ['low', 'max'] }])
   const serialized = serializeSavedModelCatalog(presetOnly)
   assert.doesNotMatch(serialized, /reasoningPreset/)
+  assert.doesNotMatch(serialized, /defaultReasoningEffort/)
   assert.deepEqual(parseSavedModelCatalogJson(serialized), presetOnly)
 })
 
-test('individual effort selection supports subsets, clears defaults, and treats empty as provider default', () => {
-  assert.deepEqual(updateReasoningEffortSelection(['low', 'medium', 'high'], 'medium', 'medium', false), {
-    reasoningEfforts: ['low', 'high'],
-  })
-  assert.deepEqual(updateReasoningEffortSelection(['low'], 'low', 'low', false), {
-    reasoningEfforts: [],
-  })
-  assert.deepEqual(updateReasoningEffortSelection(['high'], 'high', 'low', true), {
-    reasoningEfforts: ['low', 'high'],
-    defaultReasoningEffort: 'high',
-  })
+test('individual effort selection supports subsets and empty provider-controlled configurations', () => {
+  assert.deepEqual(updateReasoningEffortSelection(['low', 'medium', 'high'], 'medium', false), ['low', 'high'])
+  assert.deepEqual(updateReasoningEffortSelection(['low'], 'low', false), [])
+  assert.deepEqual(updateReasoningEffortSelection(['high'], 'low', true), ['low', 'high'])
 })
 
 test('empty effort configuration omits the composer selector and lets the provider choose', () => {
@@ -173,23 +172,15 @@ test('empty effort configuration omits the composer selector and lets the provid
 })
 
 test('off can only be selected with a graded level and is cleared when the last graded level is removed', () => {
-  assert.equal(updateReasoningEffortSelection([], undefined, 'off', true), undefined)
-  assert.deepEqual(updateReasoningEffortSelection(['low'], 'low', 'off', true), {
-    reasoningEfforts: ['off', 'low'],
-    defaultReasoningEffort: 'low',
-  })
-  assert.deepEqual(updateReasoningEffortSelection(['off', 'low'], 'low', 'low', false), {
-    reasoningEfforts: [],
-  })
+  assert.equal(updateReasoningEffortSelection([], 'off', true), undefined)
+  assert.deepEqual(updateReasoningEffortSelection(['low'], 'off', true), ['off', 'low'])
+  assert.deepEqual(updateReasoningEffortSelection(['off', 'low'], 'low', false), [])
   assert.throws(() => serializeSavedModelCatalog([{ id: 'off-only', reasoningEfforts: ['off'] }]), /at least one graded reasoning effort/)
 })
 
 test('keeps nonstandard saved effort IDs as legacy entries while updating standard levels', () => {
-  assert.deepEqual(updateReasoningEffortSelection(['provider_custom', 'low'], 'provider_custom', 'low', false), {
-    reasoningEfforts: ['provider_custom'],
-    defaultReasoningEffort: 'provider_custom',
-  })
-  assert.equal(updateReasoningEffortSelection([], undefined, 'provider_custom', true), undefined)
+  assert.deepEqual(updateReasoningEffortSelection(['provider_custom', 'low'], 'low', false), ['provider_custom'])
+  assert.equal(updateReasoningEffortSelection([], 'provider_custom', true), undefined)
 })
 
 test('generates identity DSH effort maps, per-model format settings, and binary composer behavior', () => {
@@ -203,7 +194,7 @@ test('generates identity DSH effort maps, per-model format settings, and binary 
     { id: 'auto', reasoningEfforts: ['low', 'high'] },
     { id: 'qwen-on', reasoningFormat: 'qwen', binaryThinkingMode: 'on' },
     { id: 'qwen-off', reasoningFormat: 'qwen-chat-template', binaryThinkingMode: 'off' },
-    { id: 'qwen-default', reasoningFormat: 'qwen', binaryThinkingMode: 'provider-default' },
+    { id: 'qwen-default', reasoningFormat: 'qwen', binaryThinkingMode: 'on' },
   ]
   const profiles = piAiRuntimeModelProfiles(models)
   assert.deepEqual(profiles[0], {
@@ -229,7 +220,7 @@ test('generates identity DSH effort maps, per-model format settings, and binary 
   assert.deepEqual(profiles[4], {
     id: 'qwen-default',
     input: ['text'],
-    reasoningEfforts: false,
+    reasoningEfforts: { low: 'low' },
     compat: { thinkingFormat: 'qwen', supportsReasoningEffort: false },
   })
   assert.deepEqual(selectableReasoningEfforts(models[0]), ['off', 'low', 'high'])
@@ -253,28 +244,54 @@ test('rejects invalid effort IDs and defaults that are not configured', () => {
   assert.throws(() => serializeSavedModelCatalog([{ id: 'model-a', reasoningEfforts: ['low'], defaultReasoningEffort: 'high' }]), /must be one of its configured effort IDs/)
 })
 
-test('resolves a model default and validates explicit effort selections', () => {
+test('uses last-used effort or highest supported level and validates explicit selections', () => {
   const models: SavedModel[] = [{
     id: 'model-a',
-    reasoningEfforts: ['low', 'high'],
-    defaultReasoningEffort: 'high',
+    reasoningEfforts: ['low', 'high', 'max'],
   }]
-  assert.equal(resolveSavedModelReasoningEffort(models, 'model-a', null), 'high')
+  assert.equal(resolveSavedModelReasoningEffort(models, 'model-a', null), 'max')
+  assert.equal(resolveSavedModelReasoningEffort(models, 'model-a', null, 'low'), 'low')
+  assert.equal(resolveSavedModelReasoningEffort(models, 'model-a', null, 'removed'), 'max')
   assert.equal(resolveSavedModelReasoningEffort(models, 'model-a', 'low'), 'low')
   assert.equal(resolveSavedModelReasoningEffort([{ id: 'model-b' }], 'model-b', null), undefined)
-  assert.throws(() => resolveSavedModelReasoningEffort(models, 'model-a', 'max'), /not configured/)
+  assert.throws(() => resolveSavedModelReasoningEffort(models, 'model-a', 'xhigh'), /not configured/)
+})
+
+test('ranks standard levels above off and uses the last listed custom-only level', () => {
+  assert.equal(preferredReasoningEffort({ id: 'standard', reasoningEfforts: ['off', 'low', 'high'] }), 'high')
+  assert.equal(preferredReasoningEffort({ id: 'custom', reasoningEfforts: ['provider_low', 'provider_high'] }), 'provider_high')
+  assert.equal(preferredReasoningEffort({ id: 'mixed', reasoningEfforts: ['low', 'provider_custom'] }), 'low')
+  assert.equal(preferredReasoningEffort({ id: 'empty', reasoningEfforts: [] }), undefined)
+})
+
+test('history follows renamed models and drops removed or unsupported levels', () => {
+  assert.deepEqual(reconcileReasoningEffortHistory(
+    { old: 'low', removed: 'high', invalid: 'max', binary: 'off' },
+    [
+      { id: 'renamed', sourceId: 'old', reasoningEfforts: ['low', 'high'] },
+      { id: 'invalid', sourceId: 'invalid', reasoningEfforts: ['low'] },
+      { id: 'binary', sourceId: 'binary', reasoningFormat: 'qwen' },
+    ],
+  ), { renamed: 'low' })
 })
 
 test('resolves a fixed binary model-card mode without exposing graded effort choices', () => {
   const models: SavedModel[] = [
     { id: 'on', reasoningFormat: 'qwen', binaryThinkingMode: 'on' },
     { id: 'off', reasoningFormat: 'qwen-chat-template', binaryThinkingMode: 'off' },
-    { id: 'default', reasoningFormat: 'qwen', binaryThinkingMode: 'provider-default' },
+    { id: 'initial-on', reasoningFormat: 'qwen' },
   ]
   assert.equal(resolveSavedModelReasoningEffort(models, 'on', null), 'low')
   assert.equal(resolveSavedModelReasoningEffort(models, 'off', null), 'off')
-  assert.equal(resolveSavedModelReasoningEffort(models, 'default', null), undefined)
+  assert.equal(resolveSavedModelReasoningEffort(models, 'initial-on', null), 'low')
   assert.deepEqual(selectableReasoningEfforts(models[0]), [])
+})
+
+test('legacy binary provider defaults and missing modes become On', () => {
+  const legacy = parseSavedModelCatalogJsonWithLegacy('{"version":1,"models":[{"id":"old","reasoningFormat":"qwen","binaryThinkingMode":"provider-default"},{"id":"missing","reasoningFormat":"qwen-chat-template"},{"id":"off","reasoningFormat":"qwen","binaryThinkingMode":"off"}]}')
+  assert.equal(legacy.needsMigration, true)
+  assert.deepEqual(legacy.models.map((model) => model.binaryThinkingMode), ['on', 'on', 'off'])
+  assert.doesNotMatch(serializeSavedModelCatalog(legacy.models), /provider-default/)
 })
 
 test('catalog import preserves editable endpoint metadata and omits transient fields when saved', () => {

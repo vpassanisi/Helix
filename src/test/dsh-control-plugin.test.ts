@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { USER_QUESTION_INSTRUCTIONS } from '../shared/user-question.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -192,6 +193,7 @@ test('adapts control requests and approval decisions to DSH agent services', asy
       systemSections: [
         { name: 'harness:identity', text: 'Harness at /workspace/project' },
         { name: 'skills:catalog', text: 'Available skill: release-check' },
+        { name: 'helix:user-questions', text: USER_QUESTION_INSTRUCTIONS },
       ],
       contextSections: [{ name: 'workspace:state', text: 'Workspace is /workspace/project' }],
     })

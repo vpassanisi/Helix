@@ -17,6 +17,7 @@ import {
 } from './control-bridge.js'
 import { builtInWebPatchLines, mcpEnvironmentVariable, mcpPatchLines } from './mcp.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
+import type { UserQuestionAnswer } from '../shared/user-question.js'
 import { stringValue } from '../shared/value-utils.js'
 import { piAiRuntimeModelProfiles, type ChatTemplateValue } from './model-catalog.js'
 import type {
@@ -196,6 +197,10 @@ export class HarnessRuntime {
       throw new ControlBridgeError('The DSH control bridge is not connected.', 'BRIDGE_UNAVAILABLE')
     }
     await handle.controlBridge.resolveApproval(sessionId, requestId, outcome)
+  }
+
+  async answerQuestion(sessionId: string, requestId: string, answer: UserQuestionAnswer): Promise<void> {
+    await this.requireHandle().controlBridge.answerQuestion(sessionId, requestId, answer)
   }
 
   async steer(sessionId: string, text: string): Promise<void> {
@@ -484,6 +489,8 @@ export class HarnessRuntime {
       '- insert:',
       '    - id: helix-control-bridge',
       `      name: ${yamlString(new URL('./dsh-control-plugin.js', import.meta.url).href)}`,
+      '    - id: helix-question-tool',
+      `      name: ${yamlString(new URL('./dsh-question-tool-plugin.js', import.meta.url).href)}`,
     )
     if (options.sessionStorageRoot !== undefined) {
       patchLines.push(

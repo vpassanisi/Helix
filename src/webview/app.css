@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "basecoat-css/components/radio.css";
+@import "basecoat-css/components/badge.css";
 @import "basecoat-css/components/combobox.css";
 @import "basecoat-css/components/checkbox.css";
 @import "basecoat-css/components/switch.css";
@@ -190,6 +192,8 @@ h1, h2, p { margin: 0; }
 .sandbox-settings-picker [role='option'] { display: flex; min-width: 0; align-items: center; padding: 7px 8px; border-radius: 4px; color: var(--muted-foreground); cursor: pointer; font-size: 10px; line-height: 1.3; }
 .sandbox-settings-picker [role='option']:hover, .sandbox-settings-picker [role='option'].active, .sandbox-settings-picker [role='option'][aria-selected='true'] { color: var(--foreground); background: var(--accent); }
 .model-picker-wrap { display: flex; align-items: center; min-width: 0; flex: 0 0 auto; }
+.browser-picker-control { margin-right: auto; }
+.browser-picker-control button[aria-pressed='true'] { color: #60a5fa; background: var(--accent); }
 .composer-model-selector { flex: 0 0 auto; }
 .composer-model-selector > button { width: 28px; height: 27px; padding: 0; border: 0; color: var(--muted-foreground); background: transparent; }
 .composer-model-selector > button:hover:not(:disabled) { color: var(--foreground); background: var(--color-muted, var(--muted)); }

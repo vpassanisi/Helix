@@ -1,18 +1,12 @@
 # Helix for VS Code
 
---start of text written by Vinny--
 I built this VS Code extension because I could not find a harness that gave me enough control over what gets sent to the model. That control is especially important when working with smaller local models.
 
 I also could not find an app or extension that supported the workflow I wanted. Codex and Claude Code extensions are good, but their support for local models is limited and seems to be getting worse over time.
 
 The goal is to provide a Codex style workflow with first class support for local models, while still allowing users to customize and optimize the experience for the models they use.
 
-**Disclaimer**
 
-This is currently a quick and dirty proof of concept. Most of the code is AI generated, with guidance and testing provided during development. The code quality is likely rough, and the core DSH runtime is still in alpha.
---end of text written by Vinny--
-
---start of AI generated text--
 ## Run locally
 
 1. Install Node.js 22 or newer.
@@ -61,9 +55,21 @@ Environment variable values entered for stdio servers are stored in VS Code Secr
 
 The extension disables DSH's built-in Web Search and Web Fetch tools. Use an MCP server such as DuckDuckGo for web access instead, so the model does not call the built-in DeepSeek web route with the connection API key.
 
+## Agent questions
+
+The main agent can call `ask_user_question` to pause its turn and show a question card in the conversation. Each question has two or three choices, exactly one recommendation, and a custom-response input. Submit an answer to continue the same turn, or use Stop to cancel. Pending questions return when the sidebar reopens; restarting the runtime cancels them.
+
 ## Editor context
 
 With a non-empty editor selection, the current selection is captured when the prompt is submitted. It is sent as a text `ContentBlock` before the user prompt. The sidebar displays the selected file and range, and the selection can be removed for the current prompt.
+
+## Browser element context
+
+Open a page in VS Code's integrated browser, then use the pointer button in the Helix composer or **Helix: Select Browser Elements**. The blue outline follows the element under your mouse. Click to attach its HTML and computed CSS; keep clicking to select more elements, and press Escape to finish. Review or remove the attachment cards, type your instructions, and send. No screenshots are captured or sent.
+
+This experimental feature uses VS Code's proposed `browser` API and is intended for private VSIX installs. In **Preferences: Configure Runtime Arguments**, add `"enable-proposed-api": ["local.helix-vscode"]` and fully restart VS Code. The feature has been developed against VS Code 1.140.0; older builds without the API keep ordinary chat available. Proposed APIs can change with VS Code updates and should not be used in ordinary Marketplace releases.
+
+The picker supports the main document, same-origin frames, and open shadow roots. Cross-origin frames and closed shadow roots are not supported. Selection stops on navigation or tab closure, while existing attachments remain as snapshots. A new chat clears them. `deepseekHarness.maxBrowserContextCharacters` limits the combined HTML/CSS sent per prompt (32,000 characters by default); truncated attachments are marked.
 
 ## Notification routing
 
@@ -72,5 +78,3 @@ The runtime emits notifications for every session. The extension uses one runtim
 ## Webview UI
 
 The UI uses Basecoat CSS primitives with a custom shadcn-compatible monochrome token theme in `src/webview/theme.css`. It uses a near-black canvas, off-white primary actions, subtle gray borders, and Lucide icons. The UI communicates with the extension host through `postMessage`; it does not assume native VS Code controls.
-
---end of AI generated text--

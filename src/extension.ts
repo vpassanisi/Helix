@@ -7,6 +7,7 @@ import { SidebarProvider, type SidebarMessage, type SidebarState } from './sideb
 import { SessionController } from './host/session-controller.js'
 import { SettingsController } from './host/settings-controller.js'
 import { RequestPreviewCancelledError, RequestPreviewController } from './host/request-preview-controller.js'
+import { BrowserContextController } from './host/browser-context-controller.js'
 
 type SidebarHandler = (message: SidebarMessage) => Promise<void>
 
@@ -18,6 +19,9 @@ class ExtensionApp {
   private readonly settings: SettingsController
   private readonly requestPreview: RequestPreviewController
   private readonly session: SessionController
+  private readonly browserContext: BrowserContextController
+  private submitting = false
+  private generating = false
   private readonly messageHandlers: Record<SidebarMessage['type'], SidebarHandler>
   private readonly outputChannel: vscode.OutputChannel
   private runtimeState: RuntimeState = 'stopped'
@@ -83,13 +87,29 @@ class ExtensionApp {
       },
       onError: (error) => this.postError(error),
       onStateChanged: (resetTranscript) => {
+        if (resetTranscript) {
+          this.generating = false
+          this.browserContext?.reset(this.session.currentSessionId)
+        }
         this.selection = editorSelection()
         this.sidebar.post({ type: 'state', state: this.getSidebarState(), resetTranscript })
       },
+      onRunStatus: (running) => { this.generating = running },
+    })
+
+    this.browserContext = new BrowserContextController({
+      sessionId: () => this.session.currentSessionId,
+      maxCharacters: () => vscode.workspace.getConfiguration('deepseekHarness').get<number>('maxBrowserContextCharacters', 32_000),
+      busy: () => this.submitting || this.generating,
+      onState: (state) => this.sidebar.post({ type: 'browserContext', state }),
     })
 
     this.subscriptions.push(this.runtime.onStateChange(({ state, message }) => {
       this.runtimeState = state
+      if (state === 'stopped' || state === 'error') {
+        this.generating = false
+        this.session.clearPendingQuestions(state === 'error' ? 'unavailable' : 'cancelled')
+      }
       this.sidebar.post({ type: 'state', state: this.getSidebarState() })
       if (message !== undefined) this.sidebar.post({ type: 'error', message })
     }))
@@ -109,19 +129,21 @@ class ExtensionApp {
         this.sidebar.post({ type: 'state', state: this.getSidebarState() })
       }),
       setSandboxMode: (message) => this.settings.run(() => this.settings.setSandboxMode(message as Extract<SidebarMessage, { type: 'setSandboxMode' }>)),
+      toggleBrowserPicker: () => this.browserContext.toggle(),
+      removeBrowserAttachment: async (message) => {
+        const remove = message as Extract<SidebarMessage, { type: 'removeBrowserAttachment' }>
+        this.browserContext.remove(remove.sessionId, remove.id)
+      },
       submit: (message) => {
         const submit = message as Extract<SidebarMessage, { type: 'submit' }>
-        return this.settings.run(() => this.session.submit(
-          submit.prompt,
-          submit.includeSelection,
-          submit.reasoningEffort ?? null,
-        ))
+        return this.settings.run(() => this.submitPrompt(submit))
       },
-      cancelTurn: () => this.session.cancelTurn(),
+      cancelTurn: async () => { this.generating = false; await this.session.cancelTurn() },
       previewRequest: (message) => this.handleRequestPreview(message as Extract<SidebarMessage, { type: 'previewRequest' }>),
       cancelRequestPreview: () => this.requestPreview.cancel(),
       approvalDecision: (message) => this.session.resolveApproval(message as Extract<SidebarMessage, { type: 'approvalDecision' }>),
-      newSession: () => this.session.newSession(),
+      questionAnswer: (message) => this.session.answerQuestion(message as Extract<SidebarMessage, { type: 'questionAnswer' }>),
+      newSession: () => this.newSession(),
     }
   }
 
@@ -130,13 +152,38 @@ class ExtensionApp {
     this.sidebar.post({ type: 'selection', selection: this.selection })
   }
 
-  newSession(): Promise<void> {
-    return this.session.newSession()
+  async newSession(): Promise<void> {
+    await this.browserContext.stop()
+    await this.session.newSession()
+  }
+
+  toggleBrowserPicker(): Promise<void> { return this.browserContext.toggle() }
+
+  private async submitPrompt(submit: Extract<SidebarMessage, { type: 'submit' }>): Promise<void> {
+    const sessionId = this.session.currentSessionId
+    const ids = submit.browserAttachmentIds ?? []
+    if (submit.sessionId && submit.sessionId !== sessionId) return
+    if (this.session.questions.length > 0) return
+    if (this.submitting) return
+    this.submitting = true
+    try {
+      const snapshots = this.browserContext.snapshot(sessionId, ids)
+      await this.browserContext.stop()
+      const accepted = await this.session.submit(submit.prompt, submit.includeSelection, submit.reasoningEffort ?? null, snapshots,
+        vscode.workspace.getConfiguration('deepseekHarness').get<number>('maxBrowserContextCharacters', 32_000))
+      if (accepted && sessionId === this.session.currentSessionId) {
+        this.generating = true
+        this.browserContext.consume(sessionId, ids)
+      }
+    } catch (error) {
+      this.sidebar.post({ type: 'browserSubmitFailed', sessionId, message: error instanceof Error ? error.message : String(error) })
+    } finally { this.submitting = false }
   }
 
   async shutdown(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    await this.browserContext.dispose()
     await this.session.dispose()
     for (const subscription of this.subscriptions.splice(0)) subscription.dispose()
     this.sidebar.dispose()
@@ -150,6 +197,7 @@ class ExtensionApp {
   private async handleReady(): Promise<void> {
     this.refreshSelection()
     this.session.replayPendingApprovals()
+    this.session.replayPendingQuestions()
     await this.settings.postSettings()
   }
 
@@ -209,10 +257,13 @@ class ExtensionApp {
       runtimeState: this.runtimeState,
       reasoningEffort: this.session.currentReasoningEffort,
       selection: this.selection,
+      browserContext: this.browserContext?.state,
+      pendingQuestions: this.session.questions,
     }
   }
 
   private postError(error: unknown): void {
+    this.generating = false
     this.sidebar.post({
       type: 'error',
       message: error instanceof Error ? error.message : String(error),
@@ -235,6 +286,10 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('dsh.openSidebar', () => vscode.commands.executeCommand('workbench.view.extension.dsh')),
     vscode.commands.registerCommand('dsh.newSession', () => app.newSession()),
+    vscode.commands.registerCommand('dsh.selectBrowserElements', async () => {
+      await vscode.commands.executeCommand('dsh.openSidebar')
+      await app.toggleBrowserPicker()
+    }),
     vscode.commands.registerCommand('dsh.captureNextProviderRequest', () => app.captureNextProviderRequest()),
     vscode.commands.registerCommand('dsh.askSelection', async () => {
       await vscode.commands.executeCommand('dsh.openSidebar')

@@ -7,6 +7,8 @@ import { isControlApprovalResult } from '../runtime/control-protocol.js'
 import type { RoutedNotification, RuntimeOptions, RuntimeState } from '../runtime/types.js'
 import { SessionHierarchy } from '../runtime/session-hierarchy.js'
 import { stringValue } from '../shared/value-utils.js'
+import type { BrowserElementContext } from '../shared/browser-context.js'
+import { validateUserQuestion, validateQuestionAnswer, type PendingUserQuestion } from '../shared/user-question.js'
 import type {
   SidebarProvider,
   SidebarMessage,
@@ -42,6 +44,7 @@ export interface SessionControllerOptions {
   rememberReasoningEffort: (modelId: string, effort: string | undefined) => Promise<void>
   onError: (error: unknown) => void
   onStateChanged: (resetTranscript?: boolean) => void
+  onRunStatus?: (running: boolean) => void
 }
 
 export class SessionController {
@@ -50,6 +53,7 @@ export class SessionController {
   private readonly sessionHierarchy = new SessionHierarchy()
   private readonly pendingApprovals = new Map<string, PendingApproval>()
   private readonly bufferedApprovals = new Map<string, BufferedApproval>()
+  private readonly pendingQuestions = new Map<string, PendingUserQuestion & { resolving: boolean }>()
   private promptGeneration = 0
   private disposed = false
   private activeReasoningEffort: string | undefined
@@ -60,6 +64,38 @@ export class SessionController {
 
   get currentSessionId(): string {
     return this.activeSessionId
+  }
+
+  get questions(): PendingUserQuestion[] {
+    return [...this.pendingQuestions.values()].map(({ resolving: _resolving, ...question }) => question)
+  }
+
+  clearPendingQuestions(status: 'cancelled' | 'unavailable' = 'cancelled'): void {
+    for (const pending of this.pendingQuestions.values()) {
+      this.options.sidebar.post({ type: 'questionResolved', sessionId: pending.sessionId, requestId: pending.requestId, status })
+    }
+    this.pendingQuestions.clear()
+  }
+
+  replayPendingQuestions(): void {
+    for (const request of this.questions) this.options.sidebar.post({ type: 'questionRequest', request })
+  }
+
+  async answerQuestion(message: Extract<SidebarMessage, { type: 'questionAnswer' }>): Promise<void> {
+    if (message.sessionId !== this.activeSessionId) return
+    const pending = this.pendingQuestions.get(message.requestId)
+    if (!pending || pending.sessionId !== message.sessionId || pending.resolving) return
+    try {
+      const answer = validateQuestionAnswer(pending.question, message.answer)
+      pending.resolving = true
+      await this.options.runtime.answerQuestion(pending.sessionId, pending.requestId, answer)
+    } catch (error) {
+      // A resolution can arrive before an acknowledgement or a transport error.
+      if (this.pendingQuestions.get(message.requestId) !== pending) return
+      pending.resolving = false
+      this.options.sidebar.post({ type: 'questionAnswerFailed', sessionId: pending.sessionId, requestId: pending.requestId,
+        message: error instanceof Error ? error.message : String(error) })
+    }
   }
 
   get currentReasoningEffort(): string | undefined {
@@ -81,6 +117,7 @@ export class SessionController {
     }
 
     await this.rejectPendingApprovals()
+    this.clearPendingQuestions()
     this.options.changeTracker.finish(previousSessionId)
     this.disposeRoute()
     this.sessionHierarchy.clear()
@@ -91,7 +128,8 @@ export class SessionController {
     this.options.onStateChanged(true)
   }
 
-  async submit(prompt: string, includeSelection: boolean, reasoningEffortSelection: string | null = null): Promise<void> {
+  async submit(prompt: string, includeSelection: boolean, reasoningEffortSelection: string | null = null, browserContext: readonly BrowserElementContext[] = [], maxBrowserCharacters = 32_000): Promise<boolean> {
+    if (this.pendingQuestions.size > 0) return false
     const generation = ++this.promptGeneration
     const sessionId = this.activeSessionId
     const modelId = this.options.getSelectedModelId()
@@ -99,6 +137,8 @@ export class SessionController {
       prompt,
       this.options.getEditorContext(includeSelection),
       this.options.getMaxSelectionCharacters(),
+      browserContext,
+      maxBrowserCharacters,
     )
 
     try {
@@ -106,17 +146,19 @@ export class SessionController {
       if (this.options.getRuntimeState() !== 'ready') {
         await this.options.runtime.start(await this.options.getRuntimeOptions())
       }
-      if (!this.isCurrent(generation, sessionId)) return
+      if (!this.isCurrent(generation, sessionId)) return false
       await this.options.runtime.setReasoningEffort(sessionId, reasoningEffort ?? null)
-      if (!this.isCurrent(generation, sessionId)) return
+      if (!this.isCurrent(generation, sessionId)) return false
       await this.options.runtime.prompt(sessionId, contentBlocks)
-      if (!this.isCurrent(generation, sessionId)) return
+      if (!this.isCurrent(generation, sessionId)) return false
       this.activeReasoningEffort = reasoningEffort
       await this.options.rememberReasoningEffort(modelId, reasoningEffort)
       this.options.sidebar.post({ type: 'accepted', sessionId, modelId, reasoningEffort })
+      return true
     } catch (error) {
       this.options.changeTracker.finish(sessionId)
       if (this.isCurrent(generation, sessionId)) this.options.onError(error)
+      return false
     }
   }
 
@@ -127,6 +169,8 @@ export class SessionController {
       await this.options.runtime.cancelTurn(this.activeSessionId)
     } catch (error) {
       this.options.onError(error)
+    } finally {
+      this.clearPendingQuestions()
     }
   }
 
@@ -152,6 +196,36 @@ export class SessionController {
   }
 
   handleControlEvent(event: ControlEvent): void {
+    if (event.method === 'question.request') {
+      if (event.sessionId !== this.activeSessionId || this.disposed) return
+      const requestId = stringValue(event.params.requestId)
+      const toolCallId = stringValue(event.params.toolCallId)
+      if (!requestId || !toolCallId || this.pendingQuestions.has(requestId)) return
+      try {
+        const question = validateUserQuestion(event.params.question)
+        const request = { sessionId: event.sessionId, requestId, toolCallId, question }
+        this.pendingQuestions.set(requestId, { ...request, resolving: false })
+        this.options.sidebar.post({ type: 'questionRequest', request })
+      } catch (error) {
+        this.options.onError(error)
+        void this.cancelTurn()
+      }
+      return
+    }
+    if (event.method === 'question.resolved') {
+      if (event.sessionId !== this.activeSessionId) return
+      const requestId = stringValue(event.params.requestId)
+      const pending = requestId ? this.pendingQuestions.get(requestId) : undefined
+      const status = event.params.status
+      if (!pending || (status !== 'answered' && status !== 'cancelled' && status !== 'unavailable')) return
+      try {
+        const answer = status === 'answered' ? validateQuestionAnswer(pending.question, event.params.answer) : undefined
+        this.pendingQuestions.delete(pending.requestId)
+        this.options.sidebar.post({ type: 'questionResolved', sessionId: pending.sessionId, requestId: pending.requestId, status,
+          ...(answer ? { answer } : {}) })
+      } catch (error) { this.options.onError(error); void this.cancelTurn() }
+      return
+    }
     if (event.method === 'assistant.stream') {
       if (!this.ownsSession(this.activeSessionId, event.sessionId)) return
       this.options.sidebar.post({
@@ -187,6 +261,7 @@ export class SessionController {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    if (this.pendingQuestions.size) await this.cancelTurn()
     ++this.promptGeneration
     await this.rejectPendingApprovals()
     this.options.changeTracker.finish(this.activeSessionId)
@@ -219,6 +294,8 @@ export class SessionController {
     if (notification.method !== 'session.status') return
     const params = notification.params ?? {}
     if (params.sessionId !== rootSessionId) return
+    if (params.status !== 'running') this.clearPendingQuestions()
+    this.options.onRunStatus?.(params.status === 'running')
     if (params.status === 'running') this.options.changeTracker.start(rootSessionId)
     else this.options.changeTracker.finish(rootSessionId)
   }

@@ -10,7 +10,8 @@
         // "--disable-extensions",
         // "--user-data-dir=${workspaceFolder}/.vscode-test-profile",
         // "--extensions-dir=${workspaceFolder}/.vscode-test-extensions",
-        "--extensionDevelopmentPath=${workspaceFolder}"
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--enable-proposed-api=local.helix-vscode"
       ],
       "outFiles": [
         "${workspaceFolder}/out/**/*.js"

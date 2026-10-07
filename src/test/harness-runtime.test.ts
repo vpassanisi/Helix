@@ -23,6 +23,7 @@ function fakeBridge(connected: boolean, calls: string[]): ControlBroker {
     token: 'test-token',
     connected,
     capabilities: [],
+    answerQuestion: async () => undefined,
     start: async () => { calls.push('bridge.start') },
     waitForConnection: async () => connected,
     cancel: async () => undefined,
@@ -126,6 +127,7 @@ test('writes an isolated DSH sessions root into the runtime patch', async () => 
   assert.ok(patchPath)
   const patch = await readFile(patchPath, 'utf8')
   assert.match(patch, /- id: sessions\n  config:\n    root: "\/tmp\/preview-session-store"/)
+  assert.match(patch, /id: helix-question-tool\n\s+name: "file:.*dsh-question-tool-plugin\.js"/)
   await runtime.dispose()
 })
 

@@ -1,5 +1,7 @@
 import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import type { BinaryThinkingMode, ChatTemplateValue, ReasoningFormat } from '../runtime/model-catalog.js'
+import type { BrowserContextState } from '../shared/browser-context.js'
+import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
 export type { RequestPreviewResult } from '../runtime/control-protocol.js'
 
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
@@ -91,7 +93,9 @@ export type SidebarMessage =
       sandboxMode: SandboxMode
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
-  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null }
+  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[] }
+  | { type: 'toggleBrowserPicker' }
+  | { type: 'removeBrowserAttachment'; sessionId: string; id: string }
   | { type: 'newSession' }
   | { type: 'refreshModels' }
   | { type: 'loadModelCatalog' }
@@ -102,13 +106,19 @@ export type SidebarMessage =
   | { type: 'previewRequest'; prompt: string }
   | { type: 'cancelRequestPreview' }
   | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
+  | { type: 'questionAnswer'; sessionId: string; requestId: string; answer: UserQuestionAnswer }
 
 export interface WebviewApi {
   postMessage(message: SidebarMessage): void
 }
 
 export type IncomingMessage =
-  | { type: 'state'; state: { activeSessionId: string; runtimeState: RuntimeState; reasoningEffort?: string; selection?: SelectionMetadata }; resetTranscript?: boolean }
+  | { type: 'questionRequest'; request: PendingUserQuestion }
+  | { type: 'questionResolved'; sessionId: string; requestId: string; status: 'answered' | 'cancelled' | 'unavailable'; answer?: UserQuestionAnswer }
+  | { type: 'questionAnswerFailed'; sessionId: string; requestId: string; message: string }
+  | { type: 'browserContext'; state: BrowserContextState }
+  | { type: 'browserSubmitFailed'; sessionId: string; message: string }
+  | { type: 'state'; state: { activeSessionId: string; runtimeState: RuntimeState; reasoningEffort?: string; selection?: SelectionMetadata; browserContext?: BrowserContextState; pendingQuestions?: PendingUserQuestion[] }; resetTranscript?: boolean }
   | { type: 'settings'; settings: SidebarSettings }
   | { type: 'settingsSaved'; settings: SidebarSettings; restarting: boolean }
   | { type: 'selection'; selection?: SelectionMetadata }

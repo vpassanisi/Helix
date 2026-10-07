@@ -6,6 +6,8 @@ import type { RuntimeState, SandboxMode } from '../runtime/types.js'
 import { isReasoningFormat, type DiscoveredModel, type ModelDraft, type SavedModel } from '../runtime/model-catalog.js'
 import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import { isRecord } from '../shared/value-utils.js'
+import type { BrowserContextState } from '../shared/browser-context.js'
+import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
 
 export type SidebarMessage =
   | { type: 'ready' }
@@ -19,12 +21,15 @@ export type SidebarMessage =
       sandboxMode: SandboxMode
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
-  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null }
+  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[] }
+  | { type: 'toggleBrowserPicker' }
+  | { type: 'removeBrowserAttachment'; sessionId: string; id: string }
   | { type: 'newSession' }
   | { type: 'cancelTurn' }
   | { type: 'previewRequest'; prompt: string }
   | { type: 'cancelRequestPreview' }
   | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
+  | { type: 'questionAnswer'; sessionId: string; requestId: string; answer: UserQuestionAnswer }
   | { type: 'refreshModels' }
   | { type: 'loadModelCatalog' }
   | { type: 'saveModelCatalog'; models: ModelDraft[] }
@@ -38,6 +43,8 @@ export interface SidebarState {
   selection?: Omit<EditorContext, 'ranges'> & {
     ranges: Array<Omit<EditorContext['ranges'][number], 'text'>>
   }
+  browserContext?: BrowserContextState
+  pendingQuestions?: PendingUserQuestion[]
 }
 
 export interface SidebarSettings {
@@ -77,6 +84,11 @@ export type SidebarDiscoveredModel = DiscoveredModel
 export type SidebarCodeChange = CodeChange
 
 export type SidebarOutgoingMessage =
+  | { type: 'questionRequest'; request: PendingUserQuestion }
+  | { type: 'questionResolved'; sessionId: string; requestId: string; status: 'answered' | 'cancelled' | 'unavailable'; answer?: UserQuestionAnswer }
+  | { type: 'questionAnswerFailed'; sessionId: string; requestId: string; message: string }
+  | { type: 'browserContext'; state: BrowserContextState }
+  | { type: 'browserSubmitFailed'; sessionId: string; message: string }
   | { type: 'state'; state: SidebarState; resetTranscript?: boolean }
   | { type: 'settings'; settings: SidebarSettings }
   | { type: 'settingsSaved'; settings: SidebarSettings; restarting: boolean }
@@ -210,6 +222,8 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
     return 'prompt' in value && typeof value.prompt === 'string' &&
       'includeSelection' in value && typeof value.includeSelection === 'boolean' &&
       (!('reasoningEffort' in value) || value.reasoningEffort === null || typeof value.reasoningEffort === 'string')
+      && (!('sessionId' in value) || typeof value.sessionId === 'string')
+      && (!('browserAttachmentIds' in value) || (Array.isArray(value.browserAttachmentIds) && value.browserAttachmentIds.every((id) => typeof id === 'string') && typeof value.sessionId === 'string'))
   }
   if (type === 'selectModel') {
     return 'model' in value && typeof value.model === 'string'
@@ -227,9 +241,18 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
       (value.outcome === 'allowed-once' || value.outcome === 'rejected')
   }
 
+  if (type === 'questionAnswer') {
+    return typeof value.sessionId === 'string' && typeof value.requestId === 'string' && isRecord(value.answer) &&
+      typeof value.answer.id === 'string' && Array.isArray(value.answer.selected) &&
+      value.answer.selected.every((label) => typeof label === 'string') &&
+      (value.answer.custom === undefined || typeof value.answer.custom === 'string')
+  }
+
   if (type === 'previewRequest') return 'prompt' in value && typeof value.prompt === 'string'
+  if (type === 'removeBrowserAttachment') return typeof value.sessionId === 'string' && typeof value.id === 'string'
 
   return type === 'ready' ||
+    type === 'toggleBrowserPicker' ||
     type === 'openSettings' ||
     type === 'loadModelCatalog' ||
     type === 'newSession' ||

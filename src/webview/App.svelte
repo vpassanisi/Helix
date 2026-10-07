@@ -8,6 +8,7 @@
     Check,
     ChevronDown,
     Code2,
+    MousePointer2,
     FileDiff,
     LoaderCircle,
     Plus,
@@ -33,6 +34,10 @@
     type ReasoningFormat,
   } from '../runtime/model-catalog.js'
   import Masthead from './components/Masthead.svelte'
+  import BrowserAttachments from './components/BrowserAttachments.svelte'
+  import UserQuestionCard from './components/UserQuestionCard.svelte'
+  import { validateQuestionAnswer, type PendingUserQuestion, type UserQuestionAnswer, type UserQuestionView } from '../shared/user-question.js'
+  import type { BrowserContextState } from '../shared/browser-context.js'
   import { countLines, isRecord, parsePayload, responseKey, stringValue } from '../shared/value-utils.js'
   import type {
     HarnessEvent,
@@ -65,6 +70,7 @@
     label: string
     text: string
     context?: SelectionMetadata
+    browserLabels?: string[]
     tool?: ToolCallView
   }
 
@@ -77,6 +83,7 @@
     error?: string
     status: 'preparing' | 'running' | 'completed' | 'error'
     approval?: ApprovalView
+    question?: UserQuestionView
   }
 
   interface ApprovalView {
@@ -174,6 +181,8 @@
   let pendingApprovalRequests: Record<string, Extract<IncomingMessage, { type: 'approvalRequest' }> & { approval: ApprovalView }> = {}
   let toolDerivedPaths = new Set<string>()
   let nextModelDraftKey = 1
+  let browserContext = $state<BrowserContextState | undefined>()
+  const waitingForAnswer = $derived(messages.some((message) => message.tool?.question?.status === 'pending' || message.tool?.question?.status === 'submitting'))
 
   onMount(() => {
     const listener = (event: MessageEvent<IncomingMessage>) => handleMessage(event.data)
@@ -205,6 +214,7 @@
         waitingForFirstResponse = false
       }
       selection = message.state.selection
+      browserContext = message.state.browserContext
       selectionAttached = true
       if (runtimeState === 'ready' && settingsRestarting) {
         settingsRestarting = false
@@ -214,12 +224,26 @@
       if (message.resetTranscript) {
         resetTranscript()
       }
+      for (const request of message.state.pendingQuestions ?? []) handleQuestionRequest(request)
+      if (runtimeState === 'stopped' || runtimeState === 'error') endPendingQuestions()
       return
     }
 
     if (message.type === 'selection') {
       selection = message.selection
       selectionAttached = true
+      return
+    }
+
+    if (message.type === 'browserContext') {
+      if (message.state.sessionId === activeSessionId) browserContext = message.state
+      return
+    }
+    if (message.type === 'browserSubmitFailed') {
+      if (message.sessionId !== activeSessionId) return
+      isGenerating = false
+      waitingForFirstResponse = false
+      if (browserContext) browserContext = { ...browserContext, message: message.message }
       return
     }
 
@@ -301,6 +325,20 @@
       return
     }
 
+    if (message.type === 'questionRequest') {
+      if (message.request.sessionId === activeSessionId) handleQuestionRequest(message.request)
+      return
+    }
+    if (message.type === 'questionResolved') {
+      if (message.sessionId !== activeSessionId) return
+      updateQuestion(message.requestId, { status: message.status, answer: message.answer, error: undefined })
+      return
+    }
+    if (message.type === 'questionAnswerFailed') {
+      if (message.sessionId !== activeSessionId) return
+      updateQuestion(message.requestId, { status: 'pending', error: message.message })
+      return
+    }
     if (message.type === 'approvalRequest') {
       if (message.sessionId !== activeSessionId) return
       waitingForFirstResponse = false
@@ -429,7 +467,7 @@
   }
 
   function submit(): void {
-    if (isGenerating) {
+    if (isGenerating || waitingForAnswer) {
       waitingForFirstResponse = false
       post({ type: 'cancelTurn' })
       return
@@ -439,7 +477,8 @@
     if (!text) return
 
     const attachedSelection = selectionAttached ? selection : undefined
-    appendMessage('user', 'You', text, attachedSelection)
+    const browserAttachments = browserContext?.attachments ?? []
+    appendMessage('user', 'You', text, attachedSelection, browserAttachments.map((attachment) => attachment.label))
     isGenerating = true
     waitingForFirstResponse = true
     post({
@@ -447,6 +486,8 @@
       prompt: text,
       includeSelection: attachedSelection !== undefined,
       reasoningEffort,
+      sessionId: activeSessionId,
+      browserAttachmentIds: browserAttachments.map((attachment) => attachment.id),
     })
     prompt = ''
     selectionAttached = true
@@ -461,6 +502,7 @@
   function handlePromptKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault()
+      if (waitingForAnswer) return
       submit()
     }
   }
@@ -665,9 +707,9 @@
     sandboxMode = nextMode
   }
 
-  function appendMessage(role: ChatMessage['role'], label: string, text: string, context?: SelectionMetadata): void {
+  function appendMessage(role: ChatMessage['role'], label: string, text: string, context?: SelectionMetadata, browserLabels?: string[]): void {
     if (role !== 'user') waitingForFirstResponse = false
-    messages = [...messages, { id: nextMessageId++, role, label, text, context }]
+    messages = [...messages, { id: nextMessageId++, role, label, text, context, browserLabels }]
     void scrollToBottom()
   }
 
@@ -945,6 +987,34 @@
       messages = next
     }
     void scrollToBottom()
+  }
+
+  function handleQuestionRequest(request: PendingUserQuestion): void {
+    if (messages.some((message) => message.tool?.question?.requestId === request.requestId)) return
+    isGenerating = true
+    upsertToolCall({ callId: request.toolCallId, name: 'ask_user_question', arguments: '', status: 'running',
+      question: { ...request, status: 'pending' } })
+  }
+
+  function updateQuestion(requestId: string, update: Partial<UserQuestionView>): void {
+    messages = messages.map((message) => message.tool?.question?.requestId === requestId
+      ? { ...message, tool: { ...message.tool, question: { ...message.tool.question, ...update } } } : message)
+  }
+
+  function endPendingQuestions(): void {
+    for (const message of messages) {
+      const question = message.tool?.question
+      if (question?.status === 'pending' || question?.status === 'submitting') updateQuestion(question.requestId, { status: 'cancelled' })
+    }
+  }
+
+  function answerQuestion(question: UserQuestionView, value: UserQuestionAnswer): void {
+    if (question.status !== 'pending') return
+    try {
+      const answer = validateQuestionAnswer(question.question, value)
+      updateQuestion(question.requestId, { status: 'submitting', error: undefined })
+      post({ type: 'questionAnswer', sessionId: activeSessionId, requestId: question.requestId, answer })
+    } catch (error) { updateQuestion(question.requestId, { error: error instanceof Error ? error.message : String(error) }) }
   }
 
   function removePreparingToolCalls(callIds: string[]): void {
@@ -2001,6 +2071,9 @@
                 <div class="message-body" use:followThinkingStream>{message.text}</div>
               </details>
             {:else if message.role === 'tool' && message.tool}
+              {#if message.tool.question}
+                <UserQuestionCard value={message.tool.question} onanswer={(answer) => answerQuestion(message.tool!.question!, answer)} />
+              {:else}
               <details open={message.tool.approval?.status === 'pending'} class:completed={message.tool.status === 'completed'} class:failed={message.tool.status === 'error'} class="tool-details">
                 <summary>
                   <Wrench size={13} strokeWidth={1.7} />
@@ -2059,12 +2132,19 @@
                   {/if}
                 </div>
               </details>
+              {/if}
             {:else}
               {#if message.role === 'user' && message.context}
                 <div class="message-context" title={`${message.context.fileLabel} · ${selectionLineLabel(message.context)}`}>
                   <Code2 size={12} strokeWidth={1.7} />
                   <span class="message-context-file">{message.context.fileLabel}</span>
                   <span class="message-context-lines">{selectionLineLabel(message.context)}</span>
+                </div>
+              {/if}
+              {#if message.role === 'user' && message.browserLabels?.length}
+                <div class="message-context" aria-label="Attached browser elements">
+                  <MousePointer2 size={12} />
+                  <span class="message-context-file">{message.browserLabels.join(', ')}</span>
                 </div>
               {/if}
               {#if message.role === 'assistant'}
@@ -2100,6 +2180,9 @@
       </div>
 
       <div class="composer">
+        {#if browserContext?.attachments.length}
+          <BrowserAttachments attachments={browserContext.attachments} disabled={isGenerating} onremove={(id) => post({ type: 'removeBrowserAttachment', sessionId: activeSessionId, id })} />
+        {/if}
         {#if selection && selectionAttached}
           <div class="context-chip">
             <Code2 size={14} strokeWidth={1.7} />
@@ -2133,9 +2216,14 @@
             </div>
           </section>
         {/if}
-        <div class="composer-box" class:working={isGenerating}>
+        <div class="composer-box" class:working={isGenerating && !waitingForAnswer}>
           <textarea bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
           <div class="composer-footer">
+            {#if browserContext?.hasOpenBrowser}
+              <span class="browser-picker-control" data-side="top" data-align="start" data-tooltip={browserContext?.picking ? 'Stop selecting browser elements' : browserContext?.available ? 'Select browser elements' : 'Browser picker setup required. Use Helix: Select Browser Elements.'}>
+                <button class="btn" data-variant="ghost" data-size="icon-sm" type="button" aria-label={browserContext?.picking ? 'Stop selecting browser elements' : 'Select browser elements'} aria-pressed={browserContext?.picking ?? false} disabled={!browserContext?.available || (isGenerating && !browserContext?.picking)} onclick={() => post({ type: 'toggleBrowserPicker' })}><MousePointer2 size={15} strokeWidth={1.8} /></button>
+              </span>
+            {/if}
             <div class="model-picker-wrap">
               <div id="composer-model-selector" class="popover composer-model-selector">
                 <button
@@ -2219,8 +2307,8 @@
               data-side="top"
               data-align="end"
             >
-              <button class="btn send" data-size="icon-sm" type="button" aria-label={isGenerating ? 'Stop generation' : 'Send message'} aria-describedby="send-context-description" onclick={submit} disabled={!isGenerating && !prompt.trim()}>
-                {#if isGenerating}<Square size={13} strokeWidth={1.8} />{:else}<ArrowUp size={14} strokeWidth={1.8} />{/if}
+              <button class="btn send" data-size="icon-sm" type="button" aria-label={isGenerating || waitingForAnswer ? 'Stop generation' : 'Send message'} aria-describedby="send-context-description" onclick={submit} disabled={!isGenerating && !waitingForAnswer && !prompt.trim()}>
+                {#if isGenerating || waitingForAnswer}<Square size={13} strokeWidth={1.8} />{:else}<ArrowUp size={14} strokeWidth={1.8} />{/if}
               </button>
             </span>
           </div>

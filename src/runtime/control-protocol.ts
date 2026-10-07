@@ -13,6 +13,7 @@ export type ControlRequestMethod =
   | 'provider.request.captureNext'
   | 'capabilities.get'
   | 'approval.resolve'
+  | 'question.answer'
 
 export const CONTROL_CAPABILITIES = [
   'turn.cancel',
@@ -25,6 +26,7 @@ export const CONTROL_CAPABILITIES = [
   'provider.request.captureNext',
   'capabilities.get',
   'approval.resolve',
+  'question.answer',
 ] as const satisfies readonly ControlRequestMethod[]
 
 export function isControlRequestMethod(value: unknown): value is ControlRequestMethod {
@@ -75,7 +77,7 @@ export interface ControlEventEnvelope {
   type: 'event'
   eventId: string
   sessionId: string
-  method: 'approval.request' | 'approval.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured'
+  method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured'
   params: Record<string, unknown>
 }
 

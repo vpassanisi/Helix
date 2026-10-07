@@ -3,6 +3,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { UserQuestionAnswer } from '../shared/user-question.js'
 import {
   CONTROL_PROTOCOL_VERSION,
   CONTROL_CAPABILITIES,
@@ -37,6 +38,7 @@ export interface ControlBroker {
   waitForConnection(timeoutMs?: number): Promise<boolean>
   cancel(sessionId: string, authoritySessionId?: string): Promise<void>
   resolveApproval(sessionId: string, requestId: string, outcome: ControlApprovalOutcome): Promise<void>
+  answerQuestion(sessionId: string, requestId: string, answer: UserQuestionAnswer): Promise<void>
   steer(sessionId: string, text: string, authoritySessionId?: string): Promise<void>
   inject(sessionId: string, text: string, authoritySessionId?: string): Promise<void>
   setApprovalPolicy(sessionId: string, policy: 'ask' | 'never', authoritySessionId?: string): Promise<void>
@@ -241,6 +243,10 @@ export class LocalControlBridge implements ControlBroker {
 
   async steer(sessionId: string, text: string, authoritySessionId = sessionId): Promise<void> {
     await this.request('session.steer', sessionId, { text, authoritySessionId })
+  }
+
+  async answerQuestion(sessionId: string, requestId: string, answer: UserQuestionAnswer): Promise<void> {
+    await this.request('question.answer', sessionId, { questionRequestId: requestId, answer })
   }
 
   async inject(sessionId: string, text: string, authoritySessionId = sessionId): Promise<void> {

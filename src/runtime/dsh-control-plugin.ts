@@ -14,6 +14,8 @@ import {
   type PreviewRequest,
 } from './control-protocol.js'
 import { isRecord, stringValue } from '../shared/value-utils.js'
+import { USER_QUESTION_INSTRUCTIONS } from '../shared/user-question.js'
+import { DshQuestionBridge } from './dsh-question-bridge.js'
 
 interface PendingApproval {
   sessionId: string
@@ -108,7 +110,7 @@ export default function helixControlPlugin(ctx: any): void {
 
   const sendEvent = (
     sessionId: string,
-    method: 'approval.request' | 'approval.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured',
+    method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured',
     params: Record<string, unknown>,
   ): boolean => send({
     version: CONTROL_PROTOCOL_VERSION,
@@ -118,6 +120,8 @@ export default function helixControlPlugin(ctx: any): void {
     method,
     params,
   })
+
+  const questions = new DshQuestionBridge(ctx, () => connected && !disposed, sendEvent)
 
   const finishApproval = (
     approvalId: string,
@@ -251,6 +255,14 @@ export default function helixControlPlugin(ctx: any): void {
     try {
       if (request.method === 'capabilities.get') return handleCapabilities(request)
       if (request.method === 'approval.resolve') return handleApprovalResolution(request)
+      if (request.method === 'question.answer') {
+        const requestId = stringValue(request.params.questionRequestId)
+        if (!requestId) throw new PluginControlError('Question request ID is required.', 'INVALID_ARGUMENT')
+        try { questions.answer(request.sessionId, requestId, request.params.answer) }
+        catch (error) { throw new PluginControlError(error instanceof Error ? error.message : String(error), 'INVALID_ARGUMENT') }
+        sendResponse(request, { accepted: true })
+        return
+      }
       if (request.method === 'request.preview.arm') return handlePreviewArm(request)
       if (request.method === 'provider.request.captureNext') return handleProviderRequestCapture(request)
       handleAgentRequest(request)
@@ -314,6 +326,7 @@ export default function helixControlPlugin(ctx: any): void {
       if (socket !== client) return
       connected = false
       socket = undefined
+      questions.disconnect()
       for (const [approvalId, pending] of approvals) {
         finishApproval(approvalId, pending, 'unavailable')
       }
@@ -394,10 +407,11 @@ export default function helixControlPlugin(ctx: any): void {
     next: () => Promise<any>,
   ): Promise<any> => {
     const sessionId = stringValue(context?.agent?.id)
-    if (sessionId === undefined || requestPreviews.get(sessionId) === undefined) return next()
-
     const assembled = await next()
-    if (requestPreviews.has(sessionId) && !requestPreviewBreakdowns.has(sessionId)) {
+    if (Array.isArray(assembled.sections) && !assembled.sections.some((section: any) => section.name === 'helix:user-questions')) {
+      assembled.sections.push({ name: 'helix:user-questions', text: USER_QUESTION_INSTRUCTIONS })
+    }
+    if (sessionId !== undefined && requestPreviews.has(sessionId) && !requestPreviewBreakdowns.has(sessionId)) {
       const breakdown = canonicalPromptBreakdown(assembled)
       if (breakdown !== undefined) requestPreviewBreakdowns.set(sessionId, breakdown)
     }
@@ -416,6 +430,8 @@ export default function helixControlPlugin(ctx: any): void {
   }
 
   try {
+    ctx.on?.('tools/execute', questions.execute, { global: true })
+    ctx.on?.('user-questions/request', questions.request, { global: true })
     ctx.on?.('approval/request', onApprovalRequest, { global: true })
     ctx.on?.('agent/assistant-stream', onAssistantStream, { global: true })
     ctx.on?.('agent/request', onAgentRequest, { global: true })
@@ -429,6 +445,7 @@ export default function helixControlPlugin(ctx: any): void {
       connected = false
       socket?.destroy()
       socket = undefined
+      questions.dispose()
       for (const [approvalId, pending] of approvals) {
         finishApproval(approvalId, pending, 'cancelled')
       }

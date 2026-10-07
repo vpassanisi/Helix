@@ -1,3 +1,4 @@
+import { SkillController } from './host/skill-controller.js'
 import * as vscode from 'vscode'
 import { WorkspaceChangeTracker } from './runtime/change-tracker.js'
 import { captureEditorContext, editorContextMetadata } from './runtime/editor-context.js'
@@ -17,6 +18,8 @@ class ExtensionApp {
   private readonly subscriptions: vscode.Disposable[] = []
   private readonly changeTracker: WorkspaceChangeTracker
   private readonly settings: SettingsController
+  private readonly skills: SkillController
+  private submissionGeneration = 0
   private readonly requestPreview: RequestPreviewController
   private readonly session: SessionController
   private readonly browserContext: BrowserContextController
@@ -24,13 +27,17 @@ class ExtensionApp {
   private generating = false
   private readonly messageHandlers: Record<SidebarMessage['type'], SidebarHandler>
   private readonly outputChannel: vscode.OutputChannel
+  private readonly skillOutputChannel: vscode.OutputChannel
   private runtimeState: RuntimeState = 'stopped'
   private selection: SidebarState['selection']
+  private routingMetadata = ''
   private disposed = false
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.outputChannel = vscode.window.createOutputChannel('Helix Provider Requests')
     this.subscriptions.push(this.outputChannel)
+    this.skillOutputChannel = vscode.window.createOutputChannel('Helix Skill Selection')
+    this.subscriptions.push(this.skillOutputChannel)
     this.sidebar = new SidebarProvider(
       context.extensionUri,
       () => this.getSidebarState(),
@@ -50,6 +57,7 @@ class ExtensionApp {
           this.handleProviderRequestCaptured(event.params)
           return
         }
+        if (event.method === 'skills.changed') { this.skills?.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }); void this.loadSkills(); return }
         this.session.handleControlEvent(event)
       },
       onLifecycleError: (error) => this.postError(error),
@@ -62,9 +70,42 @@ class ExtensionApp {
       getActiveSessionId: () => this.session.currentSessionId,
       onError: (error) => this.postError(error),
     })
+    this.skills = new SkillController({
+      currentSession: () => this.session.currentSessionId,
+      catalog: async (sessionId) => {
+        if (this.runtimeState !== 'ready') await this.runtime.start(await this.settings.runtimeOptions())
+        return this.runtime.skillCatalog(sessionId)
+      },
+      connection: () => this.settings.decisionConnection(),
+      metadata: () => JSON.stringify({ workspace: vscode.workspace.workspaceFolders?.[0]?.name ?? '', language: vscode.window.activeTextEditor?.document.languageId ?? '' }),
+      publish: (suggestions) => this.sidebar.post({ type: 'skillSuggestions', suggestions }),
+      publishCatalog: (sessionId, catalog) => this.sidebar.post({ type: 'skillCatalog', sessionId, catalog }),
+      diagnostic: (event) => this.skillOutputChannel.appendLine(JSON.stringify(event)),
+    })
+    this.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('deepseekHarness')) { this.skills.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }) }
+      if (event.affectsConfiguration('deepseekHarness.experimentalSkillPicker')) {
+        void this.settings.postSettings()
+        if (!this.settings.skillPickerEnabled() && this.runtimeState === 'ready') {
+          void this.runtime.clearSkills(this.session.currentSessionId).catch(() => undefined)
+        }
+      }
+    }))
     this.requestPreview = new RequestPreviewController({
       getRuntimeOptions: () => this.settings.runtimeOptions(),
       resolveReasoningEffort: () => this.settings.resolveReasoningEffort(null),
+      prepareSkills: async (runtime, sessionId, prompt) => {
+        if (!this.settings.skillPickerEnabled()) return undefined
+        const router = new SkillController({ currentSession: () => sessionId,
+          catalog: (id) => runtime.skillCatalog ? runtime.skillCatalog(id) : Promise.reject(new Error('Skill discovery is unavailable.')),
+          connection: () => this.settings.decisionConnection(), metadata: () => vscode.workspace.workspaceFolders?.[0]?.name ?? '',
+          publish: () => undefined, publishCatalog: () => undefined })
+        try {
+          const selection = await router.freeze({ sessionId, revision: 0, prompt, recentChat: [] }, { include: [], exclude: [] })
+          return this.settings.skillPickerEnabled() ? selection : undefined
+        }
+        finally { router.invalidate() }
+      },
     })
     this.session = new SessionController({
       runtime: this.runtime,
@@ -107,14 +148,18 @@ class ExtensionApp {
     this.subscriptions.push(this.runtime.onStateChange(({ state, message }) => {
       this.runtimeState = state
       if (state === 'stopped' || state === 'error') {
+        this.skills.invalidate()
         this.generating = false
         this.session.clearPendingQuestions(state === 'error' ? 'unavailable' : 'cancelled')
       }
+      if (state === 'ready') { this.skills.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }) }
       this.sidebar.post({ type: 'state', state: this.getSidebarState() })
       if (message !== undefined) this.sidebar.post({ type: 'error', message })
     }))
 
     this.messageHandlers = {
+      loadSkills: async (message) => { await this.loadSkills((message as Extract<SidebarMessage, { type: 'loadSkills' }>).sessionId) },
+      analyzeSkills: async (message) => { if (this.settings.skillPickerEnabled()) this.skills.update((message as Extract<SidebarMessage, { type: 'analyzeSkills' }>).draft) },
       ready: () => this.handleReady(),
       openSettings: () => this.handleOpenSettings(),
       saveSettings: (message) => this.settings.run(() => this.settings.saveSettings(message as Extract<SidebarMessage, { type: 'saveSettings' }>)),
@@ -138,7 +183,7 @@ class ExtensionApp {
         const submit = message as Extract<SidebarMessage, { type: 'submit' }>
         return this.settings.run(() => this.submitPrompt(submit))
       },
-      cancelTurn: async () => { this.generating = false; await this.session.cancelTurn() },
+      cancelTurn: async () => { ++this.submissionGeneration; this.skills.cancel(); this.generating = false; await this.session.cancelTurn() },
       previewRequest: (message) => this.handleRequestPreview(message as Extract<SidebarMessage, { type: 'previewRequest' }>),
       cancelRequestPreview: () => this.requestPreview.cancel(),
       approvalDecision: (message) => this.session.resolveApproval(message as Extract<SidebarMessage, { type: 'approvalDecision' }>),
@@ -148,11 +193,19 @@ class ExtensionApp {
   }
 
   refreshSelection(): void {
+    const metadata = JSON.stringify([vscode.workspace.workspaceFolders?.[0]?.name, vscode.window.activeTextEditor?.document.languageId])
+    if (metadata !== this.routingMetadata) {
+      this.routingMetadata = metadata
+      this.skills.invalidate()
+      this.sidebar.post({ type: 'skillsInvalidated' })
+    }
     this.selection = editorSelection()
     this.sidebar.post({ type: 'selection', selection: this.selection })
   }
 
   async newSession(): Promise<void> {
+    ++this.submissionGeneration
+    this.skills.invalidate()
     await this.browserContext.stop()
     await this.session.newSession()
   }
@@ -166,23 +219,34 @@ class ExtensionApp {
     if (this.session.questions.length > 0) return
     if (this.submitting) return
     this.submitting = true
+    const generation = ++this.submissionGeneration
     try {
+      if (this.runtimeState !== 'ready') await this.runtime.start(await this.settings.runtimeOptions())
+      const selectedSkills = this.settings.skillPickerEnabled() && submit.skillDraft
+        ? await this.skills.freeze(submit.skillDraft, submit.skillOverrides ?? { include: [], exclude: [] }) : undefined
+      if (generation !== this.submissionGeneration || sessionId !== this.session.currentSessionId) {
+        this.sidebar.post({ type: 'submitFailed', sessionId, message: 'Submission cancelled.' })
+        return
+      }
       const snapshots = this.browserContext.snapshot(sessionId, ids)
       await this.browserContext.stop()
       const accepted = await this.session.submit(submit.prompt, submit.includeSelection, submit.reasoningEffort ?? null, snapshots,
-        vscode.workspace.getConfiguration('deepseekHarness').get<number>('maxBrowserContextCharacters', 32_000))
+        vscode.workspace.getConfiguration('deepseekHarness').get<number>('maxBrowserContextCharacters', 32_000), this.settings.skillPickerEnabled() ? selectedSkills : undefined)
+      if (!accepted) this.sidebar.post({ type: 'submitFailed', sessionId, message: 'The message could not be submitted. Your draft and skill choices were retained.' })
       if (accepted && sessionId === this.session.currentSessionId) {
+        this.skills.cancel()
         this.generating = true
         this.browserContext.consume(sessionId, ids)
       }
     } catch (error) {
-      this.sidebar.post({ type: 'browserSubmitFailed', sessionId, message: error instanceof Error ? error.message : String(error) })
-    } finally { this.submitting = false }
+      this.sidebar.post({ type: 'submitFailed', sessionId, message: error instanceof Error ? error.message : String(error) })
+    } finally { this.submitting = false; this.skills.cancel() }
   }
 
   async shutdown(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.skills.invalidate()
     await this.browserContext.dispose()
     await this.session.dispose()
     for (const subscription of this.subscriptions.splice(0)) subscription.dispose()
@@ -199,6 +263,14 @@ class ExtensionApp {
     this.session.replayPendingApprovals()
     this.session.replayPendingQuestions()
     await this.settings.postSettings()
+  }
+
+  private async loadSkills(sessionId = this.session.currentSessionId): Promise<void> {
+    if (!this.settings.skillPickerEnabled() || sessionId !== this.session.currentSessionId || this.disposed) return
+    try { await this.skills.loadCatalog(sessionId) }
+    catch (error) {
+      this.sidebar.post({ type: 'skillCatalog', sessionId, catalog: { skills: [], revision: '', complete: false }, error: error instanceof Error ? error.message : String(error) })
+    }
   }
 
   private async handleOpenSettings(): Promise<void> {
@@ -297,6 +369,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.window.onDidChangeTextEditorSelection(() => app.refreshSelection()),
     vscode.window.onDidChangeActiveTextEditor(() => app.refreshSelection()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => app.refreshSelection()),
   )
 }
 

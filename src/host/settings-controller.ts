@@ -1,3 +1,5 @@
+import { DEFAULT_DECISION_SETTINGS, decisionEndpoint, type DecisionSettings } from '../shared/skills.js'
+import type { DecisionConnection } from './decision-client.js'
 import * as vscode from 'vscode'
 import { ControlBridgeError } from '../runtime/control-bridge.js'
 import { mcpSecretKey } from '../runtime/mcp.js'
@@ -30,6 +32,7 @@ import {
 } from '../sidebar/sidebar-provider.js'
 
 const API_KEY_SECRET = 'deepseekHarness.apiKey'
+const DECISIONS_KEY_SECRET = 'deepseekHarness.decisionsApiKey'
 const MODEL_CATALOG_FILE = 'models.json'
 const REASONING_HISTORY_KEY = 'helix.lastUsedReasoningEfforts'
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
@@ -49,6 +52,7 @@ export interface SettingsControllerOptions {
 }
 
 interface SettingsSnapshot {
+  decisions: DecisionSettings
   provider: string
   baseUrl: string
   sandboxMode: SandboxMode
@@ -280,6 +284,28 @@ export class SettingsController {
     }
   }
 
+  skillPickerEnabled(): boolean {
+    return vscode.workspace.getConfiguration('deepseekHarness').get<boolean>('experimentalSkillPicker', false) === true
+  }
+
+  async decisionConnection(): Promise<DecisionConnection> {
+    const configuration = vscode.workspace.getConfiguration('deepseekHarness')
+    const settings = this.readDecisionSettings()
+    const baseUrl = settings.useMainConnection
+      ? configuration.get<string>('baseUrl', '').trim() || (configuration.get<string>('provider', 'deepseek-official') === 'deepseek-official' ? 'https://api.deepseek.com' : '')
+      : settings.baseUrl
+    const threshold = configuration.get<number>('skillSelectionThreshold', 0.75)
+    return { ...settings, enabled: this.skillPickerEnabled() && settings.enabled, baseUrl, apiKey: await this.options.context.secrets.get(settings.useMainConnection ? API_KEY_SECRET : DECISIONS_KEY_SECRET),
+      threshold: Number.isFinite(threshold) && threshold >= 0 && threshold <= 1 ? threshold : 0.75 }
+  }
+
+  private readDecisionSettings(): DecisionSettings {
+    const { enabled, useMainConnection, format, baseUrl, model } = {
+      ...DEFAULT_DECISION_SETTINGS, ...vscode.workspace.getConfiguration('deepseekHarness').get<Partial<DecisionSettings>>('decisions', {}),
+    }
+    return { enabled, useMainConnection, format, baseUrl, model }
+  }
+
   async getSidebarSettings(): Promise<SidebarSettings> {
     const configuration = vscode.workspace.getConfiguration('deepseekHarness')
     return {
@@ -289,6 +315,8 @@ export class SettingsController {
       baseUrl: configuration.get<string>('baseUrl', ''),
       dshHome: configuration.get<string>('dshHome', ''),
       apiKeyConfigured: Boolean(await this.options.context.secrets.get(API_KEY_SECRET)),
+      skillPickerEnabled: this.skillPickerEnabled(),
+      decisions: { ...this.readDecisionSettings(), apiKeyConfigured: Boolean(await this.options.context.secrets.get(DECISIONS_KEY_SECRET)) },
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
       mcpServers: await this.sidebarMcpServers(),
     }
@@ -299,6 +327,13 @@ export class SettingsController {
     const baseUrl = message.baseUrl.trim()
     if (!provider) throw new Error('Provider route is required.')
     validateHttpUrl(baseUrl, 'API URL')
+    const decisions = this.skillPickerEnabled() ? message.decisions : undefined
+    if (decisions?.enabled) {
+      if (!decisions.model.trim()) throw new Error('Decisions model ID is required.')
+      const url = decisions.useMainConnection ? baseUrl || (provider === 'deepseek-official' ? 'https://api.deepseek.com' : '') : decisions.baseUrl.trim()
+      if (!url) throw new Error('An explicit API base URL is required for decisions.')
+      decisionEndpoint(url, decisions.format)
+    }
   }
 
   private async writeSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
@@ -307,6 +342,14 @@ export class SettingsController {
     await configuration.update('deepseekHarness.baseUrl', message.baseUrl.trim(), vscode.ConfigurationTarget.Global)
     await configuration.update('deepseekHarness.sandboxMode', message.sandboxMode, vscode.ConfigurationTarget.Global)
 
+    if (this.skillPickerEnabled() && message.decisions) {
+      const { enabled, useMainConnection, format, baseUrl, model } = message.decisions
+      await configuration.update('deepseekHarness.decisions', { enabled, useMainConnection, format, baseUrl: baseUrl.trim(), model: model.trim() }, vscode.ConfigurationTarget.Global)
+    }
+    if (this.skillPickerEnabled()) {
+      if (message.clearDecisionsApiKey) await this.options.context.secrets.delete(DECISIONS_KEY_SECRET)
+      else if (message.decisionsApiKey?.trim()) await this.options.context.secrets.store(DECISIONS_KEY_SECRET, message.decisionsApiKey.trim())
+    }
     if (message.clearApiKey) await this.options.context.secrets.delete(API_KEY_SECRET)
     else if (message.apiKey?.trim()) await this.options.context.secrets.store(API_KEY_SECRET, message.apiKey.trim())
   }
@@ -478,7 +521,7 @@ export class SettingsController {
   }
 
   private async createSnapshot(previousServers: PersistedMcpServer[], nextServers: PersistedMcpServer[]): Promise<SettingsSnapshot> {
-    const keys = new Set<string>([API_KEY_SECRET])
+    const keys = new Set<string>([API_KEY_SECRET, DECISIONS_KEY_SECRET])
     for (const server of [...previousServers, ...nextServers]) {
       for (const name of server.envKeys) keys.add(mcpSecretKey(server.serverName, name))
     }
@@ -488,6 +531,7 @@ export class SettingsController {
     return {
       provider: configuration.get<string>('provider', 'deepseek-official'),
       baseUrl: configuration.get<string>('baseUrl', ''),
+      decisions: this.readDecisionSettings(),
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
       mcpServers: previousServers,
       apiKey: secrets.get(API_KEY_SECRET),
@@ -501,6 +545,7 @@ export class SettingsController {
     for (const [key, value] of [
       ['deepseekHarness.provider', snapshot.provider],
       ['deepseekHarness.baseUrl', snapshot.baseUrl],
+      ['deepseekHarness.decisions', snapshot.decisions],
       ['deepseekHarness.sandboxMode', snapshot.sandboxMode],
       ['deepseekHarness.mcpServers', snapshot.mcpServers],
     ] as const) {

@@ -1,3 +1,4 @@
+import type { SkillCatalog, SkillTurnSelection } from '../shared/skills.js'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -10,6 +11,8 @@ import type { RuntimeOptions } from '../runtime/types.js'
 const CAPTURE_TIMEOUT_MS = 60_000
 
 export interface RequestPreviewRuntime {
+  skillCatalog?(sessionId: string): Promise<SkillCatalog>
+  stageSkills?(sessionId: string, selection: SkillTurnSelection): Promise<void>
   start(options: RuntimeOptions): Promise<void>
   setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void>
   armRequestPreview(sessionId: string, captureId: string): Promise<void>
@@ -22,6 +25,7 @@ export interface RequestPreviewControllerOptions {
   resolveReasoningEffort: () => Promise<string | undefined>
   createRuntime?: (onControlEvent: (event: ControlEvent) => void) => RequestPreviewRuntime
   captureTimeoutMs?: number
+  prepareSkills?: (runtime: RequestPreviewRuntime, sessionId: string, prompt: string) => Promise<SkillTurnSelection | undefined>
 }
 
 interface ActivePreview {
@@ -115,6 +119,10 @@ export class RequestPreviewController {
         runtime.start({ ...runtimeOptions, sessionStorageRoot }),
         active.cancellation,
       ])
+      if (this.options.prepareSkills && runtime.stageSkills) {
+        const selection = await Promise.race([this.options.prepareSkills(runtime, sessionId, prompt), active.cancellation])
+        if (selection) await Promise.race([runtime.stageSkills(sessionId, selection), active.cancellation])
+      }
       await Promise.race([runtime.setReasoningEffort(sessionId, reasoningEffort ?? null), active.cancellation])
       await Promise.race([runtime.armRequestPreview(sessionId, captureId), active.cancellation])
 

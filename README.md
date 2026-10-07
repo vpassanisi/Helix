@@ -16,7 +16,7 @@ The goal is to provide a Codex style workflow with first class support for local
 5. Press `F5` to launch the Extension Development Host.
 6. Open the Helix activity bar view.
 
-To build an installable VSIX, run `npm run package`. The package command stages the production dependency tree, including the bundled DSH runtime, before creating the VSIX. Install the generated `local.helix-vscode-0.0.1.vsix` file in VS Code.
+To build an installable VSIX, run `npm run package`. The package command stages the production dependency tree, including the bundled DSH runtime, before creating the VSIX. Install the generated `local.helix-vscode-0.0.39.vsix` file in VS Code.
 
 ## Fast UI iteration
 
@@ -26,7 +26,7 @@ The extension uses `@deepseek-ai/dsh-sdk-client` to launch the matching bundled 
 
 ## Runtime settings
 
-Open the sidebar and select the gear button. The settings page configures only the provider route, API base URL, and API key. Models and context windows are discovered from the provider's models endpoint. API keys are stored in VS Code SecretStorage and are passed to the Harness subprocess as `DEEPSEEK_API_KEY`; they are not written to `settings.json`. The API URL is passed as `DEEPSEEK_BASE_URL`.
+Open the sidebar and select the gear button, then **Connection Settings**. Configure the provider route, API base URL, API key, and optional skill selection connection. Models and context windows are discovered from the provider's models endpoint. API keys are stored in VS Code SecretStorage and are passed to the Harness subprocess as `DEEPSEEK_API_KEY`; they are not written to `settings.json`. The API URL is passed as `DEEPSEEK_BASE_URL`.
 
 Custom OpenAI-compatible models may report a generic context fallback. The picker uses the selected model's reported context length when available; for an Unsloth `unsloth/gpt-oss-20b-GGUF` setup, that is `131072`. The extension passes this value to DSH as a startup patch for both the DeepSeek and OpenAI-compatible model adapters, so DSH's automatic compaction threshold is based on that limit.
 
@@ -35,6 +35,22 @@ The full `sdk` profile includes automatic compaction. When DSH reaches its confi
 The chat model picker discovers models from an OpenAI-compatible `GET /models` endpoint. If the configured base URL does not end in `/v1`, the extension also tries `/v1/models`. It sends the saved API key as a Bearer token, reads `data[].id`, and uses `native_context_length`, `max_context_length`, or `context_length` when present. Selecting a discovered model saves its model ID and context length, then restarts DSH with the selected values.
 
 Saving connection settings automatically starts or restarts the runtime with the new values. The default provider is `deepseek-official`, the default model is `deepseek-v4-flash`, and the default API URL is `https://api.deepseek.com`.
+
+## Skill selection
+
+The skills picker is experimental and hidden by default. Set `"deepseekHarness.experimentalSkillPicker": true` in VS Code settings to restore the drawer and decisions connection controls. With the flag off, Helix skips skill routing and preloading, preserves saved decisions settings and credentials, and lets the agent discover and load skills normally. Flag changes take effect without reloading the extension.
+
+The **Skills** drawer above the composer lists skills from DSH's workspace and agent registry. Expand it to search, include skills, or exclude them for the next message. Manual choices survive draft edits and failed submissions. **Reset choices** restores automatic selection. A successful submission or new chat clears those choices.
+
+Automatic selection is off by default. In **Connection Settings**, enable it and enter a decisions model ID. Select **TypeSafe / Jev** for `POST /v1/systemone` or **OpenAI Decisions** for `POST /v1/decisions`. The server and model must support the selected API. The main connection's URL and key are reused by default. Turn off **Use main connection for decisions** to configure an independent URL and key. A separate connection never inherits the main key. Keys are stored independently in SecretStorage; clearing a key takes effect when you save.
+
+For Unsloth Desktop's Decision API, select **TypeSafe / Jev** and use `default` as the decisions model ID to use the decision model configured in Unsloth. `any` is not a supported alias. If suggestions are unavailable, expand the drawer to see the API error or timeout reason.
+
+Base URLs may include a trailing `/v1`; proxy path prefixes are preserved. The settings show the resolved endpoint. Suggestions refresh after a 500 ms typing pause, using the current draft, up to six recent user/assistant messages (6,000 characters total), and workspace/language metadata. Selected code, browser attachment bodies, and tool output are excluded from routing requests. The default selection threshold is 0.75; adjust `deepseekHarness.skillSelectionThreshold` in VS Code settings if needed.
+
+Background analysis has a 30-second deadline; Send waits at most two seconds for current suggestions. Completed answers remain usable when other answers fail or time out. Manual choices always take precedence, and untouched skills remain available for agent discovery. Excluded skills cannot be loaded during that turn. Selected instructions are provided before the first model request; duplicate tool loads return “already provided.” Active skills are reassessed each turn and restored after compaction. The request preview includes the skill context used for its prompt.
+
+To debug **No suggestions**, expand the drawer and compare each **Match** percentage with the displayed automatic selection cutoff. Skills marked **Manual only** are ineligible for automatic selection; **Excluded** choices override suggestions. Open **View → Output → Helix Skill Selection** for endpoint/model details, candidate descriptions and invocation flags, returned probabilities, timing, errors, and submitted overrides. Logs omit API keys and draft/conversation text. **Suggestions unavailable** indicates an API, discovery, invalid-answer, or timeout failure.
 
 ## MCP servers
 

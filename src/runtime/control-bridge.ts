@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { UserQuestionAnswer } from '../shared/user-question.js'
+import type { SkillCatalog, SkillTurnSelection } from '../shared/skills.js'
 import {
   CONTROL_PROTOCOL_VERSION,
   CONTROL_CAPABILITIES,
@@ -30,6 +31,9 @@ export interface ControlBridgeOptions {
 }
 
 export interface ControlBroker {
+  skillCatalog?(sessionId: string): Promise<SkillCatalog>
+  stageSkills?(sessionId: string, selection: SkillTurnSelection): Promise<void>
+  clearSkills?(sessionId: string): Promise<void>
   readonly endpoint: string | undefined
   readonly token: string | undefined
   readonly connected: boolean
@@ -268,6 +272,14 @@ export class LocalControlBridge implements ControlBroker {
   async setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void> {
     await this.request('session.setReasoningEffort', sessionId, { reasoningEffort })
   }
+
+  async skillCatalog(sessionId: string): Promise<SkillCatalog> {
+    return await this.request('skills.catalog', sessionId) as SkillCatalog
+  }
+  async stageSkills(sessionId: string, selection: SkillTurnSelection): Promise<void> {
+    await this.request('skills.stage', sessionId, { ...selection })
+  }
+  async clearSkills(sessionId: string): Promise<void> { await this.request('skills.clear', sessionId) }
 
   async armRequestPreview(sessionId: string, captureId: string): Promise<void> {
     await this.request('request.preview.arm', sessionId, { captureId })

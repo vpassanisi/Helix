@@ -1,3 +1,4 @@
+import type { SkillTurnSelection } from '../shared/skills.js'
 import { randomUUID } from 'node:crypto'
 import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
 import { ControlBridgeError, type ControlEvent } from '../runtime/control-bridge.js'
@@ -111,6 +112,7 @@ export class SessionController {
     ++this.promptGeneration
 
     try {
+      await this.options.runtime.clearSkills?.(previousSessionId).catch(() => undefined)
       await this.options.runtime.cancelTurn(previousSessionId)
     } catch (error) {
       if (!isInactiveRuntimeError(error)) this.options.onError(error)
@@ -128,7 +130,7 @@ export class SessionController {
     this.options.onStateChanged(true)
   }
 
-  async submit(prompt: string, includeSelection: boolean, reasoningEffortSelection: string | null = null, browserContext: readonly BrowserElementContext[] = [], maxBrowserCharacters = 32_000): Promise<boolean> {
+  async submit(prompt: string, includeSelection: boolean, reasoningEffortSelection: string | null = null, browserContext: readonly BrowserElementContext[] = [], maxBrowserCharacters = 32_000, skills?: SkillTurnSelection): Promise<boolean> {
     if (this.pendingQuestions.size > 0) return false
     const generation = ++this.promptGeneration
     const sessionId = this.activeSessionId
@@ -147,6 +149,11 @@ export class SessionController {
         await this.options.runtime.start(await this.options.getRuntimeOptions())
       }
       if (!this.isCurrent(generation, sessionId)) return false
+      if (skills) await this.options.runtime.stageSkills(sessionId, skills)
+      if (!this.isCurrent(generation, sessionId)) {
+        if (skills) await this.options.runtime.clearSkills(sessionId).catch(() => undefined)
+        return false
+      }
       await this.options.runtime.setReasoningEffort(sessionId, reasoningEffort ?? null)
       if (!this.isCurrent(generation, sessionId)) return false
       await this.options.runtime.prompt(sessionId, contentBlocks)
@@ -156,6 +163,7 @@ export class SessionController {
       this.options.sidebar.post({ type: 'accepted', sessionId, modelId, reasoningEffort })
       return true
     } catch (error) {
+      if (skills) await this.options.runtime.clearSkills(sessionId).catch(() => undefined)
       this.options.changeTracker.finish(sessionId)
       if (this.isCurrent(generation, sessionId)) this.options.onError(error)
       return false
@@ -166,6 +174,7 @@ export class SessionController {
     ++this.promptGeneration
     this.options.changeTracker.finish(this.activeSessionId)
     try {
+      await this.options.runtime.clearSkills?.(this.activeSessionId).catch(() => undefined)
       await this.options.runtime.cancelTurn(this.activeSessionId)
     } catch (error) {
       this.options.onError(error)
@@ -264,6 +273,7 @@ export class SessionController {
     if (this.pendingQuestions.size) await this.cancelTurn()
     ++this.promptGeneration
     await this.rejectPendingApprovals()
+    await this.options.runtime.clearSkills?.(this.activeSessionId).catch(() => undefined)
     this.options.changeTracker.finish(this.activeSessionId)
     this.disposeRoute()
     this.sessionHierarchy.clear()

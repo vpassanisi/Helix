@@ -1,3 +1,4 @@
+import { isDecisionSettings, isSkillDraft, isSkillOverrides, type DecisionSettings, type SkillCatalog, type SkillDraft, type SkillOverrides, type SkillSuggestions } from '../shared/skills.js'
 import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import type { BinaryThinkingMode, ChatTemplateValue, ReasoningFormat } from '../runtime/model-catalog.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
@@ -26,6 +27,8 @@ export interface SidebarSettings {
   baseUrl: string
   dshHome: string
   apiKeyConfigured: boolean
+  skillPickerEnabled?: boolean
+  decisions?: DecisionSettings & { apiKeyConfigured: boolean }
   sandboxMode: SandboxMode
   mcpServers: SidebarMcpServerSetting[]
 }
@@ -82,6 +85,8 @@ export interface CodeChange {
 }
 
 export type SidebarMessage =
+  | { type: 'loadSkills'; sessionId: string }
+  | { type: 'analyzeSkills'; draft: SkillDraft }
   | { type: 'ready' }
   | { type: 'openSettings' }
   | {
@@ -90,10 +95,13 @@ export type SidebarMessage =
       baseUrl: string
       apiKey?: string
       clearApiKey: boolean
+      decisions?: DecisionSettings
+      decisionsApiKey?: string
+      clearDecisionsApiKey?: boolean
       sandboxMode: SandboxMode
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
-  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[] }
+  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[]; skillDraft?: SkillDraft; skillOverrides?: SkillOverrides }
   | { type: 'toggleBrowserPicker' }
   | { type: 'removeBrowserAttachment'; sessionId: string; id: string }
   | { type: 'newSession' }
@@ -113,6 +121,10 @@ export interface WebviewApi {
 }
 
 export type IncomingMessage =
+  | { type: 'skillsInvalidated' }
+  | { type: 'skillCatalog'; sessionId: string; catalog: SkillCatalog; error?: string }
+  | { type: 'skillSuggestions'; suggestions: SkillSuggestions }
+  | { type: 'submitFailed'; sessionId: string; message: string }
   | { type: 'questionRequest'; request: PendingUserQuestion }
   | { type: 'questionResolved'; sessionId: string; requestId: string; status: 'answered' | 'cancelled' | 'unavailable'; answer?: UserQuestionAnswer }
   | { type: 'questionAnswerFailed'; sessionId: string; requestId: string; message: string }

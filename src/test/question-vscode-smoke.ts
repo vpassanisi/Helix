@@ -11,7 +11,7 @@ import { SessionController } from '../host/session-controller.js'
 import { SidebarProvider, type SidebarState, type SidebarOutgoingMessage } from '../sidebar/sidebar-provider.js'
 import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
 
-class Inspector {
+export class Inspector {
   private nextId = 1
   private pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>()
   readonly contexts: Array<{ id: number; sessionId: string }> = []
@@ -41,7 +41,7 @@ class Inspector {
   close(): void { this.socket.close() }
 }
 
-async function until(predicate: () => Promise<boolean> | boolean): Promise<void> {
+export async function until(predicate: () => Promise<boolean> | boolean): Promise<void> {
   const deadline = Date.now() + 20_000
   while (!await predicate()) {
     if (Date.now() > deadline) throw new Error('Question smoke test timed out')

@@ -19,6 +19,7 @@ import { builtInWebPatchLines, mcpEnvironmentVariable, mcpPatchLines } from './m
 import { SerialTaskQueue } from './serial-task-queue.js'
 import type { UserQuestionAnswer } from '../shared/user-question.js'
 import { stringValue } from '../shared/value-utils.js'
+import type { SkillCatalog, SkillTurnSelection } from '../shared/skills.js'
 import { piAiRuntimeModelProfiles, type ChatTemplateValue } from './model-catalog.js'
 import type {
   DisposableLike,
@@ -168,6 +169,18 @@ export class HarnessRuntime {
       throw error
     }
   }
+
+  async skillCatalog(sessionId: string): Promise<SkillCatalog> {
+    const bridge = this.handle?.controlBridge
+    if (!bridge?.skillCatalog) throw new Error('Skill discovery is unavailable in this runtime.')
+    return bridge.skillCatalog(sessionId)
+  }
+  async stageSkills(sessionId: string, selection: SkillTurnSelection): Promise<void> {
+    const bridge = this.handle?.controlBridge
+    if (!bridge?.stageSkills) throw new Error('Skill preloading is unavailable in this runtime.')
+    await bridge.stageSkills(sessionId, selection)
+  }
+  async clearSkills(sessionId: string): Promise<void> { await this.handle?.controlBridge.clearSkills?.(sessionId) }
 
   async cancelTurn(sessionId: string): Promise<void> {
     try {
@@ -489,6 +502,8 @@ export class HarnessRuntime {
       '- insert:',
       '    - id: helix-control-bridge',
       `      name: ${yamlString(new URL('./dsh-control-plugin.js', import.meta.url).href)}`,
+      '      config:',
+      `        cwd: ${yamlString(options.cwd)}`,
       '    - id: helix-question-tool',
       `      name: ${yamlString(new URL('./dsh-question-tool-plugin.js', import.meta.url).href)}`,
     )

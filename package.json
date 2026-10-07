@@ -2,7 +2,7 @@
   "name": "helix-vscode",
   "displayName": "Helix",
   "description": "A VS Code sidebar Webview UI for Helix.",
-  "version": "0.0.35",
+  "version": "0.0.41",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -157,6 +157,52 @@
           "minimum": 1000,
           "maximum": 1000000,
           "description": "Maximum HTML and CSS characters sent across browser element attachments per prompt."
+        },
+        "deepseekHarness.experimentalSkillPicker": {
+          "type": "boolean",
+          "default": false,
+          "tags": ["experimental"],
+          "description": "Enable the experimental Skills drawer and decisions connection controls. When off, skill routing and preloading are disabled; the agent can still discover and load skills normally."
+        },
+        "deepseekHarness.decisions": {
+          "type": "object",
+          "default": {
+            "enabled": false,
+            "useMainConnection": true,
+            "format": "typesafe",
+            "baseUrl": "",
+            "model": ""
+          },
+          "description": "Automatic skill-selection decisions connection. Configure it in the sidebar connection settings.",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "useMainConnection": {
+              "type": "boolean"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "typesafe",
+                "openai"
+              ]
+            },
+            "baseUrl": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          }
+        },
+        "deepseekHarness.skillSelectionThreshold": {
+          "type": "number",
+          "default": 0.75,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum yes probability for automatic skill selection. Tune for your decisions model."
         }
       }
     }
@@ -168,7 +214,7 @@
     "check:webview": "svelte-check --tsconfig ./tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.ts",
     "watch": "tsc -p . --watch",
-    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/browser-context.test.js out/test/user-question.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/harness-runtime.test.js out/test/session-controller.test.js out/test/session-hierarchy.test.js out/test/serial-task-queue.test.js out/test/streamed-step-tracker.test.js out/test/live-tool-call-tracker.test.js out/test/request-preview-view.test.js out/test/reasoning-effort-request.test.js",
+    "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/browser-context.test.js out/test/user-question.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/harness-runtime.test.js out/test/session-controller.test.js out/test/session-hierarchy.test.js out/test/serial-task-queue.test.js out/test/streamed-step-tracker.test.js out/test/live-tool-call-tracker.test.js out/test/request-preview-view.test.js out/test/reasoning-effort-request.test.js out/test/decision-client.test.js out/test/skill-controller.test.js out/test/dsh-skill-bridge.test.js out/test/decision-settings.test.js out/test/skills-runtime.test.js",
     "package": "npm run compile && node scripts/package-extension.mjs"
   },
   "dependencies": {
@@ -180,7 +226,8 @@
     "basecoat-css": "^1.0.2",
     "dompurify": "^3.4.15",
     "marked": "^18.0.12",
-    "svelte": "^5.57.0"
+    "svelte": "^5.57.0",
+    "@deepseek-ai/dsh-skill": "0.1.5-rc.1"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",

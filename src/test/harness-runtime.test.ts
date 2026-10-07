@@ -290,6 +290,27 @@ test('previews the selected route and fresh-chat default effort, then removes te
   await assert.rejects(access(sessionRoot!), { code: 'ENOENT' })
 })
 
+test('request preview skips skill staging when feature-gated preparation returns no selection', async () => {
+  let staged = false
+  let captureId = ''
+  const controller = new RequestPreviewController({
+    getRuntimeOptions: async () => runtimeOptions(), resolveReasoningEffort: async () => undefined,
+    prepareSkills: async () => undefined,
+    createRuntime: (onControlEvent) => ({
+      start: async () => undefined, setReasoningEffort: async () => undefined,
+      stageSkills: async () => { staged = true },
+      armRequestPreview: async (_sessionId, id) => { captureId = id },
+      prompt: async (sessionId) => {
+        onControlEvent({ eventId: 'capture-event', sessionId, method: 'request.previewCaptured',
+          params: { captureId, request: { provider: 'route', model: 'model', messages: [] } } })
+        return 'turn'
+      }, dispose: async () => undefined,
+    }),
+  })
+  await controller.run('normal preview')
+  assert.equal(staged, false)
+})
+
 test('request preview reports startup failures and removes its temporary sessions root', async () => {
   let sessionRoot: string | undefined
   let disposed = false

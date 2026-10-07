@@ -3,6 +3,9 @@ import { isRecord } from '../shared/value-utils.js'
 export const CONTROL_PROTOCOL_VERSION = 1
 
 export type ControlRequestMethod =
+  | 'skills.catalog'
+  | 'skills.stage'
+  | 'skills.clear'
   | 'turn.cancel'
   | 'session.steer'
   | 'session.inject'
@@ -16,6 +19,9 @@ export type ControlRequestMethod =
   | 'question.answer'
 
 export const CONTROL_CAPABILITIES = [
+  'skills.catalog',
+  'skills.stage',
+  'skills.clear',
   'turn.cancel',
   'session.steer',
   'session.inject',
@@ -77,7 +83,7 @@ export interface ControlEventEnvelope {
   type: 'event'
   eventId: string
   sessionId: string
-  method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured'
+  method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed'
   params: Record<string, unknown>
 }
 

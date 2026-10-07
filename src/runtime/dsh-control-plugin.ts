@@ -16,6 +16,7 @@ import {
 import { isRecord, stringValue } from '../shared/value-utils.js'
 import { USER_QUESTION_INSTRUCTIONS } from '../shared/user-question.js'
 import { DshQuestionBridge } from './dsh-question-bridge.js'
+import { DshSkillBridge } from './dsh-skill-bridge.js'
 
 interface PendingApproval {
   sessionId: string
@@ -45,7 +46,7 @@ class PluginControlError extends Error {
  * exposed on the Cordis context so the compiled plugin can travel with the
  * extension without shipping a second DSH dependency tree.
  */
-export default function helixControlPlugin(ctx: any): void {
+export default function helixControlPlugin(ctx: any, config: { cwd?: string } = {}): void {
   const endpoint = process.env.HELIX_CONTROL_ENDPOINT
   const token = process.env.HELIX_CONTROL_TOKEN
   if (!endpoint || !token) return
@@ -60,6 +61,7 @@ export default function helixControlPlugin(ctx: any): void {
   const reasoningEfforts = new Map<string, string | null>()
   const requestPreviews = new Map<string, string>()
   const requestPreviewBreakdowns = new Map<string, PreviewPromptBreakdown>()
+  const skills = new DshSkillBridge(ctx, config.cwd ?? process.cwd())
   let providerRequestCaptureSessionId: string | undefined
 
   const originalFetch = globalThis.fetch
@@ -110,7 +112,7 @@ export default function helixControlPlugin(ctx: any): void {
 
   const sendEvent = (
     sessionId: string,
-    method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured',
+    method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed',
     params: Record<string, unknown>,
   ): boolean => send({
     version: CONTROL_PROTOCOL_VERSION,
@@ -253,6 +255,9 @@ export default function helixControlPlugin(ctx: any): void {
 
   const handleRequest = async (request: ControlRequestEnvelope): Promise<void> => {
     try {
+      if (request.method === 'skills.catalog') { sendResponse(request, await skills.catalog(request.sessionId)); return }
+      if (request.method === 'skills.stage') { await skills.stage(request.sessionId, request.params); sendResponse(request, { accepted: true }); return }
+      if (request.method === 'skills.clear') { skills.clear(request.sessionId); sendResponse(request, { accepted: true }); return }
       if (request.method === 'capabilities.get') return handleCapabilities(request)
       if (request.method === 'approval.resolve') return handleApprovalResolution(request)
       if (request.method === 'question.answer') {
@@ -407,7 +412,7 @@ export default function helixControlPlugin(ctx: any): void {
     next: () => Promise<any>,
   ): Promise<any> => {
     const sessionId = stringValue(context?.agent?.id)
-    const assembled = await next()
+    const assembled = await skills.assemble(assembly, context, next)
     if (Array.isArray(assembled.sections) && !assembled.sections.some((section: any) => section.name === 'helix:user-questions')) {
       assembled.sections.push({ name: 'helix:user-questions', text: USER_QUESTION_INSTRUCTIONS })
     }
@@ -430,6 +435,10 @@ export default function helixControlPlugin(ctx: any): void {
   }
 
   try {
+    ctx.on?.('agent/created', skills.created, { global: true })
+    ctx.on?.('agent/disposed', skills.disposed, { global: true })
+    ctx.on?.('agent/pre-step', skills.preStep, { global: true, prepend: true })
+    ctx.on?.('skills/change', () => sendEvent('', 'skills.changed', {}))
     ctx.on?.('tools/execute', questions.execute, { global: true })
     ctx.on?.('user-questions/request', questions.request, { global: true })
     ctx.on?.('approval/request', onApprovalRequest, { global: true })
@@ -446,6 +455,7 @@ export default function helixControlPlugin(ctx: any): void {
       socket?.destroy()
       socket = undefined
       questions.dispose()
+      skills.dispose()
       for (const [approvalId, pending] of approvals) {
         finishApproval(approvalId, pending, 'cancelled')
       }

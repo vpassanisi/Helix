@@ -1,3 +1,4 @@
+import { isDecisionSettings, isSkillDraft, isSkillOverrides, type DecisionSettings, type SkillCatalog, type SkillDraft, type SkillOverrides, type SkillSuggestions } from '../shared/skills.js'
 import { readFileSync } from 'node:fs'
 import * as vscode from 'vscode'
 import type { CodeChange } from '../runtime/change-tracker.js'
@@ -10,6 +11,8 @@ import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
 
 export type SidebarMessage =
+  | { type: 'loadSkills'; sessionId: string }
+  | { type: 'analyzeSkills'; draft: SkillDraft }
   | { type: 'ready' }
   | { type: 'openSettings' }
   | {
@@ -18,10 +21,13 @@ export type SidebarMessage =
       baseUrl: string
       apiKey?: string
       clearApiKey: boolean
+      decisions?: DecisionSettings
+      decisionsApiKey?: string
+      clearDecisionsApiKey?: boolean
       sandboxMode: SandboxMode
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
-  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[] }
+  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[]; skillDraft?: SkillDraft; skillOverrides?: SkillOverrides }
   | { type: 'toggleBrowserPicker' }
   | { type: 'removeBrowserAttachment'; sessionId: string; id: string }
   | { type: 'newSession' }
@@ -54,6 +60,8 @@ export interface SidebarSettings {
   baseUrl: string
   dshHome: string
   apiKeyConfigured: boolean
+  skillPickerEnabled?: boolean
+  decisions?: DecisionSettings & { apiKeyConfigured: boolean }
   sandboxMode: SandboxMode
   mcpServers: SidebarMcpServerSetting[]
 }
@@ -84,6 +92,10 @@ export type SidebarDiscoveredModel = DiscoveredModel
 export type SidebarCodeChange = CodeChange
 
 export type SidebarOutgoingMessage =
+  | { type: 'skillsInvalidated' }
+  | { type: 'skillCatalog'; sessionId: string; catalog: SkillCatalog; error?: string }
+  | { type: 'skillSuggestions'; suggestions: SkillSuggestions }
+  | { type: 'submitFailed'; sessionId: string; message: string }
   | { type: 'questionRequest'; request: PendingUserQuestion }
   | { type: 'questionResolved'; sessionId: string; requestId: string; status: 'answered' | 'cancelled' | 'unavailable'; answer?: UserQuestionAnswer }
   | { type: 'questionAnswerFailed'; sessionId: string; requestId: string; message: string }
@@ -208,12 +220,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 function isSidebarMessage(value: unknown): value is SidebarMessage {
   if (!isRecord(value) || !('type' in value)) return false
   const type = value.type
+  if (type === 'loadSkills') return typeof value.sessionId === 'string'
+  if (type === 'analyzeSkills') return isSkillDraft(value.draft)
   if (type === 'saveSettings') {
     return 'provider' in value && typeof value.provider === 'string' &&
       'baseUrl' in value && typeof value.baseUrl === 'string' &&
       'clearApiKey' in value && typeof value.clearApiKey === 'boolean' &&
       'sandboxMode' in value && isSandboxMode(value.sandboxMode) &&
-      (!('apiKey' in value) || typeof value.apiKey === 'string')
+      (!('apiKey' in value) || typeof value.apiKey === 'string') &&
+      (value.decisions === undefined || isDecisionSettings(value.decisions)) &&
+      (value.decisionsApiKey === undefined || typeof value.decisionsApiKey === 'string') &&
+      (value.clearDecisionsApiKey === undefined || typeof value.clearDecisionsApiKey === 'boolean')
   }
   if (type === 'saveMcpServers') {
     return 'mcpServers' in value && Array.isArray(value.mcpServers) && value.mcpServers.every(isSidebarMcpServer)
@@ -221,6 +238,8 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
   if (type === 'submit') {
     return 'prompt' in value && typeof value.prompt === 'string' &&
       'includeSelection' in value && typeof value.includeSelection === 'boolean' &&
+      (value.skillDraft === undefined || (isSkillDraft(value.skillDraft) && value.skillDraft.prompt === value.prompt && value.skillDraft.sessionId === value.sessionId)) &&
+      (value.skillOverrides === undefined || isSkillOverrides(value.skillOverrides)) &&
       (!('reasoningEffort' in value) || value.reasoningEffort === null || typeof value.reasoningEffort === 'string')
       && (!('sessionId' in value) || typeof value.sessionId === 'string')
       && (!('browserAttachmentIds' in value) || (Array.isArray(value.browserAttachmentIds) && value.browserAttachmentIds.every((id) => typeof id === 'string') && typeof value.sessionId === 'string'))

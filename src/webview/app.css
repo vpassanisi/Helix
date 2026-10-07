@@ -83,7 +83,35 @@ h1, h2, p { margin: 0; }
 .markdown hr { margin: 16px 0; border: 0; border-top: 1px solid var(--border); }
 .markdown img { max-width: 100%; }
 .message.reasoning { padding: 0 10px; color: var(--muted-foreground); font-size: 11px; }
-.thinking { border-left: 1px solid var(--thinking-border); padding-left: 10px; }
+.thinking { position: relative; border-left: 1px solid var(--thinking-border); padding-left: 10px; }
+.thinking.active { border-left-color: color-mix(in srgb, var(--brand-gold) 60%, var(--border)); }
+.thinking.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, transparent 15%, var(--brand-gold) 45%, #f5dfbd 50%, var(--brand-gold) 55%, transparent 85%);
+  background-size: 100% 250%;
+  box-shadow: 0 0 6px color-mix(in srgb, var(--brand-gold) 25%, transparent);
+  pointer-events: none;
+  animation: thinking-edge 2.8s ease-in-out infinite alternate;
+}
+.thinking.active .thinking-label {
+  color: transparent;
+  background: linear-gradient(110deg, var(--brand-gold) 30%, #f5dfbd 48%, var(--brand-gold) 66%);
+  background-size: 250% 100%;
+  background-clip: text;
+  animation: thinking-shimmer 2.8s ease-in-out infinite alternate;
+}
+@keyframes thinking-edge { from { background-position: 0 100%; } to { background-position: 0 0%; } }
+@keyframes thinking-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .thinking.active::before { animation: none; background-position: 0 50%; }
+  .thinking.active .thinking-label { animation: none; background: none; color: var(--brand-gold); }
+}
 .thinking summary { display: flex; align-items: center; gap: 4px; cursor: pointer; color: #b6b6b6; list-style: none; user-select: none; }
 .thinking summary::-webkit-details-marker { display: none; }
 .thinking-chevron { flex: 0 0 auto; opacity: 0; transition: opacity .18s ease, transform .15s ease; }

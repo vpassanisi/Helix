@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import {
     ArrowLeft,
     ArrowRight,
@@ -33,6 +33,9 @@
     type ChatTemplateValue,
     type ReasoningFormat,
   } from '../runtime/model-catalog.js'
+  import SkillsDrawer from './components/SkillsDrawer.svelte'
+  import DecisionSettingsPanel from './components/DecisionSettings.svelte'
+  import { DEFAULT_DECISION_SETTINGS, recentChatContext, type DecisionSettings, type SkillCatalog, type SkillDraft, type SkillOverrides, type SkillSuggestions } from '../shared/skills.js'
   import Masthead from './components/Masthead.svelte'
   import BrowserAttachments from './components/BrowserAttachments.svelte'
   import UserQuestionCard from './components/UserQuestionCard.svelte'
@@ -130,10 +133,47 @@
   let selectionAttached = $state(true)
   let messages = $state<ChatMessage[]>([])
   let prompt = $state('')
+  let decisions = $state<DecisionSettings>({ ...DEFAULT_DECISION_SETTINGS })
+  let decisionsApiKey = $state('')
+  let clearDecisionsApiKey = $state(false)
+  let skillCatalog = $state<SkillCatalog>({ skills: [], revision: '', complete: false })
+  let skillError = $state('')
+  let skillSuggestions = $state<SkillSuggestions>()
+  let skillOverrides = $state<SkillOverrides>({ include: [], exclude: [] })
+  let draftRevision = $state(0)
+  let lastAnalyzed = ''
+  let routingEpoch = $state(0)
+  let pendingSubmission = $state<{ text: string; userId: number }>()
+  let settings = $state<SidebarSettings | undefined>()
+  const skillPickerEnabled = $derived(settings?.skillPickerEnabled === true)
+
+  $effect(() => {
+    if (!skillPickerEnabled) return
+    const sessionId = activeSessionId
+    if (sessionId) post({ type: 'loadSkills', sessionId })
+  })
+
+  function skillDraft(text = prompt.trim()): SkillDraft {
+    return { sessionId: activeSessionId, revision: draftRevision, prompt: text,
+      recentChat: recentChatContext(messages.filter((entry) => entry.role === 'user' || entry.role === 'assistant')
+        .map((entry) => ({ role: entry.role as 'user' | 'assistant', text: entry.text }))) }
+  }
+  $effect(() => {
+    if (!skillPickerEnabled || !activeSessionId || isGenerating || pendingSubmission) return
+    const draft = untrack(() => skillDraft())
+    draft.prompt = prompt.trim()
+    const key = JSON.stringify([draft.sessionId, draft.prompt, draft.recentChat, skillCatalog.revision, settings?.decisions, selection?.languageId, routingEpoch])
+    if (key === lastAnalyzed) return
+    lastAnalyzed = key
+    draft.revision = untrack(() => ++draftRevision)
+    skillSuggestions = { sessionId: draft.sessionId, revision: draft.revision, selected: [], probabilities: {}, status: draft.prompt ? 'checking' : 'disabled' }
+    post({ type: 'analyzeSkills', draft })
+  })
   let isGenerating = $state(false)
+  let activeThinkingId = $state<number>()
+  let activeThinkingSessionId: string | undefined
   let waitingForFirstResponse = $state(false)
   let settingsPage = $state<SettingsPage | undefined>()
-  let settings = $state<SidebarSettings | undefined>()
   let provider = $state('')
   let model = $state('')
   let reasoningEffort = $state<string | null>(null)
@@ -201,17 +241,53 @@
   }
 
   function handleMessage(message: IncomingMessage): void {
+    if (message.type === 'skillsInvalidated') { routingEpoch++; skillSuggestions = undefined; return }
+    if (message.type === 'skillCatalog') {
+      if (!skillPickerEnabled || message.sessionId !== activeSessionId) return
+      skillCatalog = message.catalog
+      skillError = message.error ?? ''
+      return
+    }
+    if (message.type === 'skillSuggestions') {
+      if (skillPickerEnabled && message.suggestions.sessionId === activeSessionId && message.suggestions.revision === draftRevision) skillSuggestions = message.suggestions
+      return
+    }
+    if (message.type === 'submitFailed') {
+      if (message.sessionId !== activeSessionId) return
+      if (pendingSubmission) {
+        prompt = pendingSubmission.text
+        messages = messages.filter((entry) => entry.id !== pendingSubmission?.userId)
+      }
+      pendingSubmission = undefined
+      isGenerating = false
+      waitingForFirstResponse = false
+      lastAnalyzed = ''
+      appendMessage('activity', 'Submission', message.message)
+      return
+    }
     if (message.type === 'state') {
       const sessionChanged = activeSessionId !== message.state.activeSessionId
+      const previousRuntimeState = runtimeState
       activeSessionId = message.state.activeSessionId
       runtimeState = message.state.runtimeState
       if (sessionChanged || message.resetTranscript) {
+        finishThinking()
+        skillOverrides = { include: [], exclude: [] }
+        skillSuggestions = undefined
+        skillCatalog = { skills: [], revision: '', complete: false }
+        pendingSubmission = undefined
+        lastAnalyzed = ''
         reasoningEffort = message.state.reasoningEffort ?? preferredEffortForModel(model)
         effortStateNeedsCatalog = message.state.reasoningEffort === undefined && !models.some((entry) => entry.id === model)
       }
       if (runtimeState === 'stopped' || runtimeState === 'error') {
+        finishThinking()
+        skillSuggestions = undefined
         isGenerating = false
         waitingForFirstResponse = false
+      }
+      if (runtimeState === 'starting' && previousRuntimeState === 'ready' && !pendingSubmission) {
+        skillOverrides = { include: [], exclude: [] }
       }
       selection = message.state.selection
       browserContext = message.state.browserContext
@@ -266,6 +342,8 @@
 
     if (message.type === 'settings' || message.type === 'settingsSaved') {
       applySettings(message.settings)
+      lastAnalyzed = ''
+      if (message.type === 'settingsSaved' && skillPickerEnabled) post({ type: 'loadSkills', sessionId: activeSessionId })
       if (message.type === 'settingsSaved') {
         settingsRestarting = message.restarting
         mcpSaving = false
@@ -382,6 +460,11 @@
     }
 
     if (message.type === 'accepted' && message.sessionId === activeSessionId) {
+      if (pendingSubmission && prompt.trim() === pendingSubmission.text) prompt = ''
+      pendingSubmission = undefined
+      skillOverrides = { include: [], exclude: [] }
+      skillSuggestions = undefined
+      lastAnalyzed = ''
       isGenerating = true
       if (message.reasoningEffort !== undefined && selectedEffortsForModel(message.modelId).includes(message.reasoningEffort)) {
         reasoningHistory = { ...reasoningHistory, [message.modelId]: message.reasoningEffort }
@@ -393,6 +476,12 @@
 
   function applySettings(next: SidebarSettings): void {
     settings = next
+    if (!next.skillPickerEnabled) {
+      skillOverrides = { include: [], exclude: [] }
+      skillSuggestions = undefined
+      skillCatalog = { skills: [], revision: '', complete: false }
+      skillError = ''
+    }
     provider = next.provider
     if (model !== next.model) {
       model = next.model
@@ -406,6 +495,9 @@
     sandboxMode = next.sandboxMode
     apiKey = ''
     clearApiKey = false
+    decisions = { ...DEFAULT_DECISION_SETTINGS, ...next.decisions }
+    decisionsApiKey = ''
+    clearDecisionsApiKey = false
     mcpServers = next.mcpServers.map(toMcpServerDraft)
   }
 
@@ -436,6 +528,7 @@
   }
 
   function resetTranscript(): void {
+    finishThinking()
     followTranscript = true
     streamedStepTracker.reset()
     liveToolCallTracker.clear()
@@ -468,7 +561,11 @@
 
   function submit(): void {
     if (isGenerating || waitingForAnswer) {
+      finishThinking()
       waitingForFirstResponse = false
+      skillOverrides = { include: [], exclude: [] }
+      skillSuggestions = undefined
+      lastAnalyzed = ''
       post({ type: 'cancelTurn' })
       return
     }
@@ -476,9 +573,12 @@
     const text = prompt.trim()
     if (!text) return
 
+    const routingDraft = skillDraft(text)
     const attachedSelection = selectionAttached ? selection : undefined
     const browserAttachments = browserContext?.attachments ?? []
+    const userId = nextMessageId
     appendMessage('user', 'You', text, attachedSelection, browserAttachments.map((attachment) => attachment.label))
+    pendingSubmission = { text, userId }
     isGenerating = true
     waitingForFirstResponse = true
     post({
@@ -488,8 +588,9 @@
       reasoningEffort,
       sessionId: activeSessionId,
       browserAttachmentIds: browserAttachments.map((attachment) => attachment.id),
+      ...(skillPickerEnabled ? { skillDraft: routingDraft,
+        skillOverrides: { include: [...skillOverrides.include], exclude: [...skillOverrides.exclude] } } : {}),
     })
-    prompt = ''
     selectionAttached = true
     void tick().then(() => promptElement?.focus())
   }
@@ -708,13 +809,21 @@
   }
 
   function appendMessage(role: ChatMessage['role'], label: string, text: string, context?: SelectionMetadata, browserLabels?: string[]): void {
+    finishThinking()
     if (role !== 'user') waitingForFirstResponse = false
     messages = [...messages, { id: nextMessageId++, role, label, text, context, browserLabels }]
     void scrollToBottom()
   }
 
-  function appendStreamText(role: StreamUpdate['role'], text: string): void {
+  function finishThinking(sessionId?: string): void {
+    if (sessionId !== undefined && sessionId !== activeThinkingSessionId) return
+    activeThinkingId = undefined
+    activeThinkingSessionId = undefined
+  }
+
+  function appendStreamText(role: StreamUpdate['role'], text: string, sessionId?: string): void {
     if (!text) return
+    if (role === 'assistant') finishThinking()
     waitingForFirstResponse = false
     const last = messages[messages.length - 1]
     if (last?.role === role) {
@@ -726,6 +835,10 @@
         label: role === 'reasoning' ? 'Thinking' : 'Helix',
         text,
       }]
+    }
+    if (role === 'reasoning' && sessionId !== undefined) {
+      activeThinkingId = messages[messages.length - 1].id
+      activeThinkingSessionId = sessionId
     }
     void scrollToBottom()
   }
@@ -966,15 +1079,21 @@
         })
       }
     }
-    if (frame.type === 'start') return
+    if (frame.type === 'start' || frame.type === 'end') {
+      finishThinking(message.agentSessionId)
+      return
+    }
     if (frame.type !== 'chunk' || !isRecord(frame.chunk)) return
     const chunk = frame.chunk
 
     if (chunk.type === 'text-delta' && typeof chunk.text === 'string') appendStreamText('assistant', chunk.text)
-    if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text)
+    if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text, message.agentSessionId)
+    if (chunk.type === 'tool-call-delta') finishThinking(message.agentSessionId)
+    if (chunk.type === 'finish' || (chunk.type === 'block-end' && isRecord(chunk.block) && chunk.block.type === 'reasoning')) finishThinking(message.agentSessionId)
   }
 
   function upsertToolCall(tool: ToolCallView): void {
+    finishThinking()
     waitingForFirstResponse = false
     const index = messages.findIndex((message) => message.tool?.callId === tool.callId)
     if (index === -1) {
@@ -1244,6 +1363,7 @@
         isGenerating = true
       } else {
         removePreparingToolCalls(liveToolCallTracker.clear())
+        finishThinking()
         isGenerating = false
         waitingForFirstResponse = false
         if (codeChanges.length > 0) {
@@ -1307,12 +1427,15 @@
       const chunk = isRecord(data.chunk) ? data.chunk : undefined
       streamedStepTracker.recordDurableChunk(sessionId, data)
       if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') appendStreamText('assistant', chunk.text)
-      if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text)
+      if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') appendStreamText('reasoning', chunk.text, sessionId ?? activeSessionId)
+      if (chunk?.type === 'tool-call-delta') finishThinking(sessionId)
+      if (chunk?.type === 'finish' || (chunk?.type === 'block-end' && isRecord(chunk.block) && chunk.block.type === 'reasoning')) finishThinking(sessionId)
       if (isRootSessionEvent && chunk?.type === 'usage') updateContextUsage(chunk.usage)
       return
     }
 
     if (event.type === 'assistant/message') {
+      finishThinking(sessionId)
       if (sessionId !== undefined) removePreparingToolCalls(liveToolCallTracker.reconcileMessage(sessionId, data))
       if (isRootSessionEvent) updateContextUsage(data.usage)
       if (!streamedStepTracker.hasStreamedStep(sessionId, data)) {
@@ -1323,6 +1446,7 @@
     }
 
     if (event.type === 'assistant/attempt') {
+      finishThinking(sessionId)
       if (sessionId !== undefined) removePreparingToolCalls(liveToolCallTracker.clearStep(sessionId, data))
       return
     }
@@ -1412,6 +1536,9 @@
       sandboxMode = settings.sandboxMode
       apiKey = ''
       clearApiKey = false
+      decisions = { ...DEFAULT_DECISION_SETTINGS, ...settings.decisions }
+      decisionsApiKey = ''
+      clearDecisionsApiKey = false
     } else if (page === 'models') {
       modelDrafts = models.map(toModelEditorDraft)
     } else if (page === 'mcp' && settings !== undefined) {
@@ -1448,6 +1575,7 @@
       baseUrl,
       apiKey,
       clearApiKey,
+      ...(skillPickerEnabled ? { decisions: { ...decisions }, decisionsApiKey, clearDecisionsApiKey } : {}),
       sandboxMode,
     })
   }
@@ -1607,6 +1735,8 @@
             {:else}No key saved yet.{/if}
           </small>
         </div>
+
+        {#if skillPickerEnabled}<DecisionSettingsPanel bind:decisions bind:apiKey={decisionsApiKey} bind:clearKey={clearDecisionsApiKey} mainUrl={baseUrl} {provider} keyConfigured={settings?.decisions?.apiKeyConfigured ?? false} />{/if}
 
         <div class="field" role="group">
           <label for="sandbox-picker-trigger">Sandbox permissions</label>
@@ -2066,8 +2196,8 @@
         {#each messages as message (message.id)}
           <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'}>
             {#if message.role === 'reasoning'}
-              <details class="thinking">
-                <summary><span>{message.label}</span><ChevronDown class="thinking-chevron" size={13} strokeWidth={1.8} /></summary>
+              <details class="thinking" class:active={isGenerating && !waitingForAnswer && activeThinkingId === message.id} aria-busy={isGenerating && !waitingForAnswer && activeThinkingId === message.id}>
+                <summary><span class="thinking-label">{message.label}</span><ChevronDown class="thinking-chevron" size={13} strokeWidth={1.8} /></summary>
                 <div class="message-body" use:followThinkingStream>{message.text}</div>
               </details>
             {:else if message.role === 'tool' && message.tool}
@@ -2180,6 +2310,7 @@
       </div>
 
       <div class="composer">
+        {#if skillPickerEnabled}<SkillsDrawer skills={skillCatalog.skills} suggestions={skillSuggestions} overrides={skillOverrides} disabled={Boolean(pendingSubmission)} error={skillError} onoverride={(value) => { skillOverrides = value }} />{/if}
         {#if browserContext?.attachments.length}
           <BrowserAttachments attachments={browserContext.attachments} disabled={isGenerating} onremove={(id) => post({ type: 'removeBrowserAttachment', sessionId: activeSessionId, id })} />
         {/if}
@@ -2217,7 +2348,7 @@
           </section>
         {/if}
         <div class="composer-box" class:working={isGenerating && !waitingForAnswer}>
-          <textarea bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
+          <textarea disabled={Boolean(pendingSubmission)} bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
           <div class="composer-footer">
             {#if browserContext?.hasOpenBrowser}
               <span class="browser-picker-control" data-side="top" data-align="start" data-tooltip={browserContext?.picking ? 'Stop selecting browser elements' : browserContext?.available ? 'Select browser elements' : 'Browser picker setup required. Use Helix: Select Browser Elements.'}>

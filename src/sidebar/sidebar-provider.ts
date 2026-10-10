@@ -9,6 +9,7 @@ import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import { isRecord } from '../shared/value-utils.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
+import type { ExtensionInfo } from '../shared/extension-info.js'
 
 export type SidebarMessage =
   | { type: 'loadSkills'; sessionId: string }
@@ -43,6 +44,7 @@ export type SidebarMessage =
   | { type: 'setSandboxMode'; sandboxMode: SandboxMode }
 
 export interface SidebarState {
+  extensionInfo?: ExtensionInfo
   activeSessionId: string
   runtimeState: RuntimeState
   reasoningEffort?: string

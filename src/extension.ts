@@ -324,7 +324,14 @@ class ExtensionApp {
   }
 
   private getSidebarState(): SidebarState {
+    const manifest = this.context.extension.packageJSON
     return {
+      extensionInfo: {
+        name: manifest.displayName ?? manifest.name,
+        version: manifest.version,
+        vscodeVersion: vscode.version,
+        license: manifest.license,
+      },
       activeSessionId: this.session.currentSessionId,
       runtimeState: this.runtimeState,
       reasoningEffort: this.session.currentReasoningEffort,

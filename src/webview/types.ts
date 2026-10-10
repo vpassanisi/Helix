@@ -3,11 +3,12 @@ import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import type { BinaryThinkingMode, ChatTemplateValue, ReasoningFormat } from '../runtime/model-catalog.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
+import type { ExtensionInfo } from '../shared/extension-info.js'
 export type { RequestPreviewResult } from '../runtime/control-protocol.js'
 
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
-export type SettingsPage = 'connection' | 'models' | 'mcp' | 'preview'
+export type SettingsPage = 'connection' | 'models' | 'mcp' | 'preview' | 'about'
 
 export interface SelectionMetadata {
   fileLabel: string
@@ -130,7 +131,7 @@ export type IncomingMessage =
   | { type: 'questionAnswerFailed'; sessionId: string; requestId: string; message: string }
   | { type: 'browserContext'; state: BrowserContextState }
   | { type: 'browserSubmitFailed'; sessionId: string; message: string }
-  | { type: 'state'; state: { activeSessionId: string; runtimeState: RuntimeState; reasoningEffort?: string; selection?: SelectionMetadata; browserContext?: BrowserContextState; pendingQuestions?: PendingUserQuestion[] }; resetTranscript?: boolean }
+  | { type: 'state'; state: { activeSessionId: string; runtimeState: RuntimeState; extensionInfo?: ExtensionInfo; reasoningEffort?: string; selection?: SelectionMetadata; browserContext?: BrowserContextState; pendingQuestions?: PendingUserQuestion[] }; resetTranscript?: boolean }
   | { type: 'settings'; settings: SidebarSettings }
   | { type: 'settingsSaved'; settings: SidebarSettings; restarting: boolean }
   | { type: 'selection'; selection?: SelectionMetadata }

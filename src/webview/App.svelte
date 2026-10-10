@@ -23,6 +23,10 @@
   import { LiveToolCallTracker } from '../shared/live-tool-call-tracker.js'
   import { StreamedStepTracker } from '../shared/streamed-step-tracker.js'
   import { createRequestPreviewView } from '../shared/request-preview-view.js'
+  import { CompactionHistory, type CompactionEntry } from '../shared/compaction-history.js'
+  import CompactionCard from './components/CompactionCard.svelte'
+  import AboutSettings from './components/AboutSettings.svelte'
+  import type { ExtensionInfo } from '../shared/extension-info.js'
   import {
     DSH_REASONING_FORMATS,
     DSH_REASONING_LEVELS,
@@ -69,12 +73,13 @@
 
   interface ChatMessage {
     id: number
-    role: 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool'
+    role: 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction'
     label: string
     text: string
     context?: SelectionMetadata
     browserLabels?: string[]
     tool?: ToolCallView
+    compaction?: CompactionEntry
   }
 
   interface ToolCallView {
@@ -132,6 +137,7 @@
   let selection = $state<SelectionMetadata | undefined>()
   let selectionAttached = $state(true)
   let messages = $state<ChatMessage[]>([])
+  const compactionHistory = new CompactionHistory()
   let prompt = $state('')
   let decisions = $state<DecisionSettings>({ ...DEFAULT_DECISION_SETTINGS })
   let decisionsApiKey = $state('')
@@ -174,6 +180,7 @@
   let activeThinkingSessionId: string | undefined
   let waitingForFirstResponse = $state(false)
   let settingsPage = $state<SettingsPage | undefined>()
+  let extensionInfo = $state<ExtensionInfo | undefined>()
   let provider = $state('')
   let model = $state('')
   let reasoningEffort = $state<string | null>(null)
@@ -270,6 +277,7 @@
       const previousRuntimeState = runtimeState
       activeSessionId = message.state.activeSessionId
       runtimeState = message.state.runtimeState
+      extensionInfo = message.state.extensionInfo
       if (sessionChanged || message.resetTranscript) {
         finishThinking()
         skillOverrides = { include: [], exclude: [] }
@@ -282,6 +290,7 @@
       }
       if (runtimeState === 'stopped' || runtimeState === 'error') {
         finishThinking()
+        interruptCompaction(undefined, runtimeState === 'error' ? 'Runtime stopped with an error.' : undefined)
         skillSuggestions = undefined
         isGenerating = false
         waitingForFirstResponse = false
@@ -445,6 +454,7 @@
     }
 
     if (message.type === 'error') {
+      interruptCompaction(undefined, message.message)
       removePreparingToolCalls(liveToolCallTracker.clear())
       isGenerating = false
       waitingForFirstResponse = false
@@ -529,6 +539,7 @@
 
   function resetTranscript(): void {
     finishThinking()
+    compactionHistory.reset()
     followTranscript = true
     streamedStepTracker.reset()
     liveToolCallTracker.clear()
@@ -562,6 +573,7 @@
   function submit(): void {
     if (isGenerating || waitingForAnswer) {
       finishThinking()
+      interruptCompaction()
       waitingForFirstResponse = false
       skillOverrides = { include: [], exclude: [] }
       skillSuggestions = undefined
@@ -813,6 +825,20 @@
     if (role !== 'user') waitingForFirstResponse = false
     messages = [...messages, { id: nextMessageId++, role, label, text, context, browserLabels }]
     void scrollToBottom()
+  }
+
+  function updateCompaction(entry: CompactionEntry): void {
+    const existing = messages.find((message) => message.compaction?.key === entry.key)
+    if (existing) {
+      messages = messages.map((message) => message.id === existing.id ? { ...message, compaction: entry } : message)
+    } else {
+      messages = [...messages, { id: nextMessageId++, role: 'compaction', label: 'Context', text: '', compaction: entry }]
+    }
+    void scrollToBottom()
+  }
+
+  function interruptCompaction(sessionId?: string, error?: string): void {
+    for (const entry of compactionHistory.interrupt(sessionId, error)) updateCompaction(entry)
   }
 
   function finishThinking(sessionId?: string): void {
@@ -1355,6 +1381,7 @@
       const statusSessionId = stringValue(params.sessionId)
       if (statusSessionId !== activeSessionId) {
         if (statusSessionId !== undefined && params.status !== 'running') {
+          interruptCompaction(statusSessionId)
           removePreparingToolCalls(liveToolCallTracker.clear(statusSessionId))
         }
         return
@@ -1362,6 +1389,7 @@
       if (params.status === 'running') {
         isGenerating = true
       } else {
+        interruptCompaction(activeSessionId)
         removePreparingToolCalls(liveToolCallTracker.clear())
         finishThinking()
         isGenerating = false
@@ -1381,6 +1409,7 @@
 
     if (notification.method === 'subagent.finished') {
       const childSessionId = stringValue(params.childSessionId)
+      if (childSessionId !== undefined) interruptCompaction(childSessionId)
       if (childSessionId !== undefined) removePreparingToolCalls(liveToolCallTracker.clear(childSessionId))
       appendMessage('activity', 'Subagent', `Finished ${String(params.childSessionId || 'child session')}`)
       return
@@ -1392,34 +1421,20 @@
     const isRootSessionEvent = params.sessionId === activeSessionId
     const sessionId = stringValue(params.sessionId)
 
+    if (sessionId !== undefined && event.type !== undefined) {
+      const compaction = compactionHistory.record(sessionId, event.type, data)
+      if (compaction) {
+        if (isRootSessionEvent) contextUsedTokens = undefined
+        waitingForFirstResponse = false
+        finishThinking(sessionId)
+        updateCompaction(compaction)
+        return
+      }
+      if (event.type === 'turn/end') interruptCompaction(sessionId)
+    }
+
     if (event.type === 'request/context') {
       if (isRootSessionEvent) updateContextWindow(data.contextWindow)
-      return
-    }
-
-    if (event.type === 'compaction/start') {
-      if (isRootSessionEvent) {
-        contextUsedTokens = undefined
-        appendMessage('activity', 'Context', 'Compacting conversation…')
-      }
-      return
-    }
-
-    if (event.type === 'compaction/summary') {
-      if (isRootSessionEvent) {
-        const shadowedTokenCount = numericValue(data.shadowedTokenCount)
-        const detail = shadowedTokenCount === undefined
-          ? 'Conversation compacted; continuing.'
-          : `Compacted ${formatTokenCount(shadowedTokenCount)} tokens; continuing.`
-        appendMessage('activity', 'Context', detail)
-      }
-      return
-    }
-
-    if (event.type === 'compaction/end') {
-      if (isRootSessionEvent && typeof data.error === 'string' && data.error) {
-        appendMessage('activity', 'Context', `Compaction failed: ${data.error}`)
-      }
       return
     }
 
@@ -1526,6 +1541,7 @@
       case 'models': return 'Models'
       case 'mcp': return 'MCP Servers'
       case 'preview': return 'Request Previewer'
+      case 'about': return 'About Helix'
     }
   }
 
@@ -1688,7 +1704,6 @@
 
 <main class="shell">
   <Masthead
-    runtimeState={runtimeState}
     onNewSession={startNewSession}
     onOpenSettings={openSettings}
   />
@@ -1704,7 +1719,9 @@
         </div>
       </div>
 
-      {#if settingsPage === 'connection'}
+      {#if settingsPage === 'about'}
+        <AboutSettings info={extensionInfo} />
+      {:else if settingsPage === 'connection'}
       <form class="settings-form" onsubmit={(event) => { event.preventDefault(); saveSettings() }}>
         <div class="field" role="group">
           <label for="provider">Provider route</label>
@@ -1774,7 +1791,6 @@
             </div>
             <input type="hidden" name="sandbox-mode" value={sandboxMode} />
           </div>
-          <small>Changes apply when you save connection settings.</small>
         </div>
 
         <div class="settings-footer">
@@ -1787,61 +1803,60 @@
         <div class="settings-form">
         <section class="model-settings" aria-labelledby="model-settings-title">
           <div class="model-settings-heading">
-            <div>
-              <h3 id="model-settings-title">Models</h3>
-              <p>Choose a fetched model to add it to your saved catalog.</p>
-            </div>
-            <button class="btn mcp-add" data-variant="outline" type="button" onclick={refreshModels} disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}>
-              {#if modelsLoading}<LoaderCircle class="spin" size={13} strokeWidth={1.8} />{:else}<RefreshCw size={13} strokeWidth={1.8} />{/if}
-              Refresh list
-            </button>
+            <h3 id="model-settings-title">Models</h3>
           </div>
 
           {#if modelsError}<p class="model-error" role="status">{modelsError}</p>{/if}
           {#if modelCatalogError}<p class="model-error" role="alert">{modelCatalogError} Model edits are disabled to protect the saved file.</p>{/if}
 
-          <div
-            id="model-source-picker"
-            class="combobox model-source-picker"
-            bind:this={modelSourcePickerElement}
-            onchange={handleAddDiscoveredModel}
-          >
-            <input
-              type="text"
-              class="input"
-              role="combobox"
-              placeholder={modelsLoading ? 'Loading endpoint models…' : 'Search fetched models to add'}
-              autocomplete="off"
-              autocorrect="off"
-              spellcheck="false"
-              aria-autocomplete="list"
-              aria-expanded="false"
-              aria-controls="model-source-listbox"
-              aria-label="Add a fetched model"
-              disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}
-            />
-            <ChevronDown class="combobox-trigger-icon" size={14} strokeWidth={1.7} aria-hidden="true" />
-            <div id="model-source-popover" data-popover aria-hidden="true">
-              <div
-                id="model-source-listbox"
-                role="listbox"
-                aria-orientation="vertical"
-                data-empty={modelsLoading ? 'Loading endpoint models…' : modelsError || 'No endpoint models found.'}
-              >
-                {#each discoveredModels as option (option.id)}
-                  <div
-                    role="option"
-                    data-value={option.id}
-                    data-filter={`${option.displayName ?? ''} ${option.id}`}
-                    aria-selected="false"
-                    aria-disabled={modelDrafts.some((draft) => draft.id === option.id) ? 'true' : undefined}
-                  >
-                    {modelOptionLabel(option)}
-                  </div>
-                {/each}
+          <div class="model-source-row">
+            <div
+              id="model-source-picker"
+              class="combobox model-source-picker"
+              bind:this={modelSourcePickerElement}
+              onchange={handleAddDiscoveredModel}
+            >
+              <input
+                type="text"
+                class="input"
+                role="combobox"
+                placeholder={modelsLoading ? 'Loading endpoint models…' : 'Search fetched models to add'}
+                autocomplete="off"
+                autocorrect="off"
+                spellcheck="false"
+                aria-autocomplete="list"
+                aria-expanded="false"
+                aria-controls="model-source-listbox"
+                aria-label="Add a fetched model"
+                disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}
+              />
+              <ChevronDown class="combobox-trigger-icon" size={14} strokeWidth={1.7} aria-hidden="true" />
+              <div id="model-source-popover" data-popover aria-hidden="true">
+                <div
+                  id="model-source-listbox"
+                  role="listbox"
+                  aria-orientation="vertical"
+                  data-empty={modelsLoading ? 'Loading endpoint models…' : modelsError || 'No endpoint models found.'}
+                >
+                  {#each discoveredModels as option (option.id)}
+                    <div
+                      role="option"
+                      data-value={option.id}
+                      data-filter={`${option.displayName ?? ''} ${option.id}`}
+                      aria-selected="false"
+                      aria-disabled={modelDrafts.some((draft) => draft.id === option.id) ? 'true' : undefined}
+                    >
+                      {modelOptionLabel(option)}
+                    </div>
+                  {/each}
+                </div>
               </div>
+              <input type="hidden" name="discovered-model" value="" />
             </div>
-            <input type="hidden" name="discovered-model" value="" />
+            <button class="btn model-source-refresh" data-variant="outline" type="button" onclick={refreshModels} disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}>
+              {#if modelsLoading}<LoaderCircle class="spin" size={13} strokeWidth={1.8} />{:else}<RefreshCw size={13} strokeWidth={1.8} />{/if}
+              Refresh list
+            </button>
           </div>
 
           {#if modelCatalogLoading}
@@ -1908,7 +1923,6 @@
                         </div>
                         <input type="hidden" name={`model-reasoning-format-${draft.key}`} value={`format-${draft.reasoningFormat ?? 'auto'}`} />
                       </div>
-                        <small>Formats apply to OpenAI Chat Completions routes. Auto lets DSH choose; graded formats use the last-used or highest selected level.</small>
                     </div>
                     {#if isBinaryReasoningFormat(draft.reasoningFormat)}
                       <div class="field" role="group">
@@ -1956,7 +1970,6 @@
                             </fieldset>
                           </div>
                         </div>
-                        <small>Selected levels keep their DSH IDs. Off requires at least one graded level.</small>
                       </div>
                     {/if}
                     {#if draft.reasoningFormat === 'chat-template'}
@@ -1980,7 +1993,6 @@
           {/if}
 
           <div class="model-save-row">
-            <small>Saved models are stored in this VS Code profile’s extension data.</small>
             <button class="btn save-settings" type="button" onclick={saveModelCatalog} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
               {#if modelCatalogSaving}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Saving…{:else}Save models <Check size={13} strokeWidth={1.8} />{/if}
             </button>
@@ -2195,7 +2207,9 @@
       <div class="transcript" bind:this={transcriptElement} onscroll={handleTranscriptScroll} aria-live="polite">
         {#each messages as message (message.id)}
           <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'}>
-            {#if message.role === 'reasoning'}
+            {#if message.role === 'compaction' && message.compaction}
+              <CompactionCard entry={message.compaction} subagent={message.compaction.sessionId !== activeSessionId} />
+            {:else if message.role === 'reasoning'}
               <details class="thinking" class:active={isGenerating && !waitingForAnswer && activeThinkingId === message.id} aria-busy={isGenerating && !waitingForAnswer && activeThinkingId === message.id}>
                 <summary><span class="thinking-label">{message.label}</span><ChevronDown class="thinking-chevron" size={13} strokeWidth={1.8} /></summary>
                 <div class="message-body" use:followThinkingStream>{message.text}</div>

@@ -2,13 +2,32 @@ import { isDecisionSettings, isSkillDraft, isSkillOverrides, type DecisionSettin
 import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import type { BinaryThinkingMode, ChatTemplateValue, ReasoningFormat } from '../runtime/model-catalog.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
-import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
+import type { PendingUserQuestion, UserQuestionAnswer, UserQuestionView } from '../shared/user-question.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
 export type { RequestPreviewResult } from '../runtime/control-protocol.js'
 
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 export type SettingsPage = 'connection' | 'models' | 'mcp' | 'preview' | 'about'
+
+export interface ApprovalView {
+  requestId: string
+  reason?: string
+  status: 'pending' | 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+  decisionPending?: boolean
+}
+
+export interface ToolCallView {
+  callId: string
+  name: string
+  arguments: string
+  result?: string
+  meta?: string
+  error?: string
+  status: 'preparing' | 'running' | 'completed' | 'error'
+  approval?: ApprovalView
+  question?: UserQuestionView
+}
 
 export interface SelectionMetadata {
   fileLabel: string
@@ -55,6 +74,21 @@ export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env'> {
   env: Array<{ name: string; configured: boolean }>
 }
 
+export interface McpEnvironmentDraft {
+  name: string
+  value: string
+  configured: boolean
+}
+
+export interface McpServerDraft {
+  serverName: string
+  transport: SidebarMcpTransport
+  command: string
+  argsText: string
+  url: string
+  env: McpEnvironmentDraft[]
+}
+
 export interface SidebarModel {
   id: string
   displayName?: string
@@ -69,6 +103,14 @@ export interface SidebarModel {
 
 export interface SidebarDiscoveredModel extends SidebarModel {
   loaded?: boolean
+}
+
+export interface ModelEditorDraft extends Omit<SidebarModel, 'reasoningEfforts' | 'chatTemplateKwargs' | 'chatTemplateArgs'> {
+  key: number
+  sourceId?: string
+  reasoningEfforts: string[]
+  chatTemplateKwargsText: string
+  chatTemplateArgsText: string
 }
 
 export interface ModelDraft extends SidebarModel {

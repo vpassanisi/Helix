@@ -1,5 +1,7 @@
 # Helix for VS Code
 
+For individual component previews, run `npm run storybook` and open `http://127.0.0.1:6006`. See [the preview guide](stories/README.md) for sample states and controls.
+
 I built this VS Code extension because I could not find a harness that gave me enough control over what gets sent to the model. That control is especially important when working with smaller local models.
 
 I also could not find an app or extension that supported the workflow I wanted. Codex and Claude Code extensions are good, but their support for local models is limited and seems to be getting worse over time.

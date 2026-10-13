@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.webview.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "resolveJsonModule": true,
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src/webview/**/*.ts", "src/webview/**/*.svelte", "stories/**/*.ts", "stories/**/*.svelte", ".storybook/**/*.ts"]
+}

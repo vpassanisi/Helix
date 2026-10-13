@@ -2,51 +2,42 @@
   import { onMount, tick, untrack } from 'svelte'
   import {
     ArrowLeft,
-    ArrowRight,
-    ArrowUp,
-    Brain,
     Check,
     ChevronDown,
     Code2,
     MousePointer2,
-    FileDiff,
     LoaderCircle,
-    Plus,
-    RefreshCw,
-    Server,
-    Square,
     Trash2,
-    Wrench,
-    X,
   } from '@lucide/svelte'
   import { renderMarkdown } from './markdown.js'
   import { LiveToolCallTracker } from '../shared/live-tool-call-tracker.js'
   import { StreamedStepTracker } from '../shared/streamed-step-tracker.js'
-  import { createRequestPreviewView } from '../shared/request-preview-view.js'
   import { CompactionHistory, type CompactionEntry } from '../shared/compaction-history.js'
   import CompactionCard from './components/CompactionCard.svelte'
   import AboutSettings from './components/AboutSettings.svelte'
   import type { ExtensionInfo } from '../shared/extension-info.js'
   import {
-    DSH_REASONING_FORMATS,
-    DSH_REASONING_LEVELS,
-    isBinaryReasoningFormat,
     preferredReasoningEffort,
     selectableReasoningEfforts,
-    updateReasoningEffortSelection,
     type ChatTemplateValue,
-    type ReasoningFormat,
   } from '../runtime/model-catalog.js'
-  import SkillsDrawer from './components/SkillsDrawer.svelte'
   import DecisionSettingsPanel from './components/DecisionSettings.svelte'
   import { DEFAULT_DECISION_SETTINGS, recentChatContext, type DecisionSettings, type SkillCatalog, type SkillDraft, type SkillOverrides, type SkillSuggestions } from '../shared/skills.js'
   import Masthead from './components/Masthead.svelte'
-  import BrowserAttachments from './components/BrowserAttachments.svelte'
   import UserQuestionCard from './components/UserQuestionCard.svelte'
+  import ToolCallCard from './components/ToolCallCard.svelte'
+  import ModelsSettings from './components/ModelsSettings.svelte'
+  import McpSettings from './components/McpSettings.svelte'
+  import RequestPreviewPanel from './components/RequestPreviewPanel.svelte'
+  import ChangesPanel from './components/ChangesPanel.svelte'
+  import Composer from './components/Composer.svelte'
+  import { formatTokenCount, selectionLineLabel } from './formatting.js'
   import { validateQuestionAnswer, type PendingUserQuestion, type UserQuestionAnswer, type UserQuestionView } from '../shared/user-question.js'
   import type { BrowserContextState } from '../shared/browser-context.js'
   import { countLines, isRecord, parsePayload, responseKey, stringValue } from '../shared/value-utils.js'
   import type {
+    ApprovalView,
+    ToolCallView,
     HarnessEvent,
     HarnessNotification,
     IncomingMessage,
@@ -55,6 +46,7 @@
     SelectionMetadata,
     SandboxMode,
     SidebarMessage,
+    McpServerDraft,
     SidebarMcpEnvironment,
     SidebarMcpServer,
     SidebarMcpServerSetting,
@@ -62,6 +54,7 @@
     SidebarModel,
     RequestPreviewResult,
     ModelDraft,
+    ModelEditorDraft,
     SidebarSettings,
     SettingsPage,
     WebviewApi,
@@ -82,53 +75,10 @@
     compaction?: CompactionEntry
   }
 
-  interface ToolCallView {
-    callId: string
-    name: string
-    arguments: string
-    result?: string
-    meta?: string
-    error?: string
-    status: 'preparing' | 'running' | 'completed' | 'error'
-    approval?: ApprovalView
-    question?: UserQuestionView
-  }
-
-  interface ApprovalView {
-    requestId: string
-    reason?: string
-    status: 'pending' | 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
-    decisionPending?: boolean
-  }
-
   interface StreamUpdate {
     role: 'assistant' | 'reasoning'
     text: string
   }
-
-  interface McpEnvironmentDraft {
-    name: string
-    value: string
-    configured: boolean
-  }
-
-  interface McpServerDraft {
-    serverName: string
-    transport: 'stdio' | 'streamable-http'
-    command: string
-    argsText: string
-    url: string
-    env: McpEnvironmentDraft[]
-  }
-
-  interface ModelEditorDraft extends Omit<SidebarModel, 'reasoningEfforts' | 'chatTemplateKwargs' | 'chatTemplateArgs'> {
-    key: number
-    sourceId?: string
-    reasoningEfforts: string[]
-    chatTemplateKwargsText: string
-    chatTemplateArgsText: string
-  }
-  const reasoningFormatOptions: ReasoningFormat[] = ['auto', ...DSH_REASONING_FORMATS]
 
   let { vscode }: Props = $props()
 
@@ -217,8 +167,7 @@
   let nextMessageId = 1
   let transcriptElement = $state<HTMLDivElement>()
   let followTranscript = true
-  let promptElement = $state<HTMLTextAreaElement>()
-  let modelSourcePickerElement = $state<HTMLDivElement>()
+  let composer = $state<{ focus: () => void }>()
   let sandboxPickerElement = $state<HTMLDivElement>()
   let effortStateNeedsCatalog = false
   const streamedStepTracker = new StreamedStepTracker()
@@ -368,7 +317,6 @@
       discoveredModels = message.models
       modelsLoading = false
       modelsError = message.error ?? ''
-      void tick().then(refreshModelSourcePicker)
       return
     }
 
@@ -384,8 +332,6 @@
         contextWindowTokens = selected.contextWindow
       }
       syncReasoningEffortWithCatalog()
-      void tick().then(initializeReasoningEffortPicker)
-      void tick().then(refreshModelSourcePicker)
       return
     }
 
@@ -400,8 +346,6 @@
         message.runtimeRestarting ? 'Models saved. Applying model settings…' : 'Models saved.',
         message.runtimeRestarting ? 'warning' : 'success',
       )
-      void tick().then(initializeReasoningEffortPicker)
-      void tick().then(refreshModelSourcePicker)
       return
     }
 
@@ -562,14 +506,6 @@
     settingsStatusTone = tone
   }
 
-  function selectionLineLabel(value: SelectionMetadata): string {
-    return value.ranges
-      .map((range) => range.startLine === range.endLine
-        ? `L${range.startLine}`
-        : `L${range.startLine}–L${range.endLine}`)
-      .join(', ')
-  }
-
   function submit(): void {
     if (isGenerating || waitingForAnswer) {
       finishThinking()
@@ -604,20 +540,12 @@
         skillOverrides: { include: [...skillOverrides.include], exclude: [...skillOverrides.exclude] } } : {}),
     })
     selectionAttached = true
-    void tick().then(() => promptElement?.focus())
+    void tick().then(() => composer?.focus())
   }
 
   function startNewSession(): void {
     waitingForFirstResponse = false
     post({ type: 'newSession' })
-  }
-
-  function handlePromptKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault()
-      if (waitingForAnswer) return
-      submit()
-    }
   }
 
   function refreshModels(): void {
@@ -640,9 +568,7 @@
     post({ type: 'selectModel', model: nextModel })
   }
 
-  function handleAddDiscoveredModel(event: Event): void {
-    const detail = (event as CustomEvent<{ value?: string }>).detail
-    const selectedId = typeof detail?.value === 'string' ? detail.value : ''
+  function handleAddDiscoveredModel(selectedId: string): void {
     if (!selectedId) return
 
     const discovered = discoveredModels.find((entry) => entry.id === selectedId)
@@ -665,72 +591,6 @@
       }, ...modelDrafts]
       setSettingsStatus(`Added ${discovered.displayName ?? discovered.id}. Edit its details, then save models.`, 'success')
     }
-    const picker = modelSourcePickerElement as (HTMLDivElement & { clear?: () => void }) | undefined
-    picker?.clear?.()
-    void tick().then(() => {
-      initializeReasoningEffortPicker()
-      refreshModelSourcePicker()
-    })
-  }
-
-  function removeModelDraft(key: number): void {
-    modelDrafts = modelDrafts.filter((draft) => draft.key !== key)
-  }
-
-  function modelEffortOptions(draft: ModelEditorDraft): string[] {
-    return [...draft.reasoningEfforts]
-  }
-
-  function modelReasoningEffortChoices(draft: ModelEditorDraft): string[] {
-    const legacy = draft.reasoningEfforts.filter((effort) => !(DSH_REASONING_LEVELS as readonly string[]).includes(effort))
-    return [...DSH_REASONING_LEVELS, ...legacy]
-  }
-
-  function isLegacyModelEffort(effort: string): boolean {
-    return !(DSH_REASONING_LEVELS as readonly string[]).includes(effort)
-  }
-
-  function modelEffortSummary(draft: ModelEditorDraft): string {
-    const count = modelEffortOptions(draft).length
-    return count === 0 ? 'Provider controlled' : `${count} selected`
-  }
-
-  function handleModelReasoningEffortChange(key: number, effort: string, event: Event): void {
-    const draft = modelDrafts.find((entry) => entry.key === key)
-    const input = event.currentTarget
-    if (draft === undefined || !(input instanceof HTMLInputElement)) return
-    const updated = updateReasoningEffortSelection(
-      draft.reasoningEfforts,
-      effort,
-      input.checked,
-    )
-    if (updated === undefined) {
-      input.checked = false
-      setSettingsStatus('Select at least one graded level before enabling Off.', 'warning')
-      return
-    }
-    draft.reasoningEfforts = updated
-  }
-
-  function handleModelReasoningFormatChange(key: number, event: Event): void {
-    const draft = modelDrafts.find((entry) => entry.key === key)
-    const selected = (event as CustomEvent<{ value?: string }>).detail?.value
-    const value = typeof selected === 'string' && selected.startsWith('format-') ? selected.slice('format-'.length) : selected
-    if (draft === undefined || !isReasoningFormatOption(value)) return
-    draft.reasoningFormat = value
-    if (isBinaryReasoningFormat(value)) draft.binaryThinkingMode ??= 'on'
-    void tick().then(initializeReasoningEffortPicker)
-  }
-
-  function handleBinaryThinkingModeChange(key: number, event: Event): void {
-    const draft = modelDrafts.find((entry) => entry.key === key)
-    const value = (event as CustomEvent<{ value?: string }>).detail?.value
-    if (draft === undefined || (value !== 'on' && value !== 'off')) return
-    draft.binaryThinkingMode = value
-  }
-
-  function isReasoningFormatOption(value: unknown): value is ReasoningFormat {
-    return typeof value === 'string' && reasoningFormatOptions.includes(value as ReasoningFormat)
   }
 
   function parseChatTemplateDraft(value: string, label: string): Record<string, ChatTemplateValue> | undefined {
@@ -746,10 +606,6 @@
     return parsed as Record<string, ChatTemplateValue>
   }
 
-  function selectedModelEfforts(): string[] {
-    return selectedEffortsForModel(model)
-  }
-
   function selectedEffortsForModel(modelId: string): string[] {
     return selectableReasoningEfforts(models.find((entry) => entry.id === modelId))
   }
@@ -758,16 +614,8 @@
     return preferredReasoningEffort(models.find((entry) => entry.id === modelId), reasoningHistory[modelId]) ?? null
   }
 
-  function reasoningEffortLabel(): string {
-    const selected = models.find((entry) => entry.id === model)
-    if (selected !== undefined && isBinaryReasoningFormat(selected.reasoningFormat)) {
-      return selected.binaryThinkingMode === 'off' ? 'Thinking Off' : 'Thinking On'
-    }
-    return reasoningEffort ?? 'Provider controlled'
-  }
-
   function selectComposerReasoningEffort(value: string): void {
-    if (selectedModelEfforts().includes(value)) reasoningEffort = value
+    if (selectedEffortsForModel(model).includes(value)) reasoningEffort = value
   }
 
   function syncReasoningEffortWithCatalog(): void {
@@ -794,7 +642,7 @@
           contextWindow: draft.contextWindow,
           acceptsImages: draft.acceptsImages ?? false,
           sourceId: draft.sourceId,
-          reasoningEfforts: modelEffortOptions(draft),
+          reasoningEfforts: [...draft.reasoningEfforts],
           reasoningFormat: draft.reasoningFormat,
           binaryThinkingMode: draft.binaryThinkingMode,
           chatTemplateKwargs: parseChatTemplateDraft(draft.chatTemplateKwargsText, `Model "${draft.id}" chat template kwargs`),
@@ -934,37 +782,6 @@
     contextUsedTokens = (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadTokens ?? 0) + (cacheWriteTokens ?? 0)
   }
 
-  function contextProgress(): number {
-    if (contextWindowTokens === undefined || contextUsedTokens === undefined) return 0
-    return Math.min(100, Math.max(0, (contextUsedTokens / contextWindowTokens) * 100))
-  }
-
-  function formatTokenCount(value: number): string {
-    return new Intl.NumberFormat().format(Math.round(value))
-  }
-
-  function changeKindSymbol(kind: CodeChange['kind']): string {
-    if (kind === 'created') return 'A'
-    if (kind === 'deleted') return 'D'
-    if (kind === 'renamed') return 'R'
-    return 'M'
-  }
-
-  function changeKindLabel(kind: CodeChange['kind']): string {
-    if (kind === 'created') return 'created'
-    if (kind === 'deleted') return 'deleted'
-    if (kind === 'renamed') return 'renamed'
-    return 'modified'
-  }
-
-  function changeSummaryLabel(): string {
-    const fileLabel = `${codeChanges.length} ${codeChanges.length === 1 ? 'file' : 'files'}`
-    const additions = codeChanges.reduce((total, change) => total + change.additions, 0)
-    const deletions = codeChanges.reduce((total, change) => total + change.deletions, 0)
-    if (additions === 0 && deletions === 0) return `${fileLabel} changed`
-    return `${fileLabel} · +${additions} −${deletions}`
-  }
-
   function mergeHostChanges(current: CodeChange[], incoming: CodeChange[]): CodeChange[] {
     const merged = new Map(current.map((change) => [change.path, change]))
     for (const change of incoming) {
@@ -1012,45 +829,10 @@
       : codeChanges.map((current) => current.path === change.path ? nextChange : current)
   }
 
-  function contextMeterLabel(): string {
-    if (contextWindowTokens === undefined) return 'Context window unavailable'
-    if (contextUsedTokens === undefined) return `Context window: ${formatTokenCount(contextWindowTokens)} tokens`
-    return `Context: ${formatTokenCount(contextUsedTokens)} of ${formatTokenCount(contextWindowTokens)} tokens (${Math.round(contextProgress())}%)`
-  }
-
   function modelOptionLabel(option: SidebarModel): string {
     const name = option.displayName ?? option.id
     const context = option.contextWindow === undefined ? '' : ` · ${formatTokenCount(option.contextWindow)}`
     return `${name}${context}`
-  }
-
-  function selectedModelLabel(): string {
-    const selected = models.find((option) => option.id === model)
-    if (selected !== undefined) return modelOptionLabel(selected)
-    if (model) return model
-    return models.length === 0 ? 'No saved models' : 'Select model'
-  }
-
-  function composerModelEffortLabel(): string {
-    return `Model: ${selectedModelLabel()}; Reasoning effort: ${reasoningEffortLabel()}`
-  }
-
-  function refreshModelCardPickers(): void {
-    document.querySelectorAll<HTMLDivElement>('.model-card-select').forEach((picker) => {
-      (picker as HTMLDivElement & { refresh?: () => void }).refresh?.()
-    })
-  }
-
-  function initializeReasoningEffortPicker(): void {
-    const basecoat = (window as Window & { basecoat?: { init?: (component: string) => void } }).basecoat
-    basecoat?.init?.('select')
-    basecoat?.init?.('popover')
-    refreshModelCardPickers()
-  }
-
-  function refreshModelSourcePicker(): void {
-    const picker = modelSourcePickerElement as (HTMLDivElement & { refresh?: () => void }) | undefined
-    picker?.refresh?.()
   }
 
   function initializeSandboxPicker(): void {
@@ -1062,16 +844,6 @@
     basecoat?.init?.('select')
     basecoat?.init?.('popover')
     refreshSandboxPicker()
-  }
-
-  function initializeModelSourcePicker(): void {
-    const basecoat = (window as Window & {
-      basecoat?: {
-        init?: (component: string) => void
-      }
-    }).basecoat
-    basecoat?.init?.('combobox')
-    refreshModelSourcePicker()
   }
 
   function refreshSandboxPicker(): void {
@@ -1334,15 +1106,6 @@
     return value.isError === true || (Array.isArray(value.content) && toolResultIsError(value.content))
   }
 
-  function formatToolArguments(value: string): string {
-    if (!value) return 'No arguments'
-    try {
-      return JSON.stringify(JSON.parse(value), null, 2)
-    } catch {
-      return value
-    }
-  }
-
   function stringifyPayload(value: unknown): string {
     if (typeof value === 'string') return value
     try {
@@ -1350,26 +1113,6 @@
     } catch {
       return String(value)
     }
-  }
-
-  function toolStatusLabel(tool: ToolCallView): string {
-    if (tool.approval?.status === 'pending') return tool.approval.decisionPending ? 'sending' : 'approval'
-    if (tool.approval?.status === 'allowed-once') return 'allowed once'
-    if (tool.approval?.status === 'rejected') return 'denied'
-    if (tool.approval?.status === 'cancelled') return 'cancelled'
-    if (tool.approval?.status === 'unavailable') return 'unavailable'
-    if (tool.status === 'preparing') return 'preparing'
-    if (tool.status === 'running') return 'running'
-    if (tool.status === 'error') return 'failed'
-    return 'completed'
-  }
-
-  function approvalResultLabel(status: ApprovalView['status']): string {
-    if (status === 'allowed-once') return 'Allowed once'
-    if (status === 'rejected') return 'Denied'
-    if (status === 'cancelled') return 'Cancelled'
-    if (status === 'unavailable') return 'Unavailable'
-    return 'Approval required'
   }
 
   function handleNotification(value: unknown): void {
@@ -1530,7 +1273,6 @@
       post({ type: 'refreshModels' })
     }
     void tick().then(() => {
-      if (page === 'models') initializeModelSourcePicker()
       if (page === 'connection') initializeSandboxPicker()
     })
   }
@@ -1614,29 +1356,6 @@
     }
   }
 
-  function addMcpServer(): void {
-    mcpServers = [{
-      serverName: '',
-      transport: 'stdio',
-      command: '',
-      argsText: '',
-      url: '',
-      env: [],
-    }, ...mcpServers]
-  }
-
-  function removeMcpServer(index: number): void {
-    mcpServers = mcpServers.filter((_, currentIndex) => currentIndex !== index)
-  }
-
-  function addMcpEnvironment(index: number): void {
-    mcpServers[index].env = [...mcpServers[index].env, { name: '', value: '', configured: false }]
-  }
-
-  function removeMcpEnvironment(serverIndex: number, environmentIndex: number): void {
-    mcpServers[serverIndex].env = mcpServers[serverIndex].env.filter((_, index) => index !== environmentIndex)
-  }
-
   function clearStoredKey(): void {
     clearApiKey = true
     apiKey = ''
@@ -1684,23 +1403,6 @@
     return typeof value === 'string' ? value : undefined
   }
 </script>
-
-{#snippet changeRows()}
-  {#each codeChanges as change (change.path)}
-    <div class="change-row">
-      <span class={`change-kind ${change.kind}`} title={changeKindLabel(change.kind)}>{changeKindSymbol(change.kind)}</span>
-      <div class="change-file">
-        <span class="change-path" title={change.path}>{change.path}</span>
-        {#if change.oldPath}<small>from {change.oldPath}</small>{/if}
-      </div>
-      <span class="change-stats">
-        {#if change.additions > 0}<span class="change-additions">+{change.additions}</span>{/if}
-        {#if change.deletions > 0}<span class="change-deletions">−{change.deletions}</span>{/if}
-        {#if change.additions === 0 && change.deletions === 0}<span>{changeKindLabel(change.kind)}</span>{/if}
-      </span>
-    </div>
-  {/each}
-{/snippet}
 
 <main class="shell">
   <Masthead
@@ -1800,405 +1502,37 @@
         </div>
       </form>
       {:else if settingsPage === 'models'}
-        <div class="settings-form">
-        <section class="model-settings" aria-labelledby="model-settings-title">
-          <div class="model-settings-heading">
-            <h3 id="model-settings-title">Models</h3>
-          </div>
-
-          {#if modelsError}<p class="model-error" role="status">{modelsError}</p>{/if}
-          {#if modelCatalogError}<p class="model-error" role="alert">{modelCatalogError} Model edits are disabled to protect the saved file.</p>{/if}
-
-          <div class="model-source-row">
-            <div
-              id="model-source-picker"
-              class="combobox model-source-picker"
-              bind:this={modelSourcePickerElement}
-              onchange={handleAddDiscoveredModel}
-            >
-              <input
-                type="text"
-                class="input"
-                role="combobox"
-                placeholder={modelsLoading ? 'Loading endpoint models…' : 'Search fetched models to add'}
-                autocomplete="off"
-                autocorrect="off"
-                spellcheck="false"
-                aria-autocomplete="list"
-                aria-expanded="false"
-                aria-controls="model-source-listbox"
-                aria-label="Add a fetched model"
-                disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}
-              />
-              <ChevronDown class="combobox-trigger-icon" size={14} strokeWidth={1.7} aria-hidden="true" />
-              <div id="model-source-popover" data-popover aria-hidden="true">
-                <div
-                  id="model-source-listbox"
-                  role="listbox"
-                  aria-orientation="vertical"
-                  data-empty={modelsLoading ? 'Loading endpoint models…' : modelsError || 'No endpoint models found.'}
-                >
-                  {#each discoveredModels as option (option.id)}
-                    <div
-                      role="option"
-                      data-value={option.id}
-                      data-filter={`${option.displayName ?? ''} ${option.id}`}
-                      aria-selected="false"
-                      aria-disabled={modelDrafts.some((draft) => draft.id === option.id) ? 'true' : undefined}
-                    >
-                      {modelOptionLabel(option)}
-                    </div>
-                  {/each}
-                </div>
-              </div>
-              <input type="hidden" name="discovered-model" value="" />
-            </div>
-            <button class="btn model-source-refresh" data-variant="outline" type="button" onclick={refreshModels} disabled={modelsLoading || modelCatalogLoading || modelCatalogError !== ''}>
-              {#if modelsLoading}<LoaderCircle class="spin" size={13} strokeWidth={1.8} />{:else}<RefreshCw size={13} strokeWidth={1.8} />{/if}
-              Refresh list
-            </button>
-          </div>
-
-          {#if modelCatalogLoading}
-            <div class="mcp-empty"><LoaderCircle class="spin" size={14} strokeWidth={1.8} /> Loading saved models…</div>
-          {:else if modelDrafts.length === 0}
-            <div class="mcp-empty"><Server size={14} strokeWidth={1.7} /> No saved models yet. Add one from the fetched list above.</div>
-          {:else}
-            <div class="model-list">
-              {#each modelDrafts as draft (draft.key)}
-                <fieldset class="model-card">
-                  <legend>
-                    <span>{draft.displayName || draft.id || 'New model'}</span>
-                    <button class="btn icon-button mcp-remove" data-variant="ghost" data-size="icon" type="button" aria-label={`Remove ${draft.displayName || draft.id || 'model'}`} title="Remove model" onclick={() => removeModelDraft(draft.key)} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
-                      <Trash2 size={13} strokeWidth={1.8} />
-                    </button>
-                  </legend>
-                  <div class="model-card-fields">
-                    <div class="field" role="group">
-                      <label for={`model-id-${draft.key}`}>Model ID</label>
-                      <input id={`model-id-${draft.key}`} class="input" bind:value={draft.id} autocomplete="off" disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
-                    </div>
-                    <div class="field" role="group">
-                      <label for={`model-label-${draft.key}`}>Display name</label>
-                      <input id={`model-label-${draft.key}`} class="input" bind:value={draft.displayName} placeholder="Optional" autocomplete="off" disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
-                    </div>
-                    <div class="field" role="group">
-                      <label for={`model-context-${draft.key}`}>Context window</label>
-                      <input id={`model-context-${draft.key}`} class="input" type="number" min="1" step="1" bind:value={draft.contextWindow} placeholder="Unknown" disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
-                    </div>
-                    <div class="field model-vision-field">
-                      <div class="model-vision-control">
-                        <label for={`model-vision-${draft.key}`}>Vision</label>
-                        <input id={`model-vision-${draft.key}`} class="input" type="checkbox" role="switch" data-size="sm" bind:checked={draft.acceptsImages} aria-describedby={`model-vision-help-${draft.key}`} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
-                      </div>
-                      <small id={`model-vision-help-${draft.key}`}>Allow image input if the endpoint supports it.</small>
-                    </div>
-                    <div class="field model-reasoning-format-field" role="group">
-                      <label for={`model-reasoning-format-trigger-${draft.key}`}>Reasoning format</label>
-                      <div
-                        id={`model-reasoning-format-${draft.key}`}
-                        class="select model-card-select"
-                        data-placeholder="Auto / DSH default"
-                        onchange={(event) => handleModelReasoningFormatChange(draft.key, event)}
-                      >
-                        <button
-                          id={`model-reasoning-format-trigger-${draft.key}`}
-                          class="btn"
-                          data-variant="outline"
-                          type="button"
-                          aria-haspopup="listbox"
-                          aria-expanded="false"
-                          aria-controls={`model-reasoning-format-listbox-${draft.key}`}
-                          disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}
-                        >
-                          <span>{draft.reasoningFormat === 'auto' || draft.reasoningFormat === undefined ? 'Auto / DSH default' : draft.reasoningFormat}</span>
-                          <ChevronDown size={13} strokeWidth={1.7} />
-                        </button>
-                        <div data-popover aria-hidden="true" data-side="bottom" data-align="start">
-                          <div id={`model-reasoning-format-listbox-${draft.key}`} role="listbox" aria-orientation="vertical" aria-labelledby={`model-reasoning-format-trigger-${draft.key}`}>
-                            {#each reasoningFormatOptions as format (`${draft.key}-${format}`)}
-                              <div role="option" data-value={`format-${format}`} aria-selected={(draft.reasoningFormat ?? 'auto') === format ? 'true' : undefined}>{format === 'auto' ? 'Auto / DSH default' : format}</div>
-                            {/each}
-                          </div>
-                        </div>
-                        <input type="hidden" name={`model-reasoning-format-${draft.key}`} value={`format-${draft.reasoningFormat ?? 'auto'}`} />
-                      </div>
-                    </div>
-                    {#if isBinaryReasoningFormat(draft.reasoningFormat)}
-                      <div class="field" role="group">
-                        <label for={`model-binary-thinking-trigger-${draft.key}`}>Thinking mode</label>
-                        <div
-                          id={`model-binary-thinking-${draft.key}`}
-                          class="select model-card-select"
-                          data-placeholder="On"
-                          onchange={(event) => handleBinaryThinkingModeChange(draft.key, event)}
-                        >
-                          <button id={`model-binary-thinking-trigger-${draft.key}`} class="btn" data-variant="outline" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls={`model-binary-thinking-listbox-${draft.key}`} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
-                            <span>{draft.binaryThinkingMode === 'off' ? 'Off' : 'On'}</span>
-                            <ChevronDown size={13} strokeWidth={1.7} />
-                          </button>
-                          <div data-popover aria-hidden="true" data-side="bottom" data-align="start">
-                            <div id={`model-binary-thinking-listbox-${draft.key}`} role="listbox" aria-orientation="vertical" aria-labelledby={`model-binary-thinking-trigger-${draft.key}`}>
-                              <div role="option" data-value="on" aria-selected={draft.binaryThinkingMode === 'on' ? 'true' : undefined}>On</div>
-                              <div role="option" data-value="off" aria-selected={draft.binaryThinkingMode === 'off' ? 'true' : undefined}>Off</div>
-                            </div>
-                          </div>
-                          <input type="hidden" name={`model-binary-thinking-${draft.key}`} value={draft.binaryThinkingMode ?? 'on'} />
-                        </div>
-                        <small>This format has a binary control, so the composer has no effort selector.</small>
-                      </div>
-                    {:else}
-                      <div class="field model-reasoning-level-field" role="group">
-                        <label id={`model-reasoning-level-label-${draft.key}`} for={`model-reasoning-level-trigger-${draft.key}`}>Reasoning levels</label>
-                        <div
-                          id={`model-reasoning-level-picker-${draft.key}`}
-                          class="popover model-reasoning-level-picker"
-                        >
-                          <button id={`model-reasoning-level-trigger-${draft.key}`} class="btn" data-variant="outline" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls={`model-reasoning-level-popover-${draft.key}`} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
-                            <span>{modelEffortSummary(draft)}</span>
-                            <ChevronDown size={13} strokeWidth={1.7} />
-                          </button>
-                          <div id={`model-reasoning-level-popover-${draft.key}`} data-popover aria-hidden="true" data-side="bottom" data-align="start" role="dialog" aria-labelledby={`model-reasoning-level-label-${draft.key}`}>
-                            <fieldset class="model-reasoning-level-options">
-                              <legend>Choose supported levels</legend>
-                              {#each modelReasoningEffortChoices(draft) as effort, index (`${draft.key}-${effort}`)}
-                                <div class="field model-reasoning-level-option" data-orientation="horizontal">
-                                  <input id={`model-reasoning-level-${draft.key}-${index}`} class="input" type="checkbox" checked={draft.reasoningEfforts.includes(effort)} onchange={(event) => handleModelReasoningEffortChange(draft.key, effort, event)} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''} />
-                                  <label for={`model-reasoning-level-${draft.key}-${index}`}>{effort}{#if isLegacyModelEffort(effort)} <span>(saved ID)</span>{/if}</label>
-                                </div>
-                              {/each}
-                            </fieldset>
-                          </div>
-                        </div>
-                      </div>
-                    {/if}
-                    {#if draft.reasoningFormat === 'chat-template'}
-                      <div class="field template-settings-field" role="group">
-                        <label for={`model-chat-template-kwargs-${draft.key}`}>chatTemplateKwargs (JSON)</label>
-                        <textarea id={`model-chat-template-kwargs-${draft.key}`} class="textarea model-template-input" rows="4" bind:value={draft.chatTemplateKwargsText} placeholder={'{\n  "enable_thinking": { "$var": "thinking.enabled", "omitWhenOff": true }\n}'} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}></textarea>
-                        <small>Values may be strings, numbers, booleans, null, or DSH variables: thinking.enabled, thinking.effort, thinking.budget.</small>
-                      </div>
-                    {/if}
-                    {#if draft.reasoningFormat === 'baseten'}
-                      <div class="field template-settings-field" role="group">
-                        <label for={`model-chat-template-args-${draft.key}`}>chatTemplateArgs (JSON)</label>
-                        <textarea id={`model-chat-template-args-${draft.key}`} class="textarea model-template-input" rows="4" bind:value={draft.chatTemplateArgsText} placeholder={'{\n  "reasoning_effort": { "$var": "thinking.effort" }\n}'} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}></textarea>
-                        <small>Values may be strings, numbers, booleans, null, or DSH variables: thinking.enabled, thinking.effort, thinking.budget.</small>
-                      </div>
-                    {/if}
-                  </div>
-                </fieldset>
-              {/each}
-            </div>
-          {/if}
-
-          <div class="model-save-row">
-            <button class="btn save-settings" type="button" onclick={saveModelCatalog} disabled={modelCatalogSaving || modelCatalogLoading || modelCatalogError !== ''}>
-              {#if modelCatalogSaving}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Saving…{:else}Save models <Check size={13} strokeWidth={1.8} />{/if}
-            </button>
-          </div>
-        </section>
-        </div>
+        <ModelsSettings
+          bind:modelDrafts
+          {discoveredModels}
+          {modelsLoading}
+          {modelsError}
+          {modelCatalogLoading}
+          {modelCatalogSaving}
+          {modelCatalogError}
+          {modelOptionLabel}
+          onAddModel={handleAddDiscoveredModel}
+          onRefreshModels={refreshModels}
+          onSaveModels={saveModelCatalog}
+          onStatus={setSettingsStatus}
+        />
       {:else if settingsPage === 'mcp'}
-<div class="settings-form">
-        <section class="mcp-settings" aria-labelledby="mcp-settings-title">
-          <h3 id="mcp-settings-title">MCP servers</h3>
-          <div class="mcp-settings-heading">
-            <div>
-              <p>Attach local Docker or HTTP tool servers to the DSH runtime.</p>
-            </div>
-            <button class="btn mcp-add" data-variant="outline" type="button" onclick={addMcpServer}>
-              <Plus size={13} strokeWidth={1.8} /> Add server
-            </button>
-          </div>
-
-          {#if mcpServers.length === 0}
-            <div class="mcp-empty">
-              <Server size={15} strokeWidth={1.7} />
-              <span>No MCP servers configured.</span>
-            </div>
-          {:else}
-            <div class="mcp-server-list">
-              {#each mcpServers as server, serverIndex (server)}
-                <fieldset class="mcp-server-card">
-                  <legend>
-                    <span class="mcp-server-title"><Server size={13} strokeWidth={1.7} /> {server.serverName || 'Unnamed server'}</span>
-                    <button class="btn icon-button mcp-remove" data-variant="ghost" data-size="icon" type="button" aria-label={`Remove ${server.serverName || 'MCP server'}`} title="Remove MCP server" onclick={() => removeMcpServer(serverIndex)}>
-                      <Trash2 size={13} strokeWidth={1.8} />
-                    </button>
-                  </legend>
-
-                  <div class="mcp-grid">
-                    <div class="field" role="group">
-                      <label for={`mcp-name-${serverIndex}`}>Server name</label>
-                      <input id={`mcp-name-${serverIndex}`} class="input" bind:value={server.serverName} placeholder="Server name" autocomplete="off" />
-                      <small>Used in tool names</small>
-                    </div>
-
-                    <div class="field" role="group">
-                      <label for={`mcp-transport-${serverIndex}`}>Transport</label>
-                      <select id={`mcp-transport-${serverIndex}`} class="select" bind:value={server.transport}>
-                        <option value="stdio">Local process / Docker</option>
-                        <option value="streamable-http">Streamable HTTP</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {#if server.transport === 'stdio'}
-                    <div class="field" role="group">
-                      <label for={`mcp-command-${serverIndex}`}>Command</label>
-                      <input id={`mcp-command-${serverIndex}`} class="input" bind:value={server.command} placeholder="Executable or path" autocomplete="off" />
-                      <small>DSH starts this command when the runtime starts.</small>
-                    </div>
-
-                    <div class="field" role="group">
-                      <label for={`mcp-args-${serverIndex}`}>Arguments</label>
-                      <textarea id={`mcp-args-${serverIndex}`} class="textarea mcp-args" bind:value={server.argsText} rows="4"></textarea>
-                      <small>One argument per line.</small>
-                    </div>
-                  {:else}
-                    <div class="field" role="group">
-                      <label for={`mcp-url-${serverIndex}`}>MCP URL</label>
-                      <input id={`mcp-url-${serverIndex}`} class="input" type="url" bind:value={server.url} placeholder="http://localhost:3000/mcp" autocomplete="off" />
-                    </div>
-                  {/if}
-
-                  {#if server.transport === 'stdio'}
-                    <div class="mcp-env-heading">
-                      <div>
-                        <span>Environment variables</span>
-                        <small>Values are kept in VS Code SecretStorage and are not written to settings.</small>
-                      </div>
-                      <button class="btn icon-button" data-variant="ghost" data-size="icon" type="button" aria-label="Add environment variable" title="Add environment variable" onclick={() => addMcpEnvironment(serverIndex)}>
-                        <Plus size={13} strokeWidth={1.8} />
-                      </button>
-                    </div>
-                    {#if server.env.length > 0}
-                      <div class="mcp-env-list">
-                        {#each server.env as environment, environmentIndex (environmentIndex)}
-                          <div class="mcp-env-row">
-                            <input class="input" bind:value={environment.name} placeholder="ENVIRONMENT_NAME" aria-label="Environment variable name" autocomplete="off" />
-                            <input class="input" type="password" bind:value={environment.value} placeholder={environment.configured ? 'Saved value — enter to replace' : 'Secret value'} aria-label="Environment variable value" autocomplete="new-password" />
-                            <button class="btn icon-button" data-variant="ghost" data-size="icon" type="button" aria-label="Remove environment variable" title="Remove environment variable" onclick={() => removeMcpEnvironment(serverIndex, environmentIndex)}>
-                              <X size={13} strokeWidth={1.8} />
-                            </button>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  {:else}
-                    <small class="mcp-http-note">HTTP authentication headers are not configured in this editor yet.</small>
-                  {/if}
-                </fieldset>
-              {/each}
-            </div>
-          {/if}
-        </section>
-        <div class="settings-footer">
-          <span></span>
-          <button class="btn save-settings" type="button" onclick={saveMcpServers} disabled={mcpSaving || settingsRestarting}>
-            {#if mcpSaving || settingsRestarting}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Applying…{:else}Save MCP servers <Check size={13} strokeWidth={1.8} />{/if}
-          </button>
-        </div>
-      </div>
+        <McpSettings
+          bind:mcpServers
+          {mcpSaving}
+          {settingsRestarting}
+          onSave={saveMcpServers}
+        />
       {:else}
-          <div class="request-preview-panel">
-            <div class="request-preview-heading">
-              <h3>Preview the first model request</h3>
-              <p>Build the DSH request for a fresh chat using the selected provider, model, and configured default reasoning effort. Nothing is sent to the model.</p>
-            </div>
-            <form class="request-preview-form" onsubmit={(event) => { event.preventDefault(); submitRequestPreview() }}>
-              <label for="request-preview-prompt">Prompt</label>
-              <div class="request-preview-input-row">
-                <input id="request-preview-prompt" class="input" type="text" bind:value={requestPreviewPrompt} placeholder="Enter a prompt and press Enter" autocomplete="off" disabled={requestPreviewState === 'loading'} />
-                <button class="btn request-preview-submit" type="submit" disabled={requestPreviewState === 'loading' || !requestPreviewPrompt.trim()}>
-                  {#if requestPreviewState === 'loading'}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Building…{:else}Preview{/if}
-                </button>
-                {#if requestPreviewState === 'loading'}
-                  <button class="btn" data-variant="outline" type="button" onclick={cancelRequestPreview}>Cancel</button>
-                {/if}
-              </div>
-            </form>
-            {#if requestPreviewState === 'loading'}
-              <p class="request-preview-status" role="status"><LoaderCircle class="spin" size={12} strokeWidth={1.8} /> Starting an isolated DSH session and assembling the request…</p>
-            {:else if requestPreviewState === 'error'}
-              <p class="request-preview-status error" role="alert">{requestPreviewError}</p>
-            {:else if requestPreviewState === 'cancelled'}
-              <p class="request-preview-status" role="status">Preview cancelled.</p>
-            {:else if requestPreview}
-              {@const previewView = createRequestPreviewView(requestPreview)}
-              <div class="request-preview-result-toggle field" role="group" data-orientation="horizontal">
-                <section>
-                  <label for="request-preview-raw-json">Show raw JSON</label>
-                  <p>Switch between the readable breakdown and the captured request.</p>
-                </section>
-                <input id="request-preview-raw-json" type="checkbox" role="switch" class="input" bind:checked={showRawRequestJson} />
-              </div>
-              {#if showRawRequestJson}
-                <pre class="request-preview-output" aria-label="Canonical DSH request"><code>{JSON.stringify(requestPreview.request, null, 2)}</code></pre>
-              {:else}
-                <div class="request-preview-readable" aria-label="Readable DSH request">
-                  <div class="request-preview-route">
-                    <div><span>Provider</span><strong>{previewView.provider}</strong></div>
-                    <div><span>Model</span><strong>{previewView.model}</strong></div>
-                  </div>
-                  <div class="request-preview-options" aria-label="Generation settings">
-                    {#each previewView.details as detail (detail.label)}
-                      <div><span>{detail.label}</span><strong>{detail.value}</strong></div>
-                    {/each}
-                  </div>
-                  <section class="request-preview-prompt" aria-labelledby="request-preview-prompt-heading">
-                    <h4 id="request-preview-prompt-heading">Prompt</h4>
-                    {#if previewView.promptItems.length === 0}
-                      <p class="request-preview-status">No prompt messages were captured.</p>
-                    {:else}
-                      {#each previewView.promptItems as item, index (`${index}:${item.role}`)}
-                        <article class="request-preview-message">
-                          <header>
-                            <strong>{item.role}</strong>
-                            {#if item.source}<span>{item.source}</span>{/if}
-                          </header>
-                          {#if item.sections && item.sections.length > 0}
-                            <div class="request-preview-sections">
-                              {#each item.sections as section, sectionIndex (`${index}:${sectionIndex}:${section.name}`)}
-                                <section class="request-preview-section-card">
-                                  <h5>{section.name}</h5>
-                                  <pre>{section.text}</pre>
-                                </section>
-                              {/each}
-                            </div>
-                          {:else}
-                            <pre>{item.text}</pre>
-                          {/if}
-                        </article>
-                      {/each}
-                    {/if}
-                  </section>
-                  <section class="request-preview-tools" aria-labelledby="request-preview-tools-heading">
-                    <h4 id="request-preview-tools-heading">Tools available to the model <span>{previewView.tools.length}</span></h4>
-                    {#if previewView.tools.length === 0}
-                      <p class="request-preview-status">No tools are available for this request.</p>
-                    {:else}
-                      <section class="accordion request-preview-tool-list" data-multiple>
-                        {#each previewView.tools as tool, index (`${index}:${tool.name}`)}
-                          <details>
-                            <summary><span>{tool.name}</span><ChevronDown size={13} strokeWidth={1.8} /></summary>
-                            <section class="request-preview-tool-content">
-                              {#if tool.description}<p>{tool.description}</p>{/if}
-                              <h5>Parameters</h5>
-                              <pre>{JSON.stringify(tool.parameters, null, 2)}</pre>
-                            </section>
-                          </details>
-                        {/each}
-                      </section>
-                    {/if}
-                  </section>
-                </div>
-              {/if}
-            {:else}
-              <p class="request-preview-status">The assembled request will appear here.</p>
-            {/if}
-          </div>
+        <RequestPreviewPanel
+          bind:prompt={requestPreviewPrompt}
+          bind:showRawJson={showRawRequestJson}
+          state={requestPreviewState}
+          preview={requestPreview}
+          error={requestPreviewError}
+          onPreview={submitRequestPreview}
+          onCancel={cancelRequestPreview}
+        />
       {/if}
       <p class:success={settingsStatusTone === 'success'} class:warning={settingsStatusTone === 'warning'} class="settings-status" role="status">{settingsStatus}</p>
     </section>
@@ -2218,64 +1552,7 @@
               {#if message.tool.question}
                 <UserQuestionCard value={message.tool.question} onanswer={(answer) => answerQuestion(message.tool!.question!, answer)} />
               {:else}
-              <details open={message.tool.approval?.status === 'pending'} class:completed={message.tool.status === 'completed'} class:failed={message.tool.status === 'error'} class="tool-details">
-                <summary>
-                  <Wrench size={13} strokeWidth={1.7} />
-                  <span class="tool-name">{message.tool.name}</span>
-                  <ArrowRight class="tool-flow-arrow" size={12} strokeWidth={1.7} />
-                  <span class:error={message.tool.status === 'error' || message.tool.approval?.status === 'rejected'} class:running={(message.tool.status === 'preparing' || message.tool.status === 'running') && message.tool.approval?.status === undefined} class="tool-status" aria-live="polite">
-                    {#if message.tool.status === 'preparing'}<LoaderCircle class="spin" size={11} strokeWidth={1.8} aria-hidden="true" />{/if}
-                    {toolStatusLabel(message.tool)}
-                  </span>
-                  <ChevronDown class="tool-chevron" size={13} strokeWidth={1.8} />
-                </summary>
-                <div class="tool-panel">
-                  {#if message.tool.approval}
-                    <div class="tool-section tool-approval" class:pending={message.tool.approval.status === 'pending'}>
-                      <div class="tool-section-label">Permission</div>
-                      {#if message.tool.approval.reason}<div class="tool-approval-reason">{message.tool.approval.reason}</div>{/if}
-                      {#if message.tool.approval.status === 'pending'}
-                        <div class="tool-approval-actions">
-                          <button class="btn" data-variant="outline" data-size="xs" type="button" onclick={() => decideApproval(message.tool!, 'allowed-once')} disabled={message.tool.approval.decisionPending}>
-                            <Check size={12} strokeWidth={1.8} /> Allow once
-                          </button>
-                          <button class="btn" data-variant="destructive" data-size="xs" type="button" onclick={() => decideApproval(message.tool!, 'rejected')} disabled={message.tool.approval.decisionPending}>
-                            <X size={12} strokeWidth={1.8} /> Deny
-                          </button>
-                        </div>
-                      {:else}
-                        <div class="tool-approval-result">{approvalResultLabel(message.tool.approval.status)}</div>
-                      {/if}
-                    </div>
-                  {/if}
-                  {#if message.tool.status !== 'preparing'}
-                    <div class="tool-section">
-                      <div class="tool-section-label">Arguments</div>
-                      <pre class="tool-payload">{formatToolArguments(message.tool.arguments)}</pre>
-                    </div>
-                  {:else}
-                    <div class="tool-section">Generating tool request…</div>
-                  {/if}
-                  {#if message.tool.result}
-                    <div class="tool-section">
-                      <div class="tool-section-label">Result</div>
-                      <div class="tool-payload markdown">{@html renderMarkdown(message.tool.result)}</div>
-                    </div>
-                  {/if}
-                  {#if message.tool.meta}
-                    <div class="tool-section">
-                      <div class="tool-section-label">Metadata</div>
-                      <pre class="tool-payload">{message.tool.meta}</pre>
-                    </div>
-                  {/if}
-                  {#if message.tool.error}
-                    <div class="tool-section tool-error">
-                      <div class="tool-section-label">Error</div>
-                      <div class="tool-payload">{message.tool.error}</div>
-                    </div>
-                  {/if}
-                </div>
-              </details>
+                <ToolCallCard tool={message.tool} onapprove={(outcome) => decideApproval(message.tool!, outcome)} />
               {/if}
             {:else}
               {#if message.role === 'user' && message.context}
@@ -2306,159 +1583,39 @@
           </article>
         {/if}
         {#if codeChanges.length > 0 && !isGenerating}
-          <section class:open={changesOpen} class="changes-summary-card" aria-label="Agent changes summary">
-            <button class="btn changes-toggle" data-variant="ghost" type="button" aria-expanded={changesOpen} onclick={() => { changesOpen = !changesOpen }}>
-              <span class="changes-title"><FileDiff size={13} strokeWidth={1.8} /> <span>Changes</span><span class="changes-count">{codeChanges.length}</span></span>
-              <span class="changes-summary">{changeSummaryLabel()}</span>
-              <ChevronDown class="changes-chevron" size={13} strokeWidth={1.8} />
-            </button>
-            <div class="changes-panel">
-              <div class="changes-panel-inner">
-                <div class="changes-list changes-summary-list">
-                  {@render changeRows()}
-                </div>
-              </div>
-            </div>
-          </section>
+          <ChangesPanel changes={codeChanges} bind:open={changesOpen} variant="summary" />
         {/if}
       </div>
 
-      <div class="composer">
-        {#if skillPickerEnabled}<SkillsDrawer skills={skillCatalog.skills} suggestions={skillSuggestions} overrides={skillOverrides} disabled={Boolean(pendingSubmission)} error={skillError} onoverride={(value) => { skillOverrides = value }} />{/if}
-        {#if browserContext?.attachments.length}
-          <BrowserAttachments attachments={browserContext.attachments} disabled={isGenerating} onremove={(id) => post({ type: 'removeBrowserAttachment', sessionId: activeSessionId, id })} />
-        {/if}
-        {#if selection && selectionAttached}
-          <div class="context-chip">
-            <Code2 size={14} strokeWidth={1.7} />
-            <div class="context-copy">
-              <div class="context-file">{selection.fileLabel}</div>
-              <span class="context-separator" aria-hidden="true">·</span>
-              <div class="context-range">
-                {selectionLineLabel(selection)}
-                <span class="context-separator" aria-hidden="true">·</span>
-                {selection.languageId || 'plain text'}
-              </div>
-            </div>
-            <button class="btn remove-context" data-variant="ghost" data-size="icon" type="button" aria-label="Remove editor context" title="Remove editor context" onclick={() => selectionAttached = false}>
-              <X size={14} strokeWidth={1.8} />
-            </button>
-          </div>
-        {/if}
-        {#if codeChanges.length > 0 && isGenerating}
-          <section class:open={changesOpen} class="changes-drawer" aria-label="Agent changes">
-            <button class="btn changes-toggle" data-variant="ghost" type="button" aria-expanded={changesOpen} onclick={() => { changesOpen = !changesOpen }}>
-              <span class="changes-title"><FileDiff size={13} strokeWidth={1.8} /> <span>Changes</span><span class="changes-count">{codeChanges.length}</span></span>
-              <span class="changes-summary">{changeSummaryLabel()}</span>
-              <ChevronDown class="changes-chevron" size={13} strokeWidth={1.8} />
-            </button>
-            <div class="changes-panel">
-              <div class="changes-panel-inner">
-                <div class="changes-list">
-                  {@render changeRows()}
-                </div>
-              </div>
-            </div>
-          </section>
-        {/if}
-        <div class="composer-box" class:working={isGenerating && !waitingForAnswer}>
-          <textarea disabled={Boolean(pendingSubmission)} bind:this={promptElement} class="textarea" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
-          <div class="composer-footer">
-            {#if browserContext?.hasOpenBrowser}
-              <span class="browser-picker-control" data-side="top" data-align="start" data-tooltip={browserContext?.picking ? 'Stop selecting browser elements' : browserContext?.available ? 'Select browser elements' : 'Browser picker setup required. Use Helix: Select Browser Elements.'}>
-                <button class="btn" data-variant="ghost" data-size="icon-sm" type="button" aria-label={browserContext?.picking ? 'Stop selecting browser elements' : 'Select browser elements'} aria-pressed={browserContext?.picking ?? false} disabled={!browserContext?.available || (isGenerating && !browserContext?.picking)} onclick={() => post({ type: 'toggleBrowserPicker' })}><MousePointer2 size={15} strokeWidth={1.8} /></button>
-              </span>
-            {/if}
-            <div class="model-picker-wrap">
-              <div id="composer-model-selector" class="popover composer-model-selector">
-                <button
-                  id="composer-model-trigger"
-                  class="btn composer-tooltip"
-                  data-variant="ghost"
-                  data-size="icon-sm"
-                  type="button"
-                  aria-haspopup="dialog"
-                  aria-expanded="false"
-                  aria-controls="composer-model-popover"
-                  aria-label={composerModelEffortLabel()}
-                  data-tooltip={composerModelEffortLabel()}
-                  data-side="top"
-                  data-align="end"
-                >
-                  <Brain size={16} strokeWidth={1.8} aria-hidden="true" />
-                </button>
-                <div
-                  id="composer-model-popover"
-                  data-popover
-                  data-side="top"
-                  data-align="end"
-                  aria-hidden="true"
-                  role="dialog"
-                  aria-label="Model and reasoning"
-                >
-                  <section class="composer-model-section" aria-labelledby="composer-effort-options-title">
-                    <h4 id="composer-effort-options-title">Reasoning effort</h4>
-                    {#if !model}
-                      <p class="composer-model-status">Choose a model to see its defined levels.</p>
-                    {:else if selectedModelEfforts().length === 0}
-                      <p class="composer-model-status">This model has no selectable reasoning levels.</p>
-                    {:else}
-                      <div class="composer-model-options" role="group" aria-labelledby="composer-effort-options-title">
-                        {#each selectedModelEfforts() as effort (`${model}-${effort}`)}
-                          <button
-                            class="btn composer-model-option"
-                            data-variant="ghost"
-                            type="button"
-                            aria-pressed={reasoningEffort === effort}
-                            onclick={() => selectComposerReasoningEffort(effort)}
-                          >
-                            <span>{effort}</span>
-                            {#if reasoningEffort === effort}<Check size={12} strokeWidth={2} aria-hidden="true" />{/if}
-                          </button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </section>
-                  <section class="composer-model-section" aria-labelledby="composer-model-options-title">
-                    <h4 id="composer-model-options-title">Model</h4>
-                    <div class="composer-model-options" role="group" aria-labelledby="composer-model-options-title">
-                      {#if models.length === 0}
-                        <p class="composer-model-status" role="status">No saved models. Add one in Settings.</p>
-                      {:else}
-                        {#each models as option (option.id)}
-                          <button
-                            class="btn composer-model-option"
-                            data-variant="ghost"
-                            type="button"
-                            aria-pressed={model === option.id}
-                            disabled={modelChanging}
-                            onclick={() => handleComposerModelSelection(option.id)}
-                          >
-                            <span>{modelOptionLabel(option)}</span>
-                            {#if model === option.id}<Check size={12} strokeWidth={2} aria-hidden="true" />{/if}
-                          </button>
-                        {/each}
-                      {/if}
-                    </div>
-                  </section>
-                </div>
-              </div>
-            </div>
-            <span id="send-context-description" class="sr-only">{contextMeterLabel()}</span>
-            <span
-              class="context-send composer-tooltip"
-              style={`--context-progress: ${contextProgress()}%`}
-              data-tooltip={contextMeterLabel()}
-              data-side="top"
-              data-align="end"
-            >
-              <button class="btn send" data-size="icon-sm" type="button" aria-label={isGenerating || waitingForAnswer ? 'Stop generation' : 'Send message'} aria-describedby="send-context-description" onclick={submit} disabled={!isGenerating && !waitingForAnswer && !prompt.trim()}>
-                {#if isGenerating || waitingForAnswer}<Square size={13} strokeWidth={1.8} />{:else}<ArrowUp size={14} strokeWidth={1.8} />{/if}
-              </button>
-            </span>
-          </div>
-        </div>
-      </div>
+      <Composer
+        bind:this={composer}
+        bind:prompt
+        bind:selectionAttached
+        bind:changesOpen
+        bind:skillOverrides
+        {isGenerating}
+        {waitingForAnswer}
+        submissionPending={Boolean(pendingSubmission)}
+        {selection}
+        {browserContext}
+        {codeChanges}
+        {models}
+        {model}
+        {reasoningEffort}
+        {modelChanging}
+        {contextUsedTokens}
+        {contextWindowTokens}
+        {skillPickerEnabled}
+        skills={skillCatalog.skills}
+        {skillSuggestions}
+        {skillError}
+        {modelOptionLabel}
+        onSubmit={submit}
+        onModelSelect={handleComposerModelSelection}
+        onReasoningEffortSelect={selectComposerReasoningEffort}
+        onRemoveBrowserAttachment={(id) => post({ type: 'removeBrowserAttachment', sessionId: activeSessionId, id })}
+        onToggleBrowserPicker={() => post({ type: 'toggleBrowserPicker' })}
+      />
     </section>
   {/if}
 </main>

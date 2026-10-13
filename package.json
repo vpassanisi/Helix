@@ -2,7 +2,7 @@
   "name": "helix-vscode",
   "displayName": "Helix",
   "description": "A VS Code sidebar Webview UI for Helix.",
-  "version": "0.0.51",
+  "version": "0.0.61",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -215,25 +215,31 @@
     "watch:webview": "vite build --watch --config vite.webview.config.ts",
     "watch": "tsc -p . --watch",
     "test": "npm run compile && node --test out/test/prompt-context.test.js out/test/browser-context.test.js out/test/user-question.test.js out/test/model-catalog.test.js out/test/mcp.test.js out/test/control-bridge.test.js out/test/dsh-control-plugin.test.js out/test/harness-runtime.test.js out/test/session-controller.test.js out/test/session-hierarchy.test.js out/test/serial-task-queue.test.js out/test/streamed-step-tracker.test.js out/test/compaction-history.test.js out/test/live-tool-call-tracker.test.js out/test/request-preview-view.test.js out/test/reasoning-effort-request.test.js out/test/decision-client.test.js out/test/skill-controller.test.js out/test/dsh-skill-bridge.test.js out/test/decision-settings.test.js out/test/skills-runtime.test.js",
-    "package": "npm run compile && node scripts/package-extension.mjs"
+    "package": "npm run compile && node scripts/package-extension.mjs",
+    "storybook": "storybook dev -p 6006 --host 127.0.0.1 --no-open --disable-telemetry",
+    "build-storybook": "storybook build --disable-telemetry",
+    "check:storybook": "svelte-check --tsconfig ./tsconfig.storybook.json"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.5-rc.1",
     "@deepseek-ai/dsh-llm-deepseek": "0.1.5-rc.1",
     "@deepseek-ai/dsh-sdk-client": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-skill": "0.1.5-rc.1",
     "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
     "@lucide/svelte": "^1.43.0",
     "basecoat-css": "^1.0.2",
     "dompurify": "^3.4.15",
     "marked": "^18.0.12",
-    "svelte": "^5.57.0",
-    "@deepseek-ai/dsh-skill": "0.1.5-rc.1"
+    "svelte": "^5.57.0"
   },
   "devDependencies": {
+    "@storybook/addon-svelte-csf": "^5.1.5",
+    "@storybook/svelte-vite": "^10.6.2",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.20.0",
     "@types/vscode": "^1.100.0",
+    "storybook": "^10.6.2",
     "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",

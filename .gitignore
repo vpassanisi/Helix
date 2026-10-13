@@ -6,3 +6,6 @@ out/
 .vscode-test-extensions/
 
 .continue
+
+storybook-static/
+debug-storybook.log

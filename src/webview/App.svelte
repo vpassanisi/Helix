@@ -2,12 +2,9 @@
   import { onMount, tick, untrack } from 'svelte'
   import {
     ArrowLeft,
-    Check,
-    ChevronDown,
     Code2,
     MousePointer2,
     LoaderCircle,
-    Trash2,
   } from '@lucide/svelte'
   import { renderMarkdown } from './markdown.js'
   import { LiveToolCallTracker } from '../shared/live-tool-call-tracker.js'
@@ -21,7 +18,7 @@
     selectableReasoningEfforts,
     type ChatTemplateValue,
   } from '../runtime/model-catalog.js'
-  import DecisionSettingsPanel from './components/DecisionSettings.svelte'
+  import ConnectionSettings from './components/ConnectionSettings.svelte'
   import { DEFAULT_DECISION_SETTINGS, recentChatContext, type DecisionSettings, type SkillCatalog, type SkillDraft, type SkillOverrides, type SkillSuggestions } from '../shared/skills.js'
   import Masthead from './components/Masthead.svelte'
   import UserQuestionCard from './components/UserQuestionCard.svelte'
@@ -30,6 +27,7 @@
   import McpSettings from './components/McpSettings.svelte'
   import RequestPreviewPanel from './components/RequestPreviewPanel.svelte'
   import ChangesPanel from './components/ChangesPanel.svelte'
+  import ThinkingCard from './components/ThinkingCard.svelte'
   import Composer from './components/Composer.svelte'
   import { formatTokenCount, selectionLineLabel } from './formatting.js'
   import { validateQuestionAnswer, type PendingUserQuestion, type UserQuestionAnswer, type UserQuestionView } from '../shared/user-question.js'
@@ -66,13 +64,15 @@
 
   interface ChatMessage {
     id: number
-    role: 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction'
+    role: 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction' | 'changes'
     label: string
     text: string
     context?: SelectionMetadata
     browserLabels?: string[]
     tool?: ToolCallView
     compaction?: CompactionEntry
+    changes?: CodeChange[]
+    panelOpen?: boolean
   }
 
   interface StreamUpdate {
@@ -168,7 +168,6 @@
   let transcriptElement = $state<HTMLDivElement>()
   let followTranscript = true
   let composer = $state<{ focus: () => void }>()
-  let sandboxPickerElement = $state<HTMLDivElement>()
   let effortStateNeedsCatalog = false
   const streamedStepTracker = new StreamedStepTracker()
   const liveToolCallTracker = new LiveToolCallTracker()
@@ -185,8 +184,6 @@
     window.addEventListener('message', listener)
     vscode.postMessage({ type: 'ready' })
     post({ type: 'loadModelCatalog' })
-    void tick().then(initializeSandboxPicker)
-
     return () => {
       window.removeEventListener('message', listener)
     }
@@ -521,6 +518,19 @@
     const text = prompt.trim()
     if (!text) return
 
+    if (codeChanges.length > 0) {
+      messages = [...messages, {
+        id: nextMessageId++,
+        role: 'changes',
+        label: 'Changes',
+        text: '',
+        changes: codeChanges.map((change) => ({ ...change })),
+        panelOpen: changesOpen,
+      }]
+      codeChanges = []
+      changesOpen = false
+    }
+
     const routingDraft = skillDraft(text)
     const attachedSelection = selectionAttached ? selection : undefined
     const browserAttachments = browserContext?.attachments ?? []
@@ -655,19 +665,6 @@
     }
   }
 
-  function sandboxModeLabel(mode: SandboxMode = sandboxMode): string {
-    if (mode === 'read-only') return 'Read-only'
-    if (mode === 'danger-full-access') return 'Danger full access'
-    return 'Workspace write'
-  }
-
-  function handleSandboxModeChange(event: Event): void {
-    const detail = (event as CustomEvent<{ value?: string }>).detail
-    const nextMode = detail?.value
-    if (nextMode !== 'read-only' && nextMode !== 'workspace-write' && nextMode !== 'danger-full-access') return
-    sandboxMode = nextMode
-  }
-
   function appendMessage(role: ChatMessage['role'], label: string, text: string, context?: SelectionMetadata, browserLabels?: string[]): void {
     finishThinking()
     if (role !== 'user') waitingForFirstResponse = false
@@ -719,28 +716,6 @@
 
   function isNearBottom(element: HTMLElement): boolean {
     return element.scrollHeight - element.clientHeight - element.scrollTop <= 24
-  }
-
-  function followThinkingStream(element: HTMLDivElement) {
-    const details = element.parentElement as HTMLDetailsElement
-    let following = true
-    const scrollToLatest = () => {
-      if (details.open && following) element.scrollTop = element.scrollHeight
-    }
-    const onScroll = () => { following = isNearBottom(element) }
-    const observer = new MutationObserver(scrollToLatest)
-
-    element.addEventListener('scroll', onScroll)
-    details.addEventListener('toggle', scrollToLatest)
-    observer.observe(element, { childList: true, characterData: true, subtree: true })
-
-    return {
-      destroy() {
-        observer.disconnect()
-        element.removeEventListener('scroll', onScroll)
-        details.removeEventListener('toggle', scrollToLatest)
-      },
-    }
   }
 
   function handleTranscriptScroll(event: Event): void {
@@ -833,22 +808,6 @@
     const name = option.displayName ?? option.id
     const context = option.contextWindow === undefined ? '' : ` · ${formatTokenCount(option.contextWindow)}`
     return `${name}${context}`
-  }
-
-  function initializeSandboxPicker(): void {
-    const basecoat = (window as Window & {
-      basecoat?: {
-        init?: (component: string) => void
-      }
-    }).basecoat
-    basecoat?.init?.('select')
-    basecoat?.init?.('popover')
-    refreshSandboxPicker()
-  }
-
-  function refreshSandboxPicker(): void {
-    const picker = sandboxPickerElement as (HTMLDivElement & { refresh?: () => void }) | undefined
-    picker?.refresh?.()
   }
 
   function appendAssistantBlocks(content: unknown): void {
@@ -1272,9 +1231,6 @@
       post({ type: 'loadModelCatalog' })
       post({ type: 'refreshModels' })
     }
-    void tick().then(() => {
-      if (page === 'connection') initializeSandboxPicker()
-    })
   }
 
   function settingsPageTitle(page: SettingsPage): string {
@@ -1356,12 +1312,6 @@
     }
   }
 
-  function clearStoredKey(): void {
-    clearApiKey = true
-    apiKey = ''
-    setSettingsStatus('Save settings to remove the stored key.', 'warning')
-  }
-
   function toolChange(name: string, argumentsValue: Record<string, unknown>): CodeChange | undefined {
     const normalizedName = name.toLowerCase()
     const filePath = stringValue(argumentsValue.file_path) ?? stringValue(argumentsValue.filePath) ?? stringValue(argumentsValue.path)
@@ -1424,83 +1374,22 @@
       {#if settingsPage === 'about'}
         <AboutSettings info={extensionInfo} />
       {:else if settingsPage === 'connection'}
-      <form class="settings-form" onsubmit={(event) => { event.preventDefault(); saveSettings() }}>
-        <div class="field" role="group">
-          <label for="provider">Provider route</label>
-          <input id="provider" class="input" type="text" bind:value={provider} placeholder="deepseek-official" />
-        </div>
-
-        {#if provider.trim() === 'deepseek-official'}
-          <p class="route-warning" role="status">The direct <code>deepseek-official</code> route uses DSH’s fixed adapter. Model reasoning formats here require an existing <code>llm-pi-ai</code> route; this route will not apply the format settings.</p>
-        {/if}
-
-        <div class="field" role="group">
-          <label for="base-url">API base URL</label>
-          <input id="base-url" class="input" type="url" bind:value={baseUrl} placeholder="https://api.deepseek.com" />
-          <small>Leave empty to use the provider default.</small>
-        </div>
-
-        <div class="field" role="group">
-          <label for="api-key">API key</label>
-          <div class="api-key-input-row">
-            <input id="api-key" class="input" type="password" bind:value={apiKey} oninput={() => { if (apiKey) clearApiKey = false }} placeholder={settings?.apiKeyConfigured ? 'Saved key — enter a new key to replace it' : 'Paste an API key'} autocomplete="off" />
-            <button class="btn icon-button clear-key" data-variant="ghost" data-size="icon" type="button" aria-label="Clear API key" title="Clear API key" onclick={clearStoredKey} disabled={!settings?.apiKeyConfigured && !apiKey}>
-              <Trash2 size={13} strokeWidth={1.8} />
-            </button>
-          </div>
-          <small class="key-status">
-            {#if clearApiKey}<Trash2 size={11} strokeWidth={1.8} /> The saved key will be removed when you save.
-            {:else if settings?.apiKeyConfigured}<Check size={11} strokeWidth={1.8} /> A key is currently saved.
-            {:else}No key saved yet.{/if}
-          </small>
-        </div>
-
-        {#if skillPickerEnabled}<DecisionSettingsPanel bind:decisions bind:apiKey={decisionsApiKey} bind:clearKey={clearDecisionsApiKey} mainUrl={baseUrl} {provider} keyConfigured={settings?.decisions?.apiKeyConfigured ?? false} />{/if}
-
-        <div class="field" role="group">
-          <label for="sandbox-picker-trigger">Sandbox permissions</label>
-          <div
-            id="sandbox-picker"
-            class="select sandbox-settings-picker"
-            bind:this={sandboxPickerElement}
-            data-placeholder="Sandbox permissions"
-            onchange={handleSandboxModeChange}
-          >
-            <button
-              id="sandbox-picker-trigger"
-              class="btn"
-              data-variant="outline"
-              type="button"
-              aria-haspopup="listbox"
-              aria-expanded="false"
-              aria-controls="sandbox-picker-listbox"
-            >
-              <span>{sandboxModeLabel()}</span>
-              <ChevronDown size={13} strokeWidth={1.7} />
-            </button>
-            <div id="sandbox-picker-popover" data-popover data-side="bottom" data-align="start" aria-hidden="true">
-              <div
-                id="sandbox-picker-listbox"
-                class="sandbox-picker-listbox"
-                role="listbox"
-                aria-orientation="vertical"
-                aria-labelledby="sandbox-picker-trigger"
-              >
-                <div role="option" data-value="read-only" aria-selected={sandboxMode === 'read-only' ? 'true' : undefined}><span>Read-only</span></div>
-                <div role="option" data-value="workspace-write" aria-selected={sandboxMode === 'workspace-write' ? 'true' : undefined}><span>Workspace write</span></div>
-                <div role="option" data-value="danger-full-access" aria-selected={sandboxMode === 'danger-full-access' ? 'true' : undefined}><span>Danger full access</span></div>
-              </div>
-            </div>
-            <input type="hidden" name="sandbox-mode" value={sandboxMode} />
-          </div>
-        </div>
-
-        <div class="settings-footer">
-          <button class="btn save-settings" type="submit" disabled={settingsRestarting}>
-            {#if settingsRestarting}<LoaderCircle class="spin" size={13} strokeWidth={1.8} /> Applying…{:else}Save connection settings <Check size={13} strokeWidth={1.8} />{/if}
-          </button>
-        </div>
-      </form>
+        <ConnectionSettings
+          bind:provider
+          bind:baseUrl
+          bind:apiKey
+          bind:clearApiKey
+          bind:sandboxMode
+          bind:decisions
+          bind:decisionApiKey={decisionsApiKey}
+          bind:clearDecisionApiKey={clearDecisionsApiKey}
+          apiKeyConfigured={settings?.apiKeyConfigured ?? false}
+          decisionKeyConfigured={settings?.decisions?.apiKeyConfigured ?? false}
+          {skillPickerEnabled}
+          {settingsRestarting}
+          onSave={saveSettings}
+          onStatus={setSettingsStatus}
+        />
       {:else if settingsPage === 'models'}
         <ModelsSettings
           bind:modelDrafts
@@ -1540,41 +1429,42 @@
     <section class="chat-view">
       <div class="transcript" bind:this={transcriptElement} onscroll={handleTranscriptScroll} aria-live="polite">
         {#each messages as message (message.id)}
-          <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'}>
-            {#if message.role === 'compaction' && message.compaction}
-              <CompactionCard entry={message.compaction} subagent={message.compaction.sessionId !== activeSessionId} />
-            {:else if message.role === 'reasoning'}
-              <details class="thinking" class:active={isGenerating && !waitingForAnswer && activeThinkingId === message.id} aria-busy={isGenerating && !waitingForAnswer && activeThinkingId === message.id}>
-                <summary><span class="thinking-label">{message.label}</span><ChevronDown class="thinking-chevron" size={13} strokeWidth={1.8} /></summary>
-                <div class="message-body" use:followThinkingStream>{message.text}</div>
-              </details>
-            {:else if message.role === 'tool' && message.tool}
-              {#if message.tool.question}
-                <UserQuestionCard value={message.tool.question} onanswer={(answer) => answerQuestion(message.tool!.question!, answer)} />
+          {#if message.role === 'changes' && message.changes}
+            <ChangesPanel changes={message.changes} bind:open={message.panelOpen} variant="summary" />
+          {:else}
+            <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'}>
+              {#if message.role === 'compaction' && message.compaction}
+                <CompactionCard entry={message.compaction} subagent={message.compaction.sessionId !== activeSessionId} />
+              {:else if message.role === 'reasoning'}
+                <ThinkingCard label={message.label} text={message.text} active={isGenerating && !waitingForAnswer && activeThinkingId === message.id} />
+              {:else if message.role === 'tool' && message.tool}
+                {#if message.tool.question}
+                  <UserQuestionCard value={message.tool.question} onanswer={(answer) => answerQuestion(message.tool!.question!, answer)} />
+                {:else}
+                  <ToolCallCard tool={message.tool} onapprove={(outcome) => decideApproval(message.tool!, outcome)} />
+                {/if}
               {:else}
-                <ToolCallCard tool={message.tool} onapprove={(outcome) => decideApproval(message.tool!, outcome)} />
+                {#if message.role === 'user' && message.context}
+                  <div class="message-context" title={`${message.context.fileLabel} · ${selectionLineLabel(message.context)}`}>
+                    <Code2 size={12} strokeWidth={1.7} />
+                    <span class="message-context-file">{message.context.fileLabel}</span>
+                    <span class="message-context-lines">{selectionLineLabel(message.context)}</span>
+                  </div>
+                {/if}
+                {#if message.role === 'user' && message.browserLabels?.length}
+                  <div class="message-context" aria-label="Attached browser elements">
+                    <MousePointer2 size={12} />
+                    <span class="message-context-file">{message.browserLabels.join(', ')}</span>
+                  </div>
+                {/if}
+                {#if message.role === 'assistant'}
+                  <div class="message-body markdown">{@html renderMarkdown(message.text)}</div>
+                {:else}
+                  <div class="message-body">{message.text}</div>
+                {/if}
               {/if}
-            {:else}
-              {#if message.role === 'user' && message.context}
-                <div class="message-context" title={`${message.context.fileLabel} · ${selectionLineLabel(message.context)}`}>
-                  <Code2 size={12} strokeWidth={1.7} />
-                  <span class="message-context-file">{message.context.fileLabel}</span>
-                  <span class="message-context-lines">{selectionLineLabel(message.context)}</span>
-                </div>
-              {/if}
-              {#if message.role === 'user' && message.browserLabels?.length}
-                <div class="message-context" aria-label="Attached browser elements">
-                  <MousePointer2 size={12} />
-                  <span class="message-context-file">{message.browserLabels.join(', ')}</span>
-                </div>
-              {/if}
-              {#if message.role === 'assistant'}
-                <div class="message-body markdown">{@html renderMarkdown(message.text)}</div>
-              {:else}
-                <div class="message-body">{message.text}</div>
-              {/if}
-            {/if}
-          </article>
+            </article>
+          {/if}
         {/each}
         {#if waitingForFirstResponse}
           <article class="message activity waiting-for-response" role="status">

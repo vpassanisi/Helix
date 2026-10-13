@@ -8,21 +8,13 @@
   } = $props()
 </script>
 
-<div class="browser-attachments" aria-label="Browser element attachments">
+<div class="flex flex-wrap gap-[6px] mb-2" aria-label="Browser element attachments">
   {#each attachments as attachment (attachment.id)}
-    <span class="context-chip browser-attachment" aria-label={`Browser element ${attachment.label}`}>
-      <span class="browser-attachment-label">{attachment.label}</span>
-      <span data-tooltip="Remove browser element">
-        <button class="btn" data-variant="ghost" data-size="icon-xs" type="button" aria-label={`Remove ${attachment.label}`} {disabled} onclick={() => onremove(attachment.id)}><X size={12} /></button>
+    <span class="context-chip min-w-0 mb-0 text-[10px]" aria-label={`Browser element ${attachment.label}`}>
+      <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[#cfcfcf]">{attachment.label}</span>
+      <span class="flex flex-none" data-tooltip="Remove browser element">
+        <button class="btn w-[18px] h-[18px] p-0" data-variant="ghost" data-size="icon-xs" type="button" aria-label={`Remove ${attachment.label}`} {disabled} onclick={() => onremove(attachment.id)}><X size={12} /></button>
       </span>
     </span>
   {/each}
 </div>
-
-<style>
-  .browser-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-  .browser-attachment { min-width: 0; margin-bottom: 0; font-size: 10px; }
-  .browser-attachment-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cfcfcf; }
-  .browser-attachment > span:last-child { display: flex; flex: 0 0 auto; }
-  .browser-attachment button { width: 18px; height: 18px; padding: 0; }
-</style>

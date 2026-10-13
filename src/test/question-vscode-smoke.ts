@@ -138,9 +138,9 @@ export async function run(): Promise<void> {
     assert.equal(await controller.submit('Ask a question before making changes.', false), true)
     await until(async () => !!await evaluate('document.querySelector("[data-question-request]")'))
     assert.equal(bodies.length, 1, JSON.stringify(errors))
-    assert.equal(await evaluate('document.querySelectorAll("[data-question-request] input:checked").length'), 0)
+    assert.equal(await evaluate('document.querySelectorAll("[data-question-request] input[type=radio]").length'), 0)
     assert.equal(await evaluate('document.querySelector("[data-question-request] button[type=submit]").disabled'), true)
-    assert.equal(await evaluate('document.querySelector(".composer-box").classList.contains("working")'), false)
+    assert.equal(await evaluate('!!document.querySelector(".animate-composer-shimmer")'), false)
     assert.equal(await evaluate('document.querySelector("[data-question-request] .badge").textContent'), 'Recommended')
     assert.equal(await evaluate('document.querySelectorAll("article.tool").length'), 1, 'No duplicate tool card')
     await until(async () => await evaluate('getComputedStyle(document.querySelector("article.tool")).opacity') === '1')
@@ -166,14 +166,10 @@ export async function run(): Promise<void> {
       return false
     })
     assert.equal(controller.questions.length, 1)
-    await evaluate(`document.querySelector('[data-question-request] input[value="0"]').focus()`)
-    for (const key of [' ', 'ArrowDown']) {
-      await ui.request('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: key === ' ' ? 32 : 40 }, context!.sessionId)
-      await ui.request('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: key === ' ' ? 32 : 40 }, context!.sessionId)
+    await evaluate(`document.querySelectorAll('[data-question-request] .question-option')[1].focus()`)
+    for (const type of ['keyDown', 'keyUp']) {
+      await ui.request('Input.dispatchKeyEvent', { type, key: ' ', code: 'Space', windowsVirtualKeyCode: 32 }, context!.sessionId)
     }
-    await until(async () => await evaluate(`document.querySelector('[data-question-request] input:checked')?.value`) === '1')
-    await until(async () => !await evaluate('document.querySelector("[data-question-request] button[type=submit]").disabled'))
-    await evaluate('document.querySelector("[data-question-request] button[type=submit]").click()')
     await until(() => bodies.length === 2)
     assert.ok(bodies[1].messages.some((message: any) => message.role === 'tool' && message.content.includes('All projects')))
     await until(async () => !!await evaluate('document.querySelector(".question-answer")'))
@@ -185,7 +181,6 @@ export async function run(): Promise<void> {
     await controller.submit('Ask again; do not assume the next answer.', false)
     await until(() => controller!.questions.length === 1)
     await until(async () => await evaluate('document.querySelectorAll("[data-question-request] form").length') === 1)
-    await evaluate('document.querySelector("[data-question-request] form input[value=custom]").click()')
     assert.equal(await evaluate('document.querySelector("[data-question-request] form button[type=submit]").disabled'), true)
     await evaluate(`(() => {const input=document.querySelector('textarea[aria-label="Custom response"]');input.value="Only test files";input.dispatchEvent(new Event("input", {bubbles:true}));})()`)
     assert.equal(await evaluate('document.querySelector("textarea[aria-label=Prompt]").value'), 'Keep this draft')
@@ -206,7 +201,7 @@ export async function run(): Promise<void> {
     await until(async () => !!await evaluate('document.querySelector(".question-ended")'))
     assert.equal(bodies.length, beforeStop)
     await writeFile('/tmp/helix-question-smoke-result.json', JSON.stringify({ passed: true, vscode: vscode.version,
-      checks: ['real DSH blocking tool', 'exact selected answer', 'custom answer', 'single tool card', 'recommendation', 'no default selection', 'keyboard radio navigation', 'narrow sidebar', 'draft preservation', 'composer Enter blocked', 'webview replay', 'Stop cancellation'], errors }, null, 2))
+      checks: ['real DSH blocking tool', 'exact selected answer', 'custom answer', 'single tool card', 'recommendation', 'no radio controls', 'keyboard option submission', 'narrow sidebar', 'draft preservation', 'composer Enter blocked', 'webview replay', 'Stop cancellation'], errors }, null, 2))
   } catch (error) {
     await writeFile('/tmp/helix-question-smoke-result.json', JSON.stringify({ passed: false, error: error instanceof Error ? error.stack : String(error), errors,
       requests: bodies.length, tools: bodies[0]?.tools?.map((tool: any) => tool.function?.name),

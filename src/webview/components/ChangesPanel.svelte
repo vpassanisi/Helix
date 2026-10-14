@@ -10,8 +10,8 @@
 
   let { changes, open = $bindable(false), variant = 'summary' }: Props = $props()
   const variantClass = $derived(variant === 'drawer'
-    ? 'relative z-[1] mx-[7px] my-0 flex-none rounded-t-[var(--radius)] rounded-b-none border-b-0'
-    : 'mx-[7px] mt-0 mb-[14px] rounded-[var(--radius)]')
+    ? 'relative z-[1] mx-[7px] my-0 flex-none rounded-t-[8px] rounded-b-none border-b-0'
+    : 'mx-[7px] mt-0 mb-[14px] rounded-[8px]')
 
   function changeKindSymbol(kind: CodeChange['kind']): string {
     if (kind === 'created') return 'A'

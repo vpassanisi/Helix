@@ -20,7 +20,10 @@
   }
 </script>
 
-<section class="card gap-0 border border-[var(--border)] rounded-[var(--radius)] bg-[var(--composer)] p-[10px] text-[11px]" aria-label="Agent question" data-question-request={value.requestId}>
+<section class={`card relative gap-0 overflow-visible border rounded-[8px] bg-[var(--composer)] p-[10px] text-[11px] [transition:border-color_.3s_ease,box-shadow_.3s_ease] ${pending ? '[border-color:color-mix(in_srgb,var(--brand-gold)_40%,var(--border))] [box-shadow:0_0_12px_color-mix(in_srgb,var(--brand-gold)_12%,transparent)]' : 'border-[var(--border)]'}`} aria-label="Agent question" data-question-request={value.requestId}>
+  {#if pending}
+    <div aria-hidden="true" class="pointer-events-none absolute -inset-[3px] rounded-[10px] p-[3px] blur-[3px] [background-image:linear-gradient(110deg,transparent_20%,color-mix(in_srgb,var(--brand-gold)_35%,transparent)_40%,var(--brand-gold)_50%,color-mix(in_srgb,var(--brand-gold)_35%,transparent)_60%,transparent_80%)] [background-size:250%_100%] [background-position:100%_0] [mask-image:linear-gradient(#000_0_0),linear-gradient(#000_0_0)] [mask-origin:content-box,border-box] [mask-clip:content-box,border-box] [mask-composite:exclude] animate-composer-shimmer opacity-60 motion-reduce:animate-none motion-reduce:[background-position:50%_0]"></div>
+  {/if}
   {#if value.question.header}<div class="mb-[4px] text-[10px] text-[var(--muted-foreground)]">{value.question.header}</div>{/if}
   <p class="m-0 mb-[8px] [overflow-wrap:anywhere] font-semibold" id={`question-${value.requestId}`}>{value.question.question}</p>
   {#if pending}

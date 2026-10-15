@@ -84,6 +84,9 @@ class ExtensionApp {
     })
     this.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('deepseekHarness')) { this.skills.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }) }
+      if ((event.affectsConfiguration('deepseekHarness.otelTracing') && !this.settings.isApplyingTracingConfig()) || event.affectsConfiguration('deepseekHarness.plugins')) {
+        void this.settings.restartForPluginSettings()
+      }
       if (event.affectsConfiguration('deepseekHarness.experimentalSkillPicker')) {
         void this.settings.postSettings()
         if (!this.settings.skillPickerEnabled() && this.runtimeState === 'ready') {

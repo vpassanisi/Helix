@@ -3,6 +3,7 @@ import type { DecisionConnection } from './decision-client.js'
 import * as vscode from 'vscode'
 import { ControlBridgeError } from '../runtime/control-bridge.js'
 import { mcpSecretKey } from '../runtime/mcp.js'
+import { configuredPluginBundles, createOtelTracingPlugin } from '../runtime/plugins.js'
 import {
   activeSelectionAfterCatalogSave,
   modelEndpointCandidates,
@@ -24,6 +25,13 @@ import { SerialTaskQueue } from '../runtime/serial-task-queue.js'
 import type { PersistedMcpServer, RuntimeMcpServer, RuntimeOptions, RuntimeState, SandboxMode } from '../runtime/types.js'
 import { isRecord } from '../shared/value-utils.js'
 import {
+  isValidOtelEndpointId,
+  isValidOtelHeaderName,
+  normalizeOtelTracingSettings,
+  persistedOtelTracingSettings,
+  type OtelTracingSettings,
+} from '../shared/otel-tracing.js'
+import {
   SidebarProvider,
   type SidebarMessage,
   type SidebarMcpServer,
@@ -33,10 +41,34 @@ import {
 
 const API_KEY_SECRET = 'deepseekHarness.apiKey'
 const DECISIONS_KEY_SECRET = 'deepseekHarness.decisionsApiKey'
+const OTEL_SECRET_PREFIX = 'deepseekHarness.otelTracing.endpoint.'
 const MODEL_CATALOG_FILE = 'models.json'
 const REASONING_HISTORY_KEY = 'helix.lastUsedReasoningEfforts'
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/
 const MCP_ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function otelEndpointSecretKey(id: string): string {
+  return `${OTEL_SECRET_PREFIX}${id}.credential`
+}
+
+function resolveLegacyHeaders(environmentName: string | undefined): Record<string, string> {
+  const name = environmentName?.trim()
+  if (!name) return {}
+  const raw = process.env[name]?.trim()
+  if (!raw) throw new Error(`Environment variable ${name} is required for the existing OTLP destination.`)
+  const headers: Record<string, string> = {}
+  for (const pair of raw.split(',')) {
+    const separator = pair.indexOf('=')
+    if (separator <= 0) throw new Error(`Invalid headers in environment variable ${name}; expected comma-separated key=value pairs.`)
+    const headerName = pair.slice(0, separator).trim()
+    const value = pair.slice(separator + 1).trim()
+    if (!isValidOtelHeaderName(headerName) || /[\r\n]/.test(value)) {
+      throw new Error(`Invalid header in environment variable ${name}.`)
+    }
+    headers[headerName] = value
+  }
+  return headers
+}
 
 function normalizeSandboxMode(value: unknown): SandboxMode {
   return value === 'read-only' || value === 'danger-full-access' ? value : 'workspace-write'
@@ -56,6 +88,7 @@ interface SettingsSnapshot {
   provider: string
   baseUrl: string
   sandboxMode: SandboxMode
+  tracing: OtelTracingSettings
   mcpServers: PersistedMcpServer[]
   apiKey: string | undefined
   secrets: Map<string, string | undefined>
@@ -64,11 +97,17 @@ interface SettingsSnapshot {
 export class SettingsController {
   private readonly queue = new SerialTaskQueue()
   private catalogReadInFlight: Promise<SavedModel[]> | undefined
+  private applyingTracingConfig = false
+  private savingConnectionSettings = false
 
   constructor(private readonly options: SettingsControllerOptions) {}
 
   run<T>(operation: () => Promise<T>): Promise<T> {
     return this.queue.run(operation)
+  }
+
+  isApplyingTracingConfig(): boolean {
+    return this.applyingTracingConfig || this.savingConnectionSettings
   }
 
   async postSettings(): Promise<void> {
@@ -178,13 +217,16 @@ export class SettingsController {
   }
 
   async saveSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
+    this.savingConnectionSettings = true
     try {
       this.prepareSettings(message)
+      const nextTracing = message.tracing === undefined ? undefined : normalizeOtelTracingSettings(message.tracing)
+      if (nextTracing !== undefined) await this.validateTracingSecrets(nextTracing)
       const previousServers = this.configuredMcpServers()
-      const snapshot = await this.createSnapshot(previousServers, previousServers)
+      const snapshot = await this.createSnapshot(previousServers, previousServers, nextTracing)
 
       try {
-        await this.writeSettings(message)
+        await this.writeSettings(message, nextTracing)
       } catch (error) {
         await this.restoreSettings(snapshot).catch((rollbackError) => {
           throw new Error(`${formatError(error)} Rollback also failed: ${formatError(rollbackError)}`)
@@ -195,6 +237,8 @@ export class SettingsController {
       await this.restartAfterSettings(false)
     } catch (error) {
       this.options.onError(error)
+    } finally {
+      this.savingConnectionSettings = false
     }
   }
 
@@ -268,6 +312,7 @@ export class SettingsController {
   async runtimeOptions(): Promise<RuntimeOptions> {
     const configuration = vscode.workspace.getConfiguration('deepseekHarness')
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
+    const extensionPath = this.options.context.extensionPath || process.cwd()
     const contextWindow = configuration.get<number>('contextWindow', 0)
     return {
       cwd: workspaceFolder?.uri.fsPath ?? vscode.env.appRoot,
@@ -279,8 +324,21 @@ export class SettingsController {
       savedModels: await this.readModelCatalog(),
       dshBin: configuration.get<string>('dshBin', '') || undefined,
       dshHome: configuration.get<string>('dshHome', '') || undefined,
+      plugins: [
+        createOtelTracingPlugin(extensionPath, await this.runtimeTracingConfig()),
+        ...configuredPluginBundles(configuration.get<unknown>('plugins', []), extensionPath),
+      ],
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
       mcpServers: await this.runtimeMcpServers(),
+    }
+  }
+
+  async restartForPluginSettings(): Promise<void> {
+    if (this.options.getRuntimeState() === 'stopped') return
+    try {
+      await this.options.runtime.restart(await this.runtimeOptions())
+    } catch (error) {
+      this.options.onError(error)
     }
   }
 
@@ -318,7 +376,98 @@ export class SettingsController {
       skillPickerEnabled: this.skillPickerEnabled(),
       decisions: { ...this.readDecisionSettings(), apiKeyConfigured: Boolean(await this.options.context.secrets.get(DECISIONS_KEY_SECRET)) },
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
+      tracing: await this.sidebarTracingSettings(),
       mcpServers: await this.sidebarMcpServers(),
+    }
+  }
+
+  private async sidebarTracingSettings(): Promise<OtelTracingSettings> {
+    const configuration = vscode.workspace.getConfiguration('deepseekHarness')
+    const tracing = normalizeOtelTracingSettings(configuration.get<unknown>('otelTracing', {}))
+    return {
+      ...tracing,
+      endpoints: await Promise.all(tracing.endpoints.map(async (endpoint) => ({
+        ...endpoint,
+        credentialConfigured: (await this.options.context.secrets.get(otelEndpointSecretKey(endpoint.id))) !== undefined,
+        credentialDraft: '',
+        clearCredential: false,
+      }))),
+    }
+  }
+
+  private async runtimeTracingConfig(): Promise<Record<string, unknown>> {
+    const configuration = vscode.workspace.getConfiguration('deepseekHarness')
+    const tracing = normalizeOtelTracingSettings(configuration.get<unknown>('otelTracing', {}))
+    const endpoints = await Promise.all(tracing.endpoints
+      .filter((endpoint) => endpoint.url.trim())
+      .map(async (endpoint) => {
+        const headers = endpoint.authMethod === 'bearer' || endpoint.authMethod === 'api-key'
+          ? this.tracingCredentialHeaders(endpoint, await this.options.context.secrets.get(otelEndpointSecretKey(endpoint.id)))
+          : resolveLegacyHeaders(endpoint.legacyHeadersEnv)
+        return {
+          url: endpoint.url.trim(),
+          protocol: endpoint.protocol,
+          ...(Object.keys(headers).length > 0 ? { headers } : {}),
+          timeoutMs: endpoint.timeoutMs,
+        }
+      }))
+    return {
+      enabled: tracing.enabled,
+      serviceName: tracing.serviceName.trim() || 'helix',
+      endpoints,
+      capturePrompts: tracing.capturePrompts,
+      captureResponses: tracing.captureResponses,
+      captureToolArguments: tracing.captureToolArguments,
+      maxContentLength: tracing.maxContentLength,
+    }
+  }
+
+  private tracingCredentialHeaders(endpoint: OtelTracingSettings['endpoints'][number], credential: string | undefined): Record<string, string> {
+    if (!credential) return {}
+    if (credential.includes('\r') || credential.includes('\n')) {
+      throw new Error(`OTLP destination credential for ${endpoint.url} contains a line break.`)
+    }
+    return endpoint.authMethod === 'bearer'
+      ? { authorization: `Bearer ${credential}` }
+      : { [endpoint.headerName.trim() || 'x-api-key']: credential }
+  }
+
+  private async validateTracingSecrets(tracing: OtelTracingSettings): Promise<void> {
+    if (!tracing.enabled) return
+    for (const [index, endpoint] of tracing.endpoints.entries()) {
+      if (endpoint.authMethod === 'none') continue
+      if (endpoint.clearCredential && !endpoint.credentialDraft.trim()) {
+        throw new Error(`OTLP destination ${index + 1} needs a credential for its selected authentication method.`)
+      }
+      if (endpoint.credentialDraft.trim()) continue
+      const saved = await this.options.context.secrets.get(otelEndpointSecretKey(endpoint.id))
+      if (saved === undefined) {
+        throw new Error(`Enter a credential for OTLP destination ${index + 1}, or choose no authentication.`)
+      }
+    }
+  }
+
+  private async syncTracingSecrets(tracing: OtelTracingSettings): Promise<void> {
+    const configuration = vscode.workspace.getConfiguration('deepseekHarness')
+    const previous = normalizeOtelTracingSettings(configuration.get<unknown>('otelTracing', {}))
+    const nextById = new Map(tracing.endpoints.map((endpoint) => [endpoint.id, endpoint]))
+    const deletedCredentials = new Set<string>()
+    for (const endpoint of previous.endpoints) {
+      const next = nextById.get(endpoint.id)
+      if ((next === undefined || next.authMethod === 'none') && endpoint.authMethod !== 'none') {
+        await this.options.context.secrets.delete(otelEndpointSecretKey(endpoint.id))
+        deletedCredentials.add(endpoint.id)
+      }
+    }
+    for (const endpoint of tracing.endpoints) {
+      const key = otelEndpointSecretKey(endpoint.id)
+      if (endpoint.authMethod === 'none' || endpoint.clearCredential) {
+        if ((endpoint.credentialConfigured || endpoint.clearCredential) && !deletedCredentials.has(endpoint.id)) {
+          await this.options.context.secrets.delete(key)
+        }
+      } else if (endpoint.credentialDraft.trim()) {
+        await this.options.context.secrets.store(key, endpoint.credentialDraft.trim())
+      }
     }
   }
 
@@ -334,13 +483,55 @@ export class SettingsController {
       if (!url) throw new Error('An explicit API base URL is required for decisions.')
       decisionEndpoint(url, decisions.format)
     }
+    const tracing = message.tracing
+    if (tracing === undefined) return
+    if (tracing.enabled && tracing.endpoints.length === 0) {
+      throw new Error('Add at least one OTLP destination before enabling trace export.')
+    }
+    const endpointIds = new Set<string>()
+    for (const [index, endpoint] of tracing.endpoints.entries()) {
+      if (!isValidOtelEndpointId(endpoint.id)) throw new Error(`OTLP destination ${index + 1} has an invalid ID.`)
+      if (endpointIds.has(endpoint.id)) throw new Error(`OTLP destination ${index + 1} has a duplicate ID.`)
+      endpointIds.add(endpoint.id)
+      if (endpoint.authMethod === 'api-key' && !isValidOtelHeaderName(endpoint.headerName.trim())) {
+        throw new Error(`OTLP destination ${index + 1} needs a valid API key header name.`)
+      }
+      if (endpoint.credentialDraft.includes('\r') || endpoint.credentialDraft.includes('\n')) {
+        throw new Error(`OTLP destination ${index + 1} credential cannot contain a line break.`)
+      }
+      const value = endpoint.url.trim()
+      if (!value) {
+        if (tracing.enabled) throw new Error(`OTLP destination ${index + 1} needs an endpoint.`)
+        continue
+      }
+      if (endpoint.protocol === 'grpc') {
+        validateGrpcTarget(value, index)
+      } else {
+        validateHttpUrl(value, `OTLP destination ${index + 1}`)
+      }
+      if (!Number.isInteger(endpoint.timeoutMs) || endpoint.timeoutMs < 100 || endpoint.timeoutMs > 120_000) {
+        throw new Error(`OTLP destination ${index + 1} timeout must be between 100 and 120000 milliseconds.`)
+      }
+    }
   }
 
-  private async writeSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>): Promise<void> {
+  private async writeSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>, tracing?: OtelTracingSettings): Promise<void> {
     const configuration = vscode.workspace.getConfiguration()
     await configuration.update('deepseekHarness.provider', message.provider.trim(), vscode.ConfigurationTarget.Global)
     await configuration.update('deepseekHarness.baseUrl', message.baseUrl.trim(), vscode.ConfigurationTarget.Global)
     await configuration.update('deepseekHarness.sandboxMode', message.sandboxMode, vscode.ConfigurationTarget.Global)
+    if (tracing !== undefined) {
+      this.applyingTracingConfig = true
+      try {
+        await this.syncTracingSecrets(tracing)
+        await configuration.update('deepseekHarness.otelTracing', persistedOtelTracingSettings({
+          ...tracing,
+          serviceName: tracing.serviceName.trim() || 'helix',
+        }), vscode.ConfigurationTarget.Global)
+      } finally {
+        this.applyingTracingConfig = false
+      }
+    }
 
     if (this.skillPickerEnabled() && message.decisions) {
       const { enabled, useMainConnection, format, baseUrl, model } = message.decisions
@@ -520,19 +711,30 @@ export class SettingsController {
     }
   }
 
-  private async createSnapshot(previousServers: PersistedMcpServer[], nextServers: PersistedMcpServer[]): Promise<SettingsSnapshot> {
+  private async createSnapshot(previousServers: PersistedMcpServer[], nextServers: PersistedMcpServer[], nextTracing?: OtelTracingSettings): Promise<SettingsSnapshot> {
     const keys = new Set<string>([API_KEY_SECRET, DECISIONS_KEY_SECRET])
     for (const server of [...previousServers, ...nextServers]) {
       for (const name of server.envKeys) keys.add(mcpSecretKey(server.serverName, name))
     }
+    const configuration = vscode.workspace.getConfiguration('deepseekHarness')
+    const previousTracing = normalizeOtelTracingSettings(configuration.get<unknown>('otelTracing', {}))
+    const previousTracingIds = new Set(previousTracing.endpoints.map((endpoint) => endpoint.id))
+    for (const endpoint of previousTracing.endpoints) {
+      if (endpoint.authMethod !== 'none') keys.add(otelEndpointSecretKey(endpoint.id))
+    }
     const secrets = new Map<string, string | undefined>()
     for (const key of keys) secrets.set(key, await this.options.context.secrets.get(key))
-    const configuration = vscode.workspace.getConfiguration('deepseekHarness')
+    for (const endpoint of nextTracing?.endpoints ?? []) {
+      if (endpoint.authMethod === 'none' || previousTracingIds.has(endpoint.id)) continue
+      const key = otelEndpointSecretKey(endpoint.id)
+      if (endpoint.credentialDraft.trim()) secrets.set(key, undefined)
+    }
     return {
       provider: configuration.get<string>('provider', 'deepseek-official'),
       baseUrl: configuration.get<string>('baseUrl', ''),
       decisions: this.readDecisionSettings(),
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
+      tracing: previousTracing,
       mcpServers: previousServers,
       apiKey: secrets.get(API_KEY_SECRET),
       secrets,
@@ -547,12 +749,16 @@ export class SettingsController {
       ['deepseekHarness.baseUrl', snapshot.baseUrl],
       ['deepseekHarness.decisions', snapshot.decisions],
       ['deepseekHarness.sandboxMode', snapshot.sandboxMode],
+      ['deepseekHarness.otelTracing', persistedOtelTracingSettings(snapshot.tracing)],
       ['deepseekHarness.mcpServers', snapshot.mcpServers],
     ] as const) {
       try {
+        if (key === 'deepseekHarness.otelTracing') this.applyingTracingConfig = true
         await configuration.update(key, value, vscode.ConfigurationTarget.Global)
       } catch (error) {
         errors.push(error)
+      } finally {
+        if (key === 'deepseekHarness.otelTracing') this.applyingTracingConfig = false
       }
     }
     for (const [key, value] of snapshot.secrets) {
@@ -582,6 +788,28 @@ function validateHttpUrl(value: string, label: string): void {
     throw new Error(`${label} must be a valid HTTP or HTTPS URL.`)
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error(`${label} must use HTTP or HTTPS.`)
+}
+
+function validateGrpcTarget(value: string, index: number): void {
+  if (value.startsWith('unix://')) {
+    try {
+      const parsed = new URL(value)
+      if (!parsed.pathname) throw new Error()
+    } catch {
+      throw new Error(`OTLP destination ${index + 1} needs a valid gRPC target.`)
+    }
+    return
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `https://${value}`)
+  } catch {
+    throw new Error(`OTLP destination ${index + 1} needs a valid gRPC target.`)
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.host) {
+    throw new Error(`OTLP destination ${index + 1} needs a valid gRPC target.`)
+  }
 }
 
 function normalizeMcpServer(server: SidebarMcpServer, index: number): PersistedMcpServer {

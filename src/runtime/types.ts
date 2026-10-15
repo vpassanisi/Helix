@@ -10,6 +10,12 @@ export type { PersistedMcpServer, RuntimeMcpServer } from './mcp.js'
 
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 
+export interface RuntimePluginBundle {
+  id: string
+  modulePath: string
+  config: Record<string, unknown>
+}
+
 export interface RuntimeOptions {
   cwd: string
   provider: string
@@ -22,6 +28,7 @@ export interface RuntimeOptions {
   dshHome?: string
   /** Optional isolated session store used by short-lived tooling runtimes. */
   sessionStorageRoot?: string
+  plugins?: RuntimePluginBundle[]
   sandboxMode: SandboxMode
   mcpServers: RuntimeMcpServer[]
 }

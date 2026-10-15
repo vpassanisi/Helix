@@ -4,6 +4,7 @@ import type { BinaryThinkingMode, ChatTemplateValue, ReasoningFormat } from '../
 import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer, UserQuestionView } from '../shared/user-question.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
+import type { OtelTracingSettings } from '../shared/otel-tracing.js'
 export type { RequestPreviewResult } from '../runtime/control-protocol.js'
 
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
@@ -50,6 +51,7 @@ export interface SidebarSettings {
   skillPickerEnabled?: boolean
   decisions?: DecisionSettings & { apiKeyConfigured: boolean }
   sandboxMode: SandboxMode
+  tracing?: OtelTracingSettings
   mcpServers: SidebarMcpServerSetting[]
 }
 
@@ -142,6 +144,7 @@ export type SidebarMessage =
       decisionsApiKey?: string
       clearDecisionsApiKey?: boolean
       sandboxMode: SandboxMode
+      tracing?: OtelTracingSettings
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
   | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[]; skillDraft?: SkillDraft; skillOverrides?: SkillOverrides }

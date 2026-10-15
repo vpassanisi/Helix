@@ -10,6 +10,7 @@ import { isRecord } from '../shared/value-utils.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
+import { isOtelTracingSettings, type OtelTracingSettings } from '../shared/otel-tracing.js'
 
 export type SidebarMessage =
   | { type: 'loadSkills'; sessionId: string }
@@ -26,6 +27,7 @@ export type SidebarMessage =
       decisionsApiKey?: string
       clearDecisionsApiKey?: boolean
       sandboxMode: SandboxMode
+      tracing?: OtelTracingSettings
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
   | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[]; skillDraft?: SkillDraft; skillOverrides?: SkillOverrides }
@@ -65,6 +67,7 @@ export interface SidebarSettings {
   skillPickerEnabled?: boolean
   decisions?: DecisionSettings & { apiKeyConfigured: boolean }
   sandboxMode: SandboxMode
+  tracing?: OtelTracingSettings
   mcpServers: SidebarMcpServerSetting[]
 }
 
@@ -229,6 +232,7 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
       'baseUrl' in value && typeof value.baseUrl === 'string' &&
       'clearApiKey' in value && typeof value.clearApiKey === 'boolean' &&
       'sandboxMode' in value && isSandboxMode(value.sandboxMode) &&
+      (value.tracing === undefined || isOtelTracingSettings(value.tracing)) &&
       (!('apiKey' in value) || typeof value.apiKey === 'string') &&
       (value.decisions === undefined || isDecisionSettings(value.decisions)) &&
       (value.decisionsApiKey === undefined || typeof value.decisionsApiKey === 'string') &&

@@ -16,6 +16,7 @@ import {
   type ControlEvent,
 } from './control-bridge.js'
 import { builtInWebPatchLines, mcpEnvironmentVariable, mcpPatchLines } from './mcp.js'
+import { pluginPatchLines } from './plugins.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
 import type { UserQuestionAnswer } from '../shared/user-question.js'
 import { stringValue } from '../shared/value-utils.js'
@@ -139,11 +140,11 @@ export class HarnessRuntime {
       this.handle = handle
       this.attachSessionRoutes(client, generation)
 
-      await client.initialize({
+      await waitWithTimeout(client.initialize({
         cwd: options.cwd,
         provider: options.provider,
         model: options.model,
-      })
+      }), 30_000, 'DSH did not finish initializing within 30 seconds.')
       const connected = await controlBridge.waitForConnection(5_000)
       if (!connected) {
         throw new ControlBridgeError('The DSH control bridge did not connect.', 'BRIDGE_TIMEOUT')
@@ -270,7 +271,12 @@ export class HarnessRuntime {
       return
     }
 
-    await this.cleanupHandle(handle)
+    try {
+      await this.cleanupHandle(handle)
+    } catch (error) {
+      this.setState({ state: 'error', message: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
     this.setState({ state: 'stopped' })
   }
 
@@ -377,7 +383,10 @@ export class HarnessRuntime {
       await this.cleanupHandle(handle).catch((error) => this.reportLifecycleError(error))
       return
     }
-    if (client !== undefined) await client.close().catch((error) => this.reportLifecycleError(error))
+    if (client !== undefined) {
+      await waitWithTimeout(client.close(), 15_000, 'Timed out while closing the DSH runtime.')
+        .catch((error) => this.reportLifecycleError(error))
+    }
     await controlBridge.close().catch((error) => this.reportLifecycleError(error))
     if (contextPatch !== undefined) {
       await rm(contextPatch.directory, { recursive: true, force: true }).catch((error) => this.reportLifecycleError(error))
@@ -393,7 +402,7 @@ export class HarnessRuntime {
       route.client = undefined
     }
     try {
-      await handle.client.close()
+      await waitWithTimeout(handle.client.close(), 15_000, 'Timed out while closing the DSH runtime.')
     } finally {
       if (this.handle === handle) this.handle = undefined
       try {
@@ -507,6 +516,7 @@ export class HarnessRuntime {
       '    - id: helix-question-tool',
       `      name: ${yamlString(new URL('./dsh-question-tool-plugin.js', import.meta.url).href)}`,
     )
+    patchLines.push(...pluginPatchLines(options.plugins ?? []))
     if (options.sessionStorageRoot !== undefined) {
       patchLines.push(
         '- id: sessions',
@@ -557,6 +567,20 @@ export class HarnessRuntime {
     } catch {
       // Diagnostics must not break runtime cleanup.
     }
+  }
+}
+
+async function waitWithTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
   }
 }
 

@@ -2,6 +2,7 @@
   import type { ComponentProps } from 'svelte'
   import ConnectionSettings from '../../src/webview/components/ConnectionSettings.svelte'
   import type { DecisionSettings } from '../../src/shared/skills.js'
+  import { DEFAULT_OTEL_TRACING_SETTINGS, type OtelTracingSettings } from '../../src/shared/otel-tracing.js'
   import type { SandboxMode } from '../../src/webview/types.js'
 
   let { args }: { args: ComponentProps<typeof ConnectionSettings> } = $props()
@@ -11,6 +12,7 @@
   let clearApiKey = $state(false)
   let sandboxMode = $state<SandboxMode>('workspace-write')
   let decisions = $state<DecisionSettings>({ enabled: false, useMainConnection: true, format: 'typesafe', baseUrl: '', model: '' })
+  let tracing = $state<OtelTracingSettings>({ ...DEFAULT_OTEL_TRACING_SETTINGS })
   let decisionApiKey = $state('')
   let clearDecisionApiKey = $state(false)
   let statusText = $state('')
@@ -23,6 +25,7 @@
     clearApiKey = args.clearApiKey
     sandboxMode = args.sandboxMode
     decisions = structuredClone($state.snapshot(args.decisions))
+    tracing = structuredClone($state.snapshot(args.tracing))
     decisionApiKey = args.decisionApiKey
     clearDecisionApiKey = args.clearDecisionApiKey
   })
@@ -42,6 +45,7 @@
     bind:apiKey
     bind:clearApiKey
     bind:sandboxMode
+    bind:tracing
     bind:decisions
     bind:decisionApiKey
     bind:clearDecisionApiKey

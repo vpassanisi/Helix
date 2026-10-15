@@ -2,7 +2,7 @@
   "name": "helix-vscode",
   "displayName": "Helix",
   "description": "A VS Code sidebar Webview UI for Helix.",
-  "version": "0.0.84",
+  "version": "0.0.97",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -139,6 +139,116 @@
             }
           }
         },
+        "deepseekHarness.otelTracing": {
+          "type": "object",
+          "default": {
+            "enabled": false,
+            "serviceName": "helix",
+            "endpoints": [],
+            "capturePrompts": false,
+            "captureResponses": false,
+            "captureToolArguments": false,
+            "maxContentLength": 8192
+          },
+          "additionalProperties": false,
+          "description": "Optional OTLP trace export through the bundled DSH tracing plugin. Every trace is sent to each configured destination. Content capture is off by default.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "serviceName": {
+              "type": "string",
+              "default": "helix"
+            },
+            "endpoints": {
+              "type": "array",
+              "default": [],
+              "description": "Each finished trace is exported to every listed destination.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Complete HTTP traces URL including /v1/traces, or a gRPC target such as collector:4317."
+                  },
+                  "protocol": {
+                    "type": "string",
+                    "enum": [
+                      "http/protobuf",
+                      "grpc"
+                    ],
+                    "default": "http/protobuf"
+                  },
+                  "headersEnv": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional environment variable containing comma-separated key=value headers."
+                  },
+                  "timeoutMs": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 120000,
+                    "default": 5000
+                  }
+                }
+              }
+            },
+            "capturePrompts": {
+              "type": "boolean",
+              "default": false
+            },
+            "captureResponses": {
+              "type": "boolean",
+              "default": false
+            },
+            "captureToolArguments": {
+              "type": "boolean",
+              "default": false
+            },
+            "maxContentLength": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 65536,
+              "default": 8192
+            }
+          }
+        },
+        "deepseekHarness.plugins": {
+          "type": "array",
+          "default": [],
+          "description": "Additional local DSH plugin bundles. Only add modules you trust; enabled plugins execute inside the DSH runtime.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "path",
+              "enabled"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "path": {
+                "type": "string",
+                "description": "Absolute path to a local JavaScript bundle. Relative paths resolve from the Helix extension folder."
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": false
+              },
+              "config": {
+                "type": "object",
+                "additionalProperties": true,
+                "default": {}
+              }
+            }
+          }
+        },
         "deepseekHarness.dshBin": {
           "type": "string",
           "default": "",
@@ -165,7 +275,9 @@
         "deepseekHarness.experimentalSkillPicker": {
           "type": "boolean",
           "default": false,
-          "tags": ["experimental"],
+          "tags": [
+            "experimental"
+          ],
           "description": "Enable the experimental Skills drawer and decisions connection controls. When off, skill routing and preloading are disabled; the agent can still discover and load skills normally."
         },
         "deepseekHarness.decisions": {
@@ -213,8 +325,9 @@
   },
   "scripts": {
     "clean": "node scripts/clean-output.mjs",
-    "compile": "npm run clean && npm run build:webview && tsc -p .",
+    "compile": "npm run clean && npm run build:webview && npm run build:plugins && tsc -p .",
     "build:webview": "vite build --config vite.webview.config.ts",
+    "build:plugins": "tsdown plugins/dsh-otel-plugin/src/index.ts --format esm --out-dir out/plugins/dsh-otel-plugin --clean",
     "check:webview": "svelte-check --tsconfig ./tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.ts",
     "watch": "tsc -p . --watch",
@@ -225,12 +338,22 @@
     "check:storybook": "svelte-check --tsconfig ./tsconfig.storybook.json"
   },
   "dependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-attachment": "0.1.5-rc.1",
     "@deepseek-ai/dsh-llm-deepseek": "0.1.5-rc.1",
     "@deepseek-ai/dsh-sdk-client": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-sdk-protocol": "0.1.5-rc.1",
     "@deepseek-ai/dsh-skill": "0.1.5-rc.1",
     "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@grpc/grpc-js": "^1.14.3",
     "@lucide/svelte": "^1.43.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.223.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.223.0",
+    "@opentelemetry/resources": "^2.12.0",
+    "@opentelemetry/sdk-trace": "^2.12.0",
     "basecoat-css": "^1.0.2",
     "dompurify": "^3.4.15",
     "marked": "^18.0.12",
@@ -246,10 +369,53 @@
     "storybook": "^10.6.2",
     "svelte-check": "^4.7.6",
     "tailwindcss": "^4.3.3",
+    "tsdown": "^0.23.1",
     "typescript": "^6.0.3",
     "vite": "^8.2.2"
   },
   "enabledApiProposals": [
     "browser"
-  ]
+  ],
+  "overrides": {
+    "@deepseek-ai/dsh-attachment": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-brand": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-persistence": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-scope": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-invariants": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-timeout": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-settings": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-fs": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-sandbox": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-query": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tool-todo": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-util-values": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-projection": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-code-runtime": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-user-approval": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-title": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-session-projection-cache": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-storage-domain": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-storage": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-util-time": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-util-workspace-path": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-bash-local": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-shell": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-subprocess": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-http-proxy": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-compaction": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-commands": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-anonymous-user-id": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-home-paths": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-util-crypto": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-hook-protocol": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-jobs": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-authorization": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-credentials": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-sdk-protocol": "0.1.5-rc.1"
+  }
 }

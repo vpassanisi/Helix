@@ -13,6 +13,7 @@
   import CompactionCard from './components/CompactionCard.svelte'
   import AboutSettings from './components/AboutSettings.svelte'
   import type { ExtensionInfo } from '../shared/extension-info.js'
+  import { DEFAULT_OTEL_TRACING_SETTINGS, type OtelTracingSettings } from '../shared/otel-tracing.js'
   import {
     preferredReasoningEffort,
     selectableReasoningEfforts,
@@ -101,6 +102,7 @@
   let routingEpoch = $state(0)
   let pendingSubmission = $state<{ text: string; userId: number }>()
   let settings = $state<SidebarSettings | undefined>()
+  let tracing = $state<OtelTracingSettings>({ ...DEFAULT_OTEL_TRACING_SETTINGS })
   const skillPickerEnabled = $derived(settings?.skillPickerEnabled === true)
 
   $effect(() => {
@@ -190,7 +192,8 @@
   })
 
   function post(message: SidebarMessage): void {
-    vscode.postMessage(message)
+    // VS Code's transport cannot clone Svelte's nested state proxies.
+    vscode.postMessage($state.snapshot(message))
   }
 
   function handleMessage(message: IncomingMessage): void {
@@ -251,6 +254,10 @@
         settingsRestarting = false
         modelChanging = false
         setSettingsStatus('Saved. Runtime ready.', 'success')
+      } else if (runtimeState === 'error' && settingsRestarting) {
+        settingsRestarting = false
+        modelChanging = false
+        setSettingsStatus('Runtime failed to restart.', 'warning')
       }
       if (message.resetTranscript) {
         resetTranscript()
@@ -444,6 +451,7 @@
     contextWindowTokens = contextWindowOverride
     baseUrl = next.baseUrl
     sandboxMode = next.sandboxMode
+    tracing = { ...DEFAULT_OTEL_TRACING_SETTINGS, ...next.tracing }
     apiKey = ''
     clearApiKey = false
     decisions = { ...DEFAULT_DECISION_SETTINGS, ...next.decisions }
@@ -1248,6 +1256,7 @@
       provider = settings.provider
       baseUrl = settings.baseUrl
       sandboxMode = settings.sandboxMode
+      tracing = { ...DEFAULT_OTEL_TRACING_SETTINGS, ...settings.tracing }
       apiKey = ''
       clearApiKey = false
       decisions = { ...DEFAULT_DECISION_SETTINGS, ...settings.decisions }
@@ -1283,15 +1292,21 @@
   function saveSettings(): void {
     settingsRestarting = true
     setSettingsStatus('Applying settings…', 'warning')
-    post({
-      type: 'saveSettings',
-      provider,
-      baseUrl,
-      apiKey,
-      clearApiKey,
-      ...(skillPickerEnabled ? { decisions: { ...decisions }, decisionsApiKey, clearDecisionsApiKey } : {}),
-      sandboxMode,
-    })
+    try {
+      post({
+        type: 'saveSettings',
+        provider,
+        baseUrl,
+        apiKey,
+        clearApiKey,
+        ...(skillPickerEnabled ? { decisions: { ...decisions }, decisionsApiKey, clearDecisionsApiKey } : {}),
+        sandboxMode,
+        tracing,
+      })
+    } catch (error) {
+      settingsRestarting = false
+      setSettingsStatus(`Could not send connection settings: ${error instanceof Error ? error.message : String(error)}`, 'warning')
+    }
   }
 
   function saveMcpServers(): void {
@@ -1380,6 +1395,7 @@
           bind:apiKey
           bind:clearApiKey
           bind:sandboxMode
+          bind:tracing
           bind:decisions
           bind:decisionApiKey={decisionsApiKey}
           bind:clearDecisionApiKey={clearDecisionsApiKey}

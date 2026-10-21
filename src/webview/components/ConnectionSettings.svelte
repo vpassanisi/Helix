@@ -110,7 +110,7 @@
 
   <div class="grid gap-1.5" role="group">
     <label class="text-[var(--muted-foreground)] text-[10px] tracking-[.08em] uppercase" for="base-url">API base URL</label>
-    <input id="base-url" class="input" type="url" bind:value={baseUrl} placeholder="https://api.deepseek.com" />
+    <input id="base-url" class="input" type="url" bind:value={baseUrl} placeholder={provider === 'deepseek-official' ? 'https://api.deepseek.com/anthropic' : 'https://api.example.com/v1'} />
     <small class="flex items-center gap-1 text-[var(--muted-foreground)] text-[10px] leading-[1.4]">Leave empty to use the provider default.</small>
   </div>
 
@@ -260,7 +260,7 @@
         </div>
         <div class="field min-w-0" role="group">
           <label for="otel-max-content">Max captured length</label>
-          <input id="otel-max-content" class="input" type="number" min="64" max="65536" step="256" bind:value={tracing.maxContentLength} />
+          <input id="otel-max-content" class="input" type="number" min="64" max="65536" step="64" bind:value={tracing.maxContentLength} />
         </div>
       </div>
 

@@ -2,6 +2,7 @@ import { DEFAULT_DECISION_SETTINGS, decisionEndpoint, type DecisionSettings } fr
 import type { DecisionConnection } from './decision-client.js'
 import * as vscode from 'vscode'
 import { ControlBridgeError } from '../runtime/control-bridge.js'
+import { resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { mcpSecretKey } from '../runtime/mcp.js'
 import { configuredPluginBundles, createOtelTracingPlugin } from '../runtime/plugins.js'
 import {
@@ -120,9 +121,16 @@ export class SettingsController {
     const configuredBaseUrl = configuration.get<string>('baseUrl', '').trim()
     const baseUrl = configuredBaseUrl || (provider === 'deepseek-official' ? 'https://api.deepseek.com' : '')
     const endpoints = modelEndpointCandidates(baseUrl)
+    const builtInModels = provider === 'deepseek-official'
+      ? resolveAdapterOptions({}).models.map((model) => ({
+        id: model.id,
+        ...(model.name !== model.id ? { displayName: model.name } : {}),
+        ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
+      }))
+      : []
 
     if (endpoints.length === 0) {
-      this.postDiscoveredModels([], 'Set an API base URL to discover available models.')
+      this.postDiscoveredModels(builtInModels, 'Set an API base URL to discover available models.')
       return
     }
 
@@ -134,14 +142,14 @@ export class SettingsController {
     for (const endpoint of endpoints) {
       try {
         const models = await fetchModelEndpoint(endpoint, headers)
-        this.postDiscoveredModels(models)
+        this.postDiscoveredModels(mergeDiscoveredModels(builtInModels, models))
         return
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error)
       }
     }
 
-    this.postDiscoveredModels([], `Could not fetch models. ${lastError}`)
+    this.postDiscoveredModels(builtInModels, `Could not fetch models. ${lastError}`)
   }
 
   async loadModelCatalog(): Promise<void> {
@@ -159,7 +167,7 @@ export class SettingsController {
       entry[0] !== '' && typeof entry[1] === 'string' && entry[1].trim() !== ''))
   }
 
-  async resolveReasoningEffort(selection: string | null, modelId = vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-v4-flash')): Promise<string | undefined> {
+  async resolveReasoningEffort(selection: string | null, modelId = vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-flash')): Promise<string | undefined> {
     const models = await this.readModelCatalog()
     return resolveSavedModelReasoningEffort(models, modelId, selection, this.reasoningEffortHistory()[modelId])
   }
@@ -188,7 +196,7 @@ export class SettingsController {
         previousModels,
         nextDrafts,
         {
-          model: configuration.get<string>('model', 'deepseek-v4-flash'),
+          model: configuration.get<string>('model', 'deepseek-flash'),
           contextWindow: configuration.get<number>('contextWindow', 0),
         },
       )
@@ -317,7 +325,7 @@ export class SettingsController {
     return {
       cwd: workspaceFolder?.uri.fsPath ?? vscode.env.appRoot,
       provider: configuration.get<string>('provider', 'deepseek-official'),
-      model: configuration.get<string>('model', 'deepseek-v4-flash'),
+      model: configuration.get<string>('model', 'deepseek-flash'),
       apiKey: await this.options.context.secrets.get(API_KEY_SECRET),
       baseUrl: configuration.get<string>('baseUrl', '') || undefined,
       contextWindow: contextWindow > 0 ? contextWindow : undefined,
@@ -368,7 +376,7 @@ export class SettingsController {
     const configuration = vscode.workspace.getConfiguration('deepseekHarness')
     return {
       provider: configuration.get<string>('provider', 'deepseek-official'),
-      model: configuration.get<string>('model', 'deepseek-v4-flash'),
+      model: configuration.get<string>('model', 'deepseek-flash'),
       contextWindow: configuration.get<number>('contextWindow', 0),
       baseUrl: configuration.get<string>('baseUrl', ''),
       dshHome: configuration.get<string>('dshHome', ''),
@@ -777,6 +785,12 @@ async function fetchModelEndpoint(endpoint: string, headers: Record<string, stri
   const response = await fetch(endpoint, { headers, signal: AbortSignal.timeout(10_000) })
   if (!response.ok) throw new Error(`${endpoint} returned HTTP ${response.status}.`)
   return parseModelCatalog(await response.json())
+}
+
+function mergeDiscoveredModels(defaultModels: DiscoveredModel[], fetchedModels: DiscoveredModel[]): DiscoveredModel[] {
+  const models = new Map(defaultModels.map((model) => [model.id, model]))
+  for (const model of fetchedModels) models.set(model.id, { ...models.get(model.id), ...model })
+  return [...models.values()]
 }
 
 function validateHttpUrl(value: string, label: string): void {

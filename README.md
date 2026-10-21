@@ -24,19 +24,19 @@ To build an installable VSIX, run `npm run package`. The package command stages 
 
 After launching the Extension Development Host with `F5`, run `npm run watch:webview` in a separate terminal. While the extension is running, edits to `src/webview` rebuild the bundle and refresh the sidebar automatically. The watcher is enabled only in Extension Development Host mode.
 
-The extension uses `@deepseek-ai/dsh-sdk-client` to launch the matching bundled DSH SDK profile over stdio JSON-RPC. With no `deepseekHarness.dshBin`, it uses the installed `@deepseek-ai/dsh` package. Set `deepseekHarness.dshBin` to use a specific dsh CLI module.
+The extension uses `@deepseek-ai/dsh-sdk-client` to launch the matching bundled DSH SDK profile over stdio JSON-RPC. With no `deepseekHarness.dshBin`, it uses the installed `@deepseek-ai/dsh` package. A custom `deepseekHarness.dshBin` must use DSH `0.2.1-rc.2` to match the bundled SDK client.
 
 ## Runtime settings
 
-Open the sidebar and select the gear button, then **Connection Settings**. Configure the provider route, API base URL, API key, and optional skill selection connection. Models and context windows are discovered from the provider's models endpoint. API keys are stored in VS Code SecretStorage and are passed to the Harness subprocess as `DEEPSEEK_API_KEY`; they are not written to `settings.json`. The API URL is passed as `DEEPSEEK_BASE_URL`.
+Open the sidebar and select the gear button, then **Connection Settings**. Configure the provider route, API base URL, API key, and optional skill selection connection. The DeepSeek official picker includes the DSH catalog; other models are discovered from the provider's models endpoint. API keys are stored in VS Code SecretStorage and are passed to the Harness subprocess as `DEEPSEEK_API_KEY`; they are not written to `settings.json`. The API URL is passed as `DEEPSEEK_BASE_URL`.
 
 Custom OpenAI-compatible models may report a generic context fallback. The picker uses the selected model's reported context length when available; for an Unsloth `unsloth/gpt-oss-20b-GGUF` setup, that is `131072`. The extension passes this value to DSH as a startup patch for both the DeepSeek and OpenAI-compatible model adapters, so DSH's automatic compaction threshold is based on that limit.
 
 The full `sdk` profile includes automatic compaction. When DSH reaches its configured threshold, it emits compaction events, summarizes older context, keeps the recent conversation tail, and continues the session. The sidebar displays that lifecycle in the transcript.
 
-The chat model picker discovers models from an OpenAI-compatible `GET /models` endpoint. If the configured base URL does not end in `/v1`, the extension also tries `/v1/models`. It sends the saved API key as a Bearer token, reads `data[].id`, and uses `native_context_length`, `max_context_length`, or `context_length` when present. Selecting a discovered model saves its model ID and context length, then restarts DSH with the selected values.
+For custom routes, the chat model picker discovers models from an OpenAI-compatible `GET /models` endpoint. If the configured base URL does not end in `/v1`, the extension also tries `/v1/models`. It sends the saved API key as a Bearer token, reads `data[].id`, and uses `native_context_length`, `max_context_length`, or `context_length` when present. The DeepSeek official picker also includes DSH's built-in catalog, including V4.1 Flash. Selecting a discovered model saves its model ID and context length, then restarts DSH with the selected values.
 
-Saving connection settings automatically starts or restarts the runtime with the new values. The default provider is `deepseek-official`, the default model is `deepseek-v4-flash`, and the default API URL is `https://api.deepseek.com`.
+Saving connection settings automatically starts or restarts the runtime with the new values. The default provider is `deepseek-official` and the default model is `deepseek-flash` (DeepSeek V4.1 Flash in DSH 0.2.1-rc.2). With an empty API URL, inference uses the DSH Messages endpoint; custom OpenAI-compatible routes use the configured provider, API URL, and API key.
 
 ## Skill selection
 

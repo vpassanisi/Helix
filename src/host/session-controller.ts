@@ -32,6 +32,11 @@ interface BufferedApproval {
   timer: ReturnType<typeof setTimeout>
 }
 
+interface SessionCompletionWait {
+  pending: number
+  deferredStatus?: RoutedNotification
+}
+
 export interface SessionControllerOptions {
   runtime: HarnessRuntime
   sidebar: SidebarProvider
@@ -55,6 +60,7 @@ export class SessionController {
   private readonly pendingApprovals = new Map<string, PendingApproval>()
   private readonly bufferedApprovals = new Map<string, BufferedApproval>()
   private readonly pendingQuestions = new Map<string, PendingUserQuestion & { resolving: boolean }>()
+  private readonly completionWaits = new Map<string, SessionCompletionWait>()
   private promptGeneration = 0
   private disposed = false
   private activeReasoningEffort: string | undefined
@@ -110,6 +116,7 @@ export class SessionController {
   async newSession(): Promise<void> {
     const previousSessionId = this.activeSessionId
     ++this.promptGeneration
+    this.completionWaits.delete(previousSessionId)
 
     try {
       await this.options.runtime.clearSkills?.(previousSessionId).catch(() => undefined)
@@ -143,6 +150,8 @@ export class SessionController {
       maxBrowserCharacters,
     )
 
+    const releaseCompletionWait = this.beginCompletionWait(sessionId)
+    let promptAccepted = false
     try {
       const reasoningEffort = await this.options.resolveReasoningEffort(reasoningEffortSelection, modelId)
       if (this.options.getRuntimeState() !== 'ready') {
@@ -157,16 +166,21 @@ export class SessionController {
       await this.options.runtime.setReasoningEffort(sessionId, reasoningEffort ?? null)
       if (!this.isCurrent(generation, sessionId)) return false
       await this.options.runtime.prompt(sessionId, contentBlocks)
+      promptAccepted = true
+      void this.waitForSessionCompletion(sessionId, releaseCompletionWait)
       if (!this.isCurrent(generation, sessionId)) return false
       this.activeReasoningEffort = reasoningEffort
       await this.options.rememberReasoningEffort(modelId, reasoningEffort)
       this.options.sidebar.post({ type: 'accepted', sessionId, modelId, reasoningEffort })
       return true
     } catch (error) {
+      if (!promptAccepted) releaseCompletionWait()
       if (skills) await this.options.runtime.clearSkills(sessionId).catch(() => undefined)
       this.options.changeTracker.finish(sessionId)
       if (this.isCurrent(generation, sessionId)) this.options.onError(error)
       return false
+    } finally {
+      if (!promptAccepted) releaseCompletionWait()
     }
   }
 
@@ -270,6 +284,7 @@ export class SessionController {
   async dispose(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.completionWaits.delete(this.activeSessionId)
     if (this.pendingQuestions.size) await this.cancelTurn()
     ++this.promptGeneration
     await this.rejectPendingApprovals()
@@ -282,13 +297,65 @@ export class SessionController {
   private registerSessionRoute(sessionId: string): void {
     this.sessionRoute = this.options.runtime.registerSession(sessionId, (routed) => {
       this.trackSessionLineage(routed.notification)
-      this.trackRuntimeChanges(routed.rootSessionId, routed.notification)
-      this.options.sidebar.post({
-        type: 'notification',
-        sessionId: routed.rootSessionId,
-        notification: routed.notification,
-      })
+      if (this.deferCompletionStatus(routed)) return
+      this.forwardRoutedNotification(routed)
     })
+  }
+
+  private deferCompletionStatus(routed: RoutedNotification): boolean {
+    const notification = routed.notification
+    if (notification.method !== 'session.status') return false
+    const params = notification.params ?? {}
+    if (params.sessionId !== routed.rootSessionId) return false
+    const pending = this.completionWaits.get(routed.rootSessionId)
+    if (pending === undefined) return false
+    if (params.status === 'running') {
+      pending.deferredStatus = undefined
+      return false
+    }
+    pending.deferredStatus = routed
+    return true
+  }
+
+  private forwardRoutedNotification(routed: RoutedNotification): void {
+    this.trackRuntimeChanges(routed.rootSessionId, routed.notification)
+    this.options.sidebar.post({
+      type: 'notification',
+      sessionId: routed.rootSessionId,
+      notification: routed.notification,
+    })
+  }
+
+  private beginCompletionWait(sessionId: string): () => void {
+    let pending = this.completionWaits.get(sessionId)
+    if (pending === undefined) {
+      pending = { pending: 0 }
+      this.completionWaits.set(sessionId, pending)
+    }
+    pending.pending += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      if (this.completionWaits.get(sessionId) !== pending) return
+      pending.pending -= 1
+      if (pending.pending > 0) return
+      this.completionWaits.delete(sessionId)
+      const deferredStatus = pending.deferredStatus
+      if (deferredStatus !== undefined && this.activeSessionId === sessionId && !this.disposed) {
+        this.forwardRoutedNotification(deferredStatus)
+      }
+    }
+  }
+
+  private async waitForSessionCompletion(sessionId: string, releaseCompletionWait: () => void): Promise<void> {
+    try {
+      await this.options.runtime.waitForSession(sessionId)
+    } catch (error) {
+      if (this.activeSessionId === sessionId && !this.disposed) this.options.onError(error)
+    } finally {
+      releaseCompletionWait()
+    }
   }
 
   private trackSessionLineage(notification: RoutedNotification['notification']): void {
@@ -304,7 +371,6 @@ export class SessionController {
     if (notification.method !== 'session.status') return
     const params = notification.params ?? {}
     if (params.sessionId !== rootSessionId) return
-    if (params.status !== 'running') this.clearPendingQuestions()
     this.options.onRunStatus?.(params.status === 'running')
     if (params.status === 'running') this.options.changeTracker.start(rootSessionId)
     else this.options.changeTracker.finish(rootSessionId)

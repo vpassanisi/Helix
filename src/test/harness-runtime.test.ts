@@ -48,6 +48,7 @@ function fakeClient(calls: string[], promptError?: Error): HarnessClient {
       if (promptError !== undefined) throw promptError
       return 'turn-1'
     },
+    request: async (method: string, params?: object) => { calls.push(`client.request:${method}:${JSON.stringify(params)}`) },
     close: async () => { calls.push('client.close') },
     subscribeSessionTree: () => ({
       close: () => undefined,
@@ -86,6 +87,19 @@ test('cleans up a client that fails while prompting', async () => {
   await assert.rejects(runtime.prompt('session', []), /client disconnected/)
   assert.equal(runtime.currentState, 'error')
   assert.equal(calls.filter((call) => call === 'client.close').length, 1)
+  await runtime.dispose()
+})
+
+test('waits for the DSH session and managed descendants', async () => {
+  const calls: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) => fakeClient(calls),
+  })
+
+  await runtime.start(runtimeOptions())
+  await runtime.waitForSession('root-session')
+  assert.equal(calls.includes('client.request:session/wait:{"sessionId":"root-session"}'), true)
   await runtime.dispose()
 })
 
@@ -131,6 +145,21 @@ test('writes an isolated DSH sessions root into the runtime patch', async () => 
   await runtime.dispose()
 })
 
+test('normalizes the public DeepSeek API root to the DSH Messages endpoint', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+
+  await runtime.start({ ...runtimeOptions(), provider: 'deepseek-official', baseUrl: 'https://api.deepseek.com/v1' })
+  assert.equal(clientOptions?.env?.DEEPSEEK_BASE_URL, 'https://api.deepseek.com/anthropic')
+  await runtime.dispose()
+})
+
 test('writes saved model formats and same-name effort values into the llm-pi-ai route patch', async () => {
   let clientOptions: HarnessClientOptions | undefined
   const runtime = new HarnessRuntime({
@@ -165,7 +194,7 @@ test('writes saved model formats and same-name effort values into the llm-pi-ai 
   const patchPath = clientOptions?.patches?.[0]
   assert.ok(patchPath)
   const patch = await readFile(patchPath, 'utf8')
-  assert.match(patch, /"muse-gateway":\n        models:/)
+  assert.match(patch, /"muse-gateway":\n        api: openai-completions\n        apiKeyEnv: DEEPSEEK_API_KEY\n        baseURL: !!js process\.env\.DEEPSEEK_BASE_URL\n        models:/)
   assert.match(patch, /- id: "muse\/glimmer"\n            name: "Muse Glimmer"\n            contextWindow: 65536/)
   assert.match(patch, /"muse\/glimmer"[\s\S]*?input: \["text", "image"\]/)
   assert.match(patch, /"muse\/template"\n            input: \["text"\]/)
@@ -223,13 +252,13 @@ test('direct DeepSeek Vision settings preserve built-in metadata and add custom 
   const patch = await readFile(patchPath, 'utf8')
   const builtIn = patch.split('      - id: "deepseek-flash"')[1]?.split('      - id: ')[0]
   assert.ok(builtIn)
-  assert.match(builtIn, /name: "DeepSeek-V41-Flash"/)
+  assert.match(builtIn, /name: "DeepSeek-V4\.1-Flash"/)
   assert.match(builtIn, /contextWindow: 65536/)
   assert.match(builtIn, /inputModalities: \["text"\]/)
   assert.match(builtIn, /systemPromptUpdate: "in-history"/)
   assert.doesNotMatch(builtIn, /imagePixelBudget:|imageMaxBytes:/)
   assert.match(patch, /- id: "custom-vision"\n        inputModalities: \["text", "image"\]/)
-  assert.match(patch, /- id: "deepseek-v4-flash-vision-exp"[\s\S]*?inputModalities: \["text", "image"\]/)
+  assert.match(patch, /- id: "deepseek-v4-pro"[\s\S]*?name: "DeepSeek-V4-Pro"/)
   await runtime.dispose()
 })
 

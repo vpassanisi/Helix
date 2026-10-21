@@ -85,6 +85,8 @@ export function builtInWebPatchLines(): string[] {
     '  disabled: true',
     '- id: web-fetch-http',
     '  disabled: true',
+    '- id: web-deepseek-api',
+    '  disabled: true',
     '- id: tool-web',
     '  disabled: true',
   ]

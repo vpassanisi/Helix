@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -184,16 +184,6 @@ test('sends saved reasoning efforts in the configured OpenAI and chat-template r
   await mkdir(dshHome)
   await mkdir(workspace)
   const provider = 'helix-capture-test'
-  const dshSettings = [
-    'llm-pi-ai:',
-    '  providers:',
-    '    ' + provider + ':',
-    '      api: openai-completions',
-    '      baseURL: ' + JSON.stringify(endpoint.baseUrl),
-    '      apiKeyEnv: DEEPSEEK_API_KEY',
-    '',
-  ].join('\n')
-  await writeFile(join(dshHome, 'settings.yaml'), dshSettings, 'utf8')
 
   try {
     for (const configuredModel of [
@@ -218,6 +208,7 @@ test('sends saved reasoning efforts in the configured OpenAI and chat-template r
           provider,
           model: model.id,
           apiKey: 'local-test-key',
+          baseUrl: endpoint.baseUrl,
           dshHome,
           savedModels: models,
           sandboxMode: 'workspace-write',

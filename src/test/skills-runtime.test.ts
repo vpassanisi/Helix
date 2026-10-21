@@ -23,7 +23,7 @@ test('bundled DSH preloads before request one and enforces duplicate/excluded lo
       const delta = toolResults.length || requests.length > 1 ? { role: 'assistant', content: 'Completed.' } : {
         role: 'assistant', tool_calls: ['one', 'three', 'two'].map((name, index) => ({ index, id: `load-${name}`, type: 'function', function: { name: 'skill', arguments: JSON.stringify({ name }) } })),
       }
-      const chunk = (delta: any, reason: string | null) => `data: ${JSON.stringify({ id: 'skill-test', object: 'chat.completion.chunk', created: 1, model: 'deepseek-v4-flash', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`
+      const chunk = (delta: any, reason: string | null) => `data: ${JSON.stringify({ id: 'skill-test', object: 'chat.completion.chunk', created: 1, model: 'test/skill-tool-model', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })
       response.end(chunk(delta, null) + chunk({}, toolResults.length || requests.length > 1 ? 'stop' : 'tool_calls') + 'data: [DONE]\n\n')
     } catch (error) { rejectDone(error); response.writeHead(500); response.end() }
@@ -42,13 +42,15 @@ test('bundled DSH preloads before request one and enforces duplicate/excluded lo
       await mkdir(root, { recursive: true })
       await writeFile(join(root, 'SKILL.md'), `---\nname: ${name}\ndescription: Test skill ${name}\n---\nUNIQUE_INSTRUCTIONS_${name.toUpperCase()} {{literal-template}}\n`)
     }
-    await runtime.start({ cwd: directory, dshHome: directory, sessionStorageRoot: join(directory, 'sessions'), provider: 'deepseek-official',
-      model: 'deepseek-v4-flash', apiKey: 'local-test-only', baseUrl: `http://127.0.0.1:${address.port}`, sandboxMode: 'read-only', mcpServers: [] })
+    await runtime.start({ cwd: directory, dshHome: directory, sessionStorageRoot: join(directory, 'sessions'), provider: 'helix-skill-test',
+      model: 'test/skill-tool-model', savedModels: [{ id: 'test/skill-tool-model' }], apiKey: 'local-test-only',
+      baseUrl: `http://127.0.0.1:${address.port}`, sandboxMode: 'read-only', mcpServers: [] })
     const catalog = await runtime.skillCatalog(sessionId)
     assert.equal(catalog.complete, true)
     assert.ok(catalog.skills.some((skill) => skill.name === 'one'))
     await runtime.stageSkills(sessionId, { include: ['one'], exclude: ['three'], prompt: '/one test' })
     await runtime.prompt(sessionId, [{ type: 'text', text: '/one test' }])
+      await runtime.waitForSession(sessionId)
     await done
     assert.equal(requests.length, 2)
     const first = JSON.stringify(requests[0])
@@ -66,6 +68,7 @@ test('bundled DSH preloads before request one and enforces duplicate/excluded lo
     done = new Promise<void>((resolve, reject) => { resolveDone = resolve; rejectDone = reject })
     await runtime.stageSkills(sessionId, { include: ['two'], exclude: ['one'], prompt: 'next' })
     await runtime.prompt(sessionId, [{ type: 'text', text: 'next' }])
+    await runtime.waitForSession(sessionId)
     await done
     const snapshots = requests.at(-1).messages.map((entry: any) => typeof entry.content === 'string' ? entry.content : JSON.stringify(entry.content))
       .filter((text: string) => text.includes('Current Helix skills snapshot'))

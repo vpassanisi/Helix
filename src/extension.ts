@@ -120,7 +120,7 @@ class ExtensionApp {
       getMaxSelectionCharacters: () => vscode.workspace
         .getConfiguration('deepseekHarness')
         .get<number>('maxSelectionCharacters', 32_000),
-      getSelectedModelId: () => vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-v4-flash'),
+      getSelectedModelId: () => vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-flash'),
       resolveReasoningEffort: (selection, modelId) => this.settings.resolveReasoningEffort(selection, modelId),
       rememberReasoningEffort: async (modelId, effort) => {
         try {

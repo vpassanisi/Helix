@@ -1,6 +1,8 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import {
   HarnessClient,
   type ContentBlock,
@@ -53,6 +55,42 @@ interface ContextPatch {
   directory: string
 }
 
+interface DshRuntimeProcessOptions {
+  command: string
+  args: string[]
+  cwd?: string
+  environment: () => NodeJS.ProcessEnv
+  description: string
+  initializeTimeoutMs: number
+}
+
+const ELECTRON_DSH_LAUNCHER = `
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+
+const require = createRequire(import.meta.url)
+const Module = require('node:module')
+const originalLoad = Module._load
+Module._load = function (request, parent, isMain) {
+  if (request !== 'node-addon-require-builtin') {
+    return Reflect.apply(originalLoad, this, [request, parent, isMain])
+  }
+
+  const requireFromParent = createRequire(parent?.filename ?? import.meta.url)
+  return {
+    requireBuiltin: (moduleId) => requireFromParent(moduleId),
+    isAllowedInternalId: () => true,
+    getBindingInfo: () => ({ mode: 'expose-internals', product: 'require-builtin', backend: 'builtin' }),
+  }
+}
+
+const [dshBin, ...dshArgs] = process.argv.slice(2)
+if (dshBin === undefined) throw new Error('Helix DSH launcher requires a DSH entrypoint.')
+process.argv = [process.argv[0], dshBin, ...dshArgs]
+const { runCli } = await import(pathToFileURL(dshBin).href)
+await runCli()
+`
+
 export class HarnessRuntime {
   private handle: RuntimeHandle | undefined
   private cleanupTask: Promise<void> | undefined
@@ -64,7 +102,7 @@ export class HarnessRuntime {
   private readonly onControlEvent?: (event: ControlEvent) => void
   private readonly onLifecycleError?: (error: unknown) => void
   private readonly createControlBridge: (options: ControlBridgeOptions) => ControlBroker
-  private readonly createClient: (options: HarnessClientOptions) => HarnessClient
+  private readonly createClient: (options: HarnessClientOptions, launcherDirectory?: string) => Promise<HarnessClient> | HarnessClient
   private readonly lifecycleQueue = new SerialTaskQueue()
   private readonly cleanupHandles = new WeakMap<RuntimeHandle, Promise<void>>()
 
@@ -79,7 +117,15 @@ export class HarnessRuntime {
     this.onControlEvent = options.onControlEvent
     this.onLifecycleError = options.onLifecycleError
     this.createControlBridge = options.createControlBridge ?? ((bridgeOptions) => new LocalControlBridge(bridgeOptions))
-    this.createClient = options.createClient ?? ((clientOptions) => new HarnessClient(clientOptions))
+    this.createClient = options.createClient ?? (async (clientOptions, launcherDirectory) => {
+      if (process.versions.electron === undefined || launcherDirectory === undefined) {
+        return new HarnessClient(clientOptions)
+      }
+
+      const launcherPath = join(launcherDirectory, 'dsh-electron-launcher.mjs')
+      await writeFile(launcherPath, ELECTRON_DSH_LAUNCHER, 'utf8')
+      return createElectronHarnessClient(clientOptions, launcherPath)
+    })
   }
 
   get currentState(): RuntimeState {
@@ -129,7 +175,7 @@ export class HarnessRuntime {
       contextPatch = await this.createContextPatch(options)
       const clientOptions = createClientOptions(options, controlBridge, contextPatch)
 
-      client = this.createClient(clientOptions)
+      client = await this.createClient(clientOptions, contextPatch?.directory)
       client.start()
       handle = {
         client,
@@ -165,6 +211,16 @@ export class HarnessRuntime {
     if (handle === undefined || this.state !== 'ready') throw new Error('Helix runtime is not ready')
     try {
       return await handle.client.prompt(sessionId, contentBlocks)
+    } catch (error) {
+      await this.handleClientFailure(handle.client, handle.generation, error)
+      throw error
+    }
+  }
+
+  async waitForSession(sessionId: string): Promise<void> {
+    const handle = this.requireHandle()
+    try {
+      await handle.client.request('session/wait', { sessionId })
     } catch (error) {
       await this.handleClientFailure(handle.client, handle.generation, error)
       throw error
@@ -463,6 +519,9 @@ export class HarnessRuntime {
           '  config:',
           '    providers:',
           `      ${yamlString(options.provider)}:`,
+          '        api: openai-completions',
+          '        apiKeyEnv: DEEPSEEK_API_KEY',
+          '        baseURL: !!js process.env.DEEPSEEK_BASE_URL',
         )
         if (modelProfiles.length > 0) {
           patchLines.push('        models:')
@@ -611,6 +670,57 @@ function createClientOptions(
   }
 }
 
+function createElectronHarnessClient(
+  options: HarnessClientOptions,
+  launcherPath: string,
+): HarnessClient {
+  const callerCwd = process.cwd()
+  const dshBin = options.dshBin === undefined
+    ? resolveBundledDshBin()
+    : resolve(callerCwd, options.dshBin)
+  const profile = options.profile ?? 'sdk'
+  const patches = (options.patches ?? []).map((patch) => resolve(callerCwd, patch))
+  const args = [
+    '--expose-internals',
+    launcherPath,
+    dshBin,
+    '--profile',
+    profile,
+    ...patches.flatMap((patch) => ['--patch', patch]),
+  ]
+  const dshHome = options.dshHome === undefined ? undefined : resolve(callerCwd, options.dshHome)
+  const runtime: DshRuntimeProcessOptions = {
+    command: process.execPath,
+    args,
+    ...(options.processCwd === undefined ? {} : { cwd: resolve(callerCwd, options.processCwd) }),
+    environment: () => ({
+      ...(options.env ?? process.env),
+      ELECTRON_RUN_AS_NODE: '1',
+      ...(dshHome === undefined ? {} : { DSH_HOME: dshHome }),
+    }),
+    description: `dsh profile ${JSON.stringify(profile)}`,
+    initializeTimeoutMs: options.initializeTimeoutMs ?? 10_000,
+  }
+
+  // rc.2's SDK client has a generic process-launch seam used by its own tests.
+  // Its public constructor omits that seam, so keep this cast local to the
+  // pinned rc.2 integration instead of changing the SDK's launch behavior.
+  const ProcessHarnessClient = HarnessClient as unknown as new (
+    clientOptions: HarnessClientOptions,
+    processOptions: DshRuntimeProcessOptions,
+  ) => HarnessClient
+  return new ProcessHarnessClient(options, runtime)
+}
+
+function resolveBundledDshBin(): string {
+  const require = createRequire(import.meta.url)
+  const manifestPath = require.resolve('@deepseek-ai/dsh/package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { bin?: { dsh?: string } }
+  const entry = manifest.bin?.dsh
+  if (entry === undefined) throw new Error('The bundled DSH package does not declare its CLI entrypoint.')
+  return resolve(dirname(manifestPath), entry)
+}
+
 function createRuntimeEnvironment(options: RuntimeOptions, controlBridge: ControlBroker): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -620,13 +730,24 @@ function createRuntimeEnvironment(options: RuntimeOptions, controlBridge: Contro
   }
   if (options.dshHome !== undefined) env.DSH_HOME = options.dshHome
   if (options.apiKey !== undefined) env.DEEPSEEK_API_KEY = options.apiKey
-  if (options.baseUrl !== undefined) env.DEEPSEEK_BASE_URL = options.baseUrl
+  if (options.baseUrl !== undefined) env.DEEPSEEK_BASE_URL = runtimeBaseUrl(options.provider, options.baseUrl)
   for (const server of options.mcpServers) {
     for (const [environmentName, value] of Object.entries(server.env)) {
       env[mcpEnvironmentVariable(server.serverName, environmentName)] = value
     }
   }
   return env
+}
+
+function runtimeBaseUrl(provider: string, baseUrl: string): string {
+  if (provider !== 'deepseek-official') return baseUrl
+  const url = new URL(baseUrl)
+  const path = url.pathname.replace(/\/+$/, '')
+  if (url.hostname === 'api.deepseek.com' && (path === '' || path === '/v1')) {
+    url.pathname = '/anthropic'
+    return url.toString().replace(/\/$/, '')
+  }
+  return baseUrl
 }
 
 function yamlString(value: string): string {

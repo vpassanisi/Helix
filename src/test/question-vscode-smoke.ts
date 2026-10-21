@@ -75,7 +75,7 @@ export async function run(): Promise<void> {
             { label: 'Future projects', description: 'Apply to new projects.' },
           ] }] }),
         } }] }
-    const chunk = (delta: unknown, reason: string | null) => response.write(`data: ${JSON.stringify({ id: 'smoke', object: 'chat.completion.chunk', created: 1, model: 'deepseek-v4-flash', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`)
+    const chunk = (delta: unknown, reason: string | null) => response.write(`data: ${JSON.stringify({ id: 'smoke', object: 'chat.completion.chunk', created: 1, model: 'test/question-model', choices: [{ index: 0, delta, finish_reason: reason }] })}\n\n`)
     chunk(delta, null)
     chunk({}, hasAnswer ? 'stop' : 'tool_calls')
     response.end('data: [DONE]\n\n')
@@ -98,13 +98,13 @@ export async function run(): Promise<void> {
     controller = new SessionController({ runtime, sidebar,
       changeTracker: { start: () => undefined, finish: () => undefined } as unknown as WorkspaceChangeTracker,
       getRuntimeState: () => runtime.currentState, getRuntimeOptions: async () => { throw new Error('Already started') },
-      getEditorContext: () => undefined, getMaxSelectionCharacters: () => 32_000, getSelectedModelId: () => 'deepseek-v4-flash',
+      getEditorContext: () => undefined, getMaxSelectionCharacters: () => 32_000, getSelectedModelId: () => 'test/question-model',
       resolveReasoningEffort: async () => undefined, rememberReasoningEffort: async () => undefined,
       onError: (error) => errors.push(String(error)), onStateChanged: () => post({ type: 'state', state: state(), resetTranscript: true }),
     })
     await runtime.start({ cwd: directory, dshHome: directory, sessionStorageRoot: join(directory, 'sessions'),
-      provider: 'deepseek-official', model: 'deepseek-v4-flash', apiKey: 'local-smoke-only',
-      baseUrl: `http://127.0.0.1:${address.port}`, sandboxMode: 'read-only', mcpServers: [] })
+      provider: 'helix-question-test', model: 'test/question-model', savedModels: [{ id: 'test/question-model' }],
+      apiKey: 'local-smoke-only', baseUrl: `http://127.0.0.1:${address.port}`, sandboxMode: 'read-only', mcpServers: [] })
     panel = vscode.window.createWebviewPanel('helix-question-smoke', 'Helix Question Test', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true })
     sidebar.resolveWebviewView(panel as unknown as vscode.WebviewView)
     const version = await (await fetch('http://127.0.0.1:9339/json/version')).json() as any
@@ -140,14 +140,14 @@ export async function run(): Promise<void> {
     assert.equal(bodies.length, 1, JSON.stringify(errors))
     assert.equal(await evaluate('document.querySelectorAll("[data-question-request] input[type=radio]").length'), 0)
     assert.equal(await evaluate('document.querySelector("[data-question-request] button[type=submit]").disabled'), true)
-    assert.equal(await evaluate('!!document.querySelector(".animate-composer-shimmer")'), false)
+    assert.equal(await evaluate('!!document.querySelector("textarea[aria-label=Prompt]").parentElement.querySelector(".animate-composer-shimmer")'), false)
     assert.equal(await evaluate('document.querySelector("[data-question-request] .badge").textContent'), 'Recommended')
     assert.equal(await evaluate('document.querySelectorAll("article.tool").length'), 1, 'No duplicate tool card')
     await until(async () => await evaluate('getComputedStyle(document.querySelector("article.tool")).opacity') === '1')
     await evaluate('document.querySelector(".shell").style.width="300px"')
-    assert.equal(await evaluate('document.querySelector(".user-question").scrollWidth <= document.querySelector(".user-question").clientWidth'), true, 'Question card must fit a narrow sidebar')
     const screenshot = await ui.request('Page.captureScreenshot', { format: 'png' }, pageSession).catch(() => undefined)
     if (screenshot?.data) await writeFile('/tmp/helix-question-card.png', Buffer.from(screenshot.data, 'base64'))
+    assert.equal(await evaluate('(() => {const card=document.querySelector("[data-question-request]"),bounds=card.getBoundingClientRect();return [...card.children].filter((element)=>element.getAttribute("aria-hidden")!=="true").every((element)=>element.getBoundingClientRect().right<=bounds.right+1)})()'), true, 'Question content must fit a narrow sidebar')
     // Recreate the webview and replay the host-owned pending request.
     const previousWorlds = new Set(ui.contexts.map((world) => `${world.sessionId}:${world.id}`))
     const html = panel.webview.html
@@ -166,13 +166,13 @@ export async function run(): Promise<void> {
       return false
     })
     assert.equal(controller.questions.length, 1)
-    await evaluate(`document.querySelectorAll('[data-question-request] .question-option')[1].focus()`)
+    await evaluate(`document.querySelectorAll('[data-question-request] button')[1].focus()`)
     for (const type of ['keyDown', 'keyUp']) {
       await ui.request('Input.dispatchKeyEvent', { type, key: ' ', code: 'Space', windowsVirtualKeyCode: 32 }, context!.sessionId)
     }
     await until(() => bodies.length === 2)
     assert.ok(bodies[1].messages.some((message: any) => message.role === 'tool' && message.content.includes('All projects')))
-    await until(async () => !!await evaluate('document.querySelector(".question-answer")'))
+    await until(async () => await evaluate('Array.from(document.querySelectorAll("[data-question-request] p")).some((paragraph)=>paragraph.textContent?.includes("Your answer"))'))
     assert.equal(controller.questions.length, 0)
     // A second call exercises custom input and draft preservation while waiting.
     await until(async () => await evaluate(`!document.querySelector('button[aria-label="Stop generation"]')`))
@@ -198,7 +198,7 @@ export async function run(): Promise<void> {
     const beforeStop = bodies.length
     await evaluate(`document.querySelector('button[aria-label="Stop generation"]').click()`)
     await until(() => controller!.questions.length === 0)
-    await until(async () => !!await evaluate('document.querySelector(".question-ended")'))
+    await until(async () => await evaluate('document.querySelector("[data-question-request] [role=status]")?.textContent === "Question cancelled"'))
     assert.equal(bodies.length, beforeStop)
     await writeFile('/tmp/helix-question-smoke-result.json', JSON.stringify({ passed: true, vscode: vscode.version,
       checks: ['real DSH blocking tool', 'exact selected answer', 'custom answer', 'single tool card', 'recommendation', 'no radio controls', 'keyboard option submission', 'narrow sidebar', 'draft preservation', 'composer Enter blocked', 'webview replay', 'Stop cancellation'], errors }, null, 2))

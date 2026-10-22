@@ -30,7 +30,7 @@
     <form onsubmit={submit} aria-busy={submitting}>
       <fieldset class="grid min-w-0 gap-[6px] border-0 p-0 m-0" disabled={submitting} aria-labelledby={`question-${value.requestId}`}>
         {#each value.question.options as option, index (`${index}:${option.label}`)}
-          <button class="btn flex w-full h-auto items-start justify-start px-[6px] py-[4px] [font:inherit] text-left whitespace-normal cursor-pointer" data-variant="ghost" type="button" onclick={() => submitOption(option.label)}>
+          <button class="btn flex w-full h-auto items-start justify-start rounded-[8px] px-[6px] py-[4px] [font:inherit] text-left whitespace-normal cursor-pointer" data-variant="ghost" type="button" onclick={() => submitOption(option.label)}>
             <span class="block min-w-0">
               <span class="flex flex-wrap items-center gap-[6px] [overflow-wrap:anywhere]">{optionDisplayLabel(option.label)}{#if index === 0}<span class="badge px-[5px] py-px text-[9px]" data-variant="secondary">Recommended</span>{/if}</span>
               {#if option.description}<span class="block mt-[2px] text-[var(--muted-foreground)] [overflow-wrap:anywhere]">{option.description}</span>{/if}

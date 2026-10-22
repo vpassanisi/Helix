@@ -19,6 +19,7 @@ import {
 } from './control-bridge.js'
 import { builtInWebPatchLines, mcpEnvironmentVariable, mcpPatchLines } from './mcp.js'
 import { pluginPatchLines } from './plugins.js'
+import { toolBundlePatchLines } from '../shared/tool-bundles.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
 import type { UserQuestionAnswer } from '../shared/user-question.js'
 import { stringValue } from '../shared/value-utils.js'
@@ -584,6 +585,7 @@ export class HarnessRuntime {
       )
     }
     patchLines.push(...builtInWebPatchLines())
+    patchLines.push(...toolBundlePatchLines(options.disabledToolBundles ?? []))
     patchLines.push(
       '- id: sandbox-policy',
       '  config:',

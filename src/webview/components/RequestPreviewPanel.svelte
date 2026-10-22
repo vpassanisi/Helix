@@ -4,16 +4,14 @@
   import type { RequestPreviewResult } from '../types.js'
 
   interface Props {
-    prompt: string
     showRawJson: boolean
     state: 'idle' | 'loading' | 'success' | 'error' | 'cancelled'
     preview?: RequestPreviewResult
     error: string
-    onPreview: () => void
     onCancel: () => void
   }
 
-  let { prompt = $bindable(), showRawJson = $bindable(), state, preview, error, onPreview, onCancel }: Props = $props()
+  let { showRawJson = $bindable(), state, preview, error, onCancel }: Props = $props()
   const statusLayoutClass = 'flex items-center gap-[6px] text-[10px] leading-[1.45]'
   const statusClass = `${statusLayoutClass} text-[var(--muted-foreground)]`
   const valueCardClass = 'grid min-w-0 gap-[3px] rounded-[var(--radius)] border border-[var(--border)] bg-[var(--card)] px-[9px] py-[7px]'
@@ -24,25 +22,12 @@
   const payloadHeadingClass = 'm-0 text-[8px] font-[650] wrap-anywhere text-[var(--muted-foreground)]'
 </script>
 
-<div class="grid min-w-0 gap-[13px]">
-  <div class="grid gap-[4px]">
-    <h3 class="text-[12px] font-[650] text-[var(--foreground)]">Preview the first model request</h3>
-    <p class="text-[10px] leading-[1.45] text-[var(--muted-foreground)]">Build the DSH request for a fresh chat using the selected provider, model, and configured default reasoning effort. Nothing is sent to the model.</p>
-  </div>
-  <form class="grid gap-[6px]" onsubmit={(event) => { event.preventDefault(); onPreview() }}>
-    <label class="text-[10px] tracking-[.08em] text-[var(--muted-foreground)] uppercase" for="request-preview-prompt">Prompt</label>
-    <div class="flex items-center gap-[6px]">
-      <input id="request-preview-prompt" class="input h-[30px] min-w-0 flex-1 px-[8px] py-0 text-[10px]!" type="text" bind:value={prompt} placeholder="Enter a prompt and press Enter" autocomplete="off" disabled={state === 'loading'} />
-      <button class="btn inline-flex h-[30px] flex-none items-center gap-[5px] border-0 bg-[var(--primary)] text-[10px]! font-[650]! text-[var(--primary-foreground)]!" type="submit" disabled={state === 'loading' || !prompt.trim()}>
-        {#if state === 'loading'}<LoaderCircle class="animate-spin motion-reduce:animate-none" size={13} strokeWidth={1.8} /> Building…{:else}Preview{/if}
-      </button>
-      {#if state === 'loading'}
-        <button class="btn" data-variant="outline" type="button" onclick={onCancel}>Cancel</button>
-      {/if}
-    </div>
-  </form>
+<div class="settings-fill grid min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-[13px]">
   {#if state === 'loading'}
-    <p class={statusClass} role="status"><LoaderCircle class="animate-spin motion-reduce:animate-none" size={12} strokeWidth={1.8} /> Starting an isolated DSH session and assembling the request…</p>
+    <p class={statusClass} role="status">
+      <LoaderCircle class="animate-spin motion-reduce:animate-none" size={12} strokeWidth={1.8} /> Starting an isolated DSH session and assembling the request…
+      <button class="btn ml-auto h-[24px] flex-none" data-variant="outline" type="button" onclick={onCancel}>Cancel</button>
+    </p>
   {:else if state === 'error'}
     <p class={`${statusLayoutClass} text-[var(--destructive)]`} role="alert">{error}</p>
   {:else if state === 'cancelled'}
@@ -57,9 +42,9 @@
       <input id="request-preview-raw-json" type="checkbox" role="switch" class="input" bind:checked={showRawJson} />
     </div>
     {#if showRawJson}
-      <pre class="m-0 max-h-[54vh] min-h-[90px] overflow-auto rounded-[var(--radius)] border border-[var(--border)] bg-[#0b0b0b] p-[10px] whitespace-pre text-[10px] leading-[1.5] text-[#d0d0d0] [font-family:var(--vscode-editor-font-family,monospace)]" aria-label="Canonical DSH request"><code class="[font:inherit]">{JSON.stringify(preview.request, null, 2)}</code></pre>
+      <pre class="m-0 min-h-0 overflow-auto rounded-[var(--radius)] border border-[var(--border)] bg-[#0b0b0b] p-[10px] whitespace-pre text-[10px] leading-[1.5] text-[#d0d0d0] [font-family:var(--vscode-editor-font-family,monospace)]" aria-label="Canonical DSH request"><code class="[font:inherit]">{JSON.stringify(preview.request, null, 2)}</code></pre>
     {:else}
-      <div class="grid max-h-[54vh] min-w-0 gap-[10px] overflow-auto py-px pr-[2px] pl-0" aria-label="Readable DSH request">
+      <div class="grid min-h-0 min-w-0 gap-[10px] overflow-auto py-px pr-[2px] pl-0" aria-label="Readable DSH request">
         <div class="grid grid-cols-2 gap-[7px]">
           <div class={valueCardClass}><span class={detailLabelClass}>Provider</span><strong class={detailValueClass}>{previewView.provider}</strong></div>
           <div class={valueCardClass}><span class={detailLabelClass}>Model</span><strong class={detailValueClass}>{previewView.model}</strong></div>

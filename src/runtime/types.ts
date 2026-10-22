@@ -26,6 +26,8 @@ export interface RuntimeOptions {
   savedModels?: SavedModel[]
   dshBin?: string
   dshHome?: string
+  /** Model tool bundles to leave out; applied when the runtime starts. */
+  disabledToolBundles?: string[]
   /** Optional isolated session store used by short-lived tooling runtimes. */
   sessionStorageRoot?: string
   plugins?: RuntimePluginBundle[]

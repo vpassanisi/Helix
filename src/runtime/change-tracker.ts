@@ -1,16 +1,9 @@
 import { isAbsolute, relative, sep } from 'node:path'
 import * as vscode from 'vscode'
 import { countLines } from '../shared/value-utils.js'
+import type { CodeChange, CodeChangeKind } from '../shared/code-changes.js'
 
-export type CodeChangeKind = 'created' | 'modified' | 'deleted' | 'renamed'
-
-export interface CodeChange {
-  path: string
-  kind: CodeChangeKind
-  additions: number
-  deletions: number
-  oldPath?: string
-}
+export type { CodeChange, CodeChangeKind } from '../shared/code-changes.js'
 
 export interface CodeChangeUpdate {
   sessionId: string

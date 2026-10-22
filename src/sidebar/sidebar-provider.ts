@@ -30,6 +30,7 @@ export type SidebarMessage =
       tracing?: OtelTracingSettings
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
+  | { type: 'saveTools'; disabledToolBundles: string[] }
   | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[]; skillDraft?: SkillDraft; skillOverrides?: SkillOverrides }
   | { type: 'toggleBrowserPicker' }
   | { type: 'removeBrowserAttachment'; sessionId: string; id: string }
@@ -69,6 +70,8 @@ export interface SidebarSettings {
   sandboxMode: SandboxMode
   tracing?: OtelTracingSettings
   mcpServers: SidebarMcpServerSetting[]
+  /** Tool bundles left out of the runtime; applied when the next runtime starts. */
+  disabledToolBundles?: string[]
 }
 
 export type SidebarMcpTransport = 'stdio' | 'streamable-http'
@@ -163,7 +166,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = getHtml(webviewView.webview, this.extensionUri)
     webviewView.webview.onDidReceiveMessage((message: unknown) => {
       if (!isSidebarMessage(message)) {
-        if (isRecord(message) && (message.type === 'saveSettings' || message.type === 'saveMcpServers')) {
+        if (isRecord(message) && (message.type === 'saveSettings' || message.type === 'saveMcpServers' || message.type === 'saveTools')) {
           this.post({
             type: 'error',
             message: 'Could not save settings. Reload the Extension Development Host and try again.',
@@ -240,6 +243,9 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
   }
   if (type === 'saveMcpServers') {
     return 'mcpServers' in value && Array.isArray(value.mcpServers) && value.mcpServers.every(isSidebarMcpServer)
+  }
+  if (type === 'saveTools') {
+    return 'disabledToolBundles' in value && Array.isArray(value.disabledToolBundles) && value.disabledToolBundles.every((id) => typeof id === 'string')
   }
   if (type === 'submit') {
     return 'prompt' in value && typeof value.prompt === 'string' &&

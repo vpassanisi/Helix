@@ -1,4 +1,4 @@
-import type { CodeChange, ModelEditorDraft, SidebarDiscoveredModel, SidebarModel, McpServerDraft, RequestPreviewResult, ToolCallView } from '../src/webview/types.js'
+import type { ChatMessage, CodeChange, IncomingMessage, ModelEditorDraft, SidebarDiscoveredModel, SidebarModel, McpServerDraft, RequestPreviewResult, SidebarSettings, ToolCallView } from '../src/webview/types.js'
 import type { BrowserElementContext } from '../src/shared/browser-context.js'
 import type { UserQuestionView } from '../src/shared/user-question.js'
 import type { SkillSummary, SkillSuggestions } from '../src/shared/skills.js'
@@ -19,9 +19,7 @@ export const modelDrafts: ModelEditorDraft[] = models.map((model, index) => ({
   ...model, key: index + 1, sourceId: model.id, reasoningEfforts: model.reasoningEfforts ?? [],
   chatTemplateKwargsText: '{}', chatTemplateArgsText: '{}',
 }))
-export function modelOptionLabel(model: SidebarModel): string {
-  return `${model.displayName ?? model.id}${model.contextWindow === undefined ? '' : ` · ${new Intl.NumberFormat().format(model.contextWindow)}`}`
-}
+export { modelOptionLabel } from '../src/webview/lib/model-mappers.js'
 
 export const mcpServers: McpServerDraft[] = [
   { serverName: 'local-tools', transport: 'stdio', command: 'docker', argsText: 'run\n-i\n--rm\nexample/mcp-server', url: '', env: [{ name: 'API_TOKEN', value: '', configured: true }] },
@@ -72,3 +70,60 @@ export const suggestions: SkillSuggestions = {
   sessionId: 'preview', revision: 1, status: 'ready', selected: ['frontend', 'basecoat'],
   probabilities: { frontend: 0.96, basecoat: 0.89, 'better-writing': 0.31 }, threshold: 0.75, elapsedMs: 120,
 }
+
+export const chatMessages: ChatMessage[] = [
+  { id: 1, role: 'user', label: 'You', text: 'Round the option buttons to match the answer box.',
+    context: { fileLabel: 'src/webview/App.svelte', languageId: 'svelte', ranges: [{ startLine: 33, startColumn: 11, endLine: 33, endColumn: 74 }] },
+    browserLabels: ['Save button'] },
+  { id: 2, role: 'reasoning', label: 'Thinking', text: 'The option buttons carry the basecoat radius; the answer box is rounded-[8px].' },
+  { id: 3, role: 'assistant', label: 'Helix', text: 'Added `rounded-[8px]` to the option buttons.\n\n```svelte\n<button class="btn rounded-[8px]">\n```\n\nBoth corners now measure 8px.' },
+  { id: 4, role: 'tool', label: 'Tool', text: '', tool },
+  { id: 5, role: 'activity', label: 'Subagent', text: 'Finished child session' },
+  { id: 6, role: 'compaction', label: 'Context', text: '', compaction: { key: 'preview-summary', sessionId: 'preview', kind: 'summary', status: 'completed', historyItems: 12, shadowedTokens: 4200 } },
+  { id: 7, role: 'changes', label: 'Changes', text: '', changes, panelOpen: true },
+]
+
+export const questionMessage: ChatMessage = {
+  id: 8, role: 'tool', label: 'Tool', text: '',
+  tool: { callId: question.toolCallId, name: 'ask_user_question', arguments: '', status: 'running', question },
+}
+
+export const hostSettings: SidebarSettings = {
+  provider: 'deepseek',
+  model: 'deepseek-v4-flash',
+  contextWindow: 128000,
+  baseUrl: 'https://api.deepseek.com',
+  dshHome: '/tmp/dsh',
+  apiKeyConfigured: true,
+  skillPickerEnabled: false,
+  sandboxMode: 'workspace-write',
+  mcpServers: [],
+}
+
+/**
+ * The messages the extension host sends across one streamed turn. Feeding the
+ * list to App runs the whole router: session, settings, model, tokens, tools.
+ */
+export const hostTurn: IncomingMessage[] = [
+  { type: 'state', state: { activeSessionId: 'session-1', runtimeState: 'ready', reasoningEffort: 'high' } },
+  { type: 'settings', settings: hostSettings },
+  { type: 'modelCatalog', models, reasoningHistory: {} },
+  { type: 'accepted', sessionId: 'session-1', modelId: 'deepseek-v4-flash', reasoningEffort: 'high' },
+  { type: 'assistantStream', sessionId: 'session-1', agentSessionId: 'session-1', frame: { type: 'start' } },
+  { type: 'assistantStream', sessionId: 'session-1', agentSessionId: 'session-1',
+    frame: { type: 'chunk', chunk: { type: 'text-delta', text: 'Reading the composer, then the model wiring.' } } },
+  { type: 'notification', sessionId: 'session-1', notification: {
+    method: 'session.event',
+    params: { sessionId: 'session-1', event: { type: 'tool/call',
+      data: { name: 'read_file', callId: 'tool-1', arguments: '{"path":"src/webview/App.svelte"}' } } },
+  } },
+  { type: 'notification', sessionId: 'session-1', notification: {
+    method: 'session.event',
+    params: { sessionId: 'session-1', event: { type: 'tool/result',
+      data: { callId: 'tool-1', message: { content: 'export default App' } } } },
+  } },
+  { type: 'codeChanges', sessionId: 'session-1', changes: [changes[1]!], active: true },
+  { type: 'notification', sessionId: 'session-1', notification: {
+    method: 'session.status', params: { sessionId: 'session-1', status: 'idle' } },
+  },
+]

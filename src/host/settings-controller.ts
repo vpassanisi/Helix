@@ -25,6 +25,7 @@ import { HarnessRuntime } from '../runtime/harness-runtime.js'
 import { SerialTaskQueue } from '../runtime/serial-task-queue.js'
 import type { PersistedMcpServer, RuntimeMcpServer, RuntimeOptions, RuntimeState, SandboxMode } from '../runtime/types.js'
 import { isRecord } from '../shared/value-utils.js'
+import { normalizeDisabledToolBundles } from '../shared/tool-bundles.js'
 import {
   isValidOtelEndpointId,
   isValidOtelHeaderName,
@@ -100,6 +101,8 @@ export class SettingsController {
   private catalogReadInFlight: Promise<SavedModel[]> | undefined
   private applyingTracingConfig = false
   private savingConnectionSettings = false
+  /** The bundle list the running runtime was started with, if it was started. */
+  private appliedDisabledToolBundles: string[] | undefined
 
   constructor(private readonly options: SettingsControllerOptions) {}
 
@@ -322,6 +325,8 @@ export class SettingsController {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]
     const extensionPath = this.options.context.extensionPath || process.cwd()
     const contextWindow = configuration.get<number>('contextWindow', 0)
+    const disabledToolBundles = this.disabledToolBundles()
+    this.appliedDisabledToolBundles = disabledToolBundles
     return {
       cwd: workspaceFolder?.uri.fsPath ?? vscode.env.appRoot,
       provider: configuration.get<string>('provider', 'deepseek-official'),
@@ -338,7 +343,13 @@ export class SettingsController {
       ],
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
       mcpServers: await this.runtimeMcpServers(),
+      disabledToolBundles,
     }
+  }
+
+  /** The saved list, with unknown and locked ids dropped. */
+  disabledToolBundles(): string[] {
+    return normalizeDisabledToolBundles(vscode.workspace.getConfiguration('deepseekHarness').get<unknown>('disabledToolBundles', []))
   }
 
   async restartForPluginSettings(): Promise<void> {
@@ -386,6 +397,7 @@ export class SettingsController {
       sandboxMode: normalizeSandboxMode(configuration.get<string>('sandboxMode', 'workspace-write')),
       tracing: await this.sidebarTracingSettings(),
       mcpServers: await this.sidebarMcpServers(),
+      disabledToolBundles: this.disabledToolBundles(),
     }
   }
 
@@ -551,6 +563,40 @@ export class SettingsController {
     }
     if (message.clearApiKey) await this.options.context.secrets.delete(API_KEY_SECRET)
     else if (message.apiKey?.trim()) await this.options.context.secrets.store(API_KEY_SECRET, message.apiKey.trim())
+  }
+
+  /**
+   * Tool bundles are launch scoped, so saving does not restart the runtime.
+   * The running session keeps its tools; applyDeferredToolBundles picks the
+   * change up when the Webview starts a new session.
+   */
+  async saveTools(message: Extract<SidebarMessage, { type: 'saveTools' }>): Promise<void> {
+    try {
+      const next = normalizeDisabledToolBundles(message.disabledToolBundles)
+      await vscode.workspace.getConfiguration().update('deepseekHarness.disabledToolBundles', next, vscode.ConfigurationTarget.Global)
+      const settings = await this.getSidebarSettings()
+      this.options.sidebar.post({ type: 'settingsSaved', settings, restarting: false })
+    } catch (error) {
+      this.options.onError(error)
+    }
+  }
+
+  /** Restarts the runtime when the saved bundle list differs from the running one. */
+  async applyDeferredToolBundles(): Promise<boolean> {
+    const saved = this.disabledToolBundles()
+    if (this.appliedDisabledToolBundles === undefined) return false
+    if (this.appliedDisabledToolBundles.join('|') === saved.join('|')) return false
+    if (this.options.getRuntimeState() === 'stopped') {
+      this.appliedDisabledToolBundles = saved
+      return false
+    }
+    try {
+      await this.options.runtime.restart(await this.runtimeOptions())
+      return true
+    } catch (error) {
+      this.options.onError(error)
+      return false
+    }
   }
 
   private async restartAfterSettings(refreshModels: boolean): Promise<void> {

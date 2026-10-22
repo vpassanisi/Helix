@@ -5,11 +5,14 @@ import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer, UserQuestionView } from '../shared/user-question.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
 import type { OtelTracingSettings } from '../shared/otel-tracing.js'
+import type { CompactionEntry } from '../shared/compaction-history.js'
+import type { CodeChange, CodeChangeKind } from '../shared/code-changes.js'
 export type { RequestPreviewResult } from '../runtime/control-protocol.js'
+export type { CodeChange, CodeChangeKind }
 
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
-export type SettingsPage = 'connection' | 'models' | 'mcp' | 'preview' | 'about'
+export type SettingsPage = 'connection' | 'models' | 'tools' | 'mcp' | 'preview' | 'about'
 
 export interface ApprovalView {
   requestId: string
@@ -28,6 +31,21 @@ export interface ToolCallView {
   status: 'preparing' | 'running' | 'completed' | 'error'
   approval?: ApprovalView
   question?: UserQuestionView
+}
+
+export type ChatRole = 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction' | 'changes'
+
+export interface ChatMessage {
+  id: number
+  role: ChatRole
+  label: string
+  text: string
+  context?: SelectionMetadata
+  browserLabels?: string[]
+  tool?: ToolCallView
+  compaction?: CompactionEntry
+  changes?: CodeChange[]
+  panelOpen?: boolean
 }
 
 export interface SelectionMetadata {
@@ -53,6 +71,8 @@ export interface SidebarSettings {
   sandboxMode: SandboxMode
   tracing?: OtelTracingSettings
   mcpServers: SidebarMcpServerSetting[]
+  /** Tool bundles left out of the runtime; applied when the next runtime starts. */
+  disabledToolBundles?: string[]
 }
 
 export type SidebarMcpTransport = 'stdio' | 'streamable-http'
@@ -119,16 +139,6 @@ export interface ModelDraft extends SidebarModel {
   sourceId?: string
 }
 
-export type CodeChangeKind = 'created' | 'modified' | 'deleted' | 'renamed'
-
-export interface CodeChange {
-  path: string
-  kind: CodeChangeKind
-  additions: number
-  deletions: number
-  oldPath?: string
-}
-
 export type SidebarMessage =
   | { type: 'loadSkills'; sessionId: string }
   | { type: 'analyzeSkills'; draft: SkillDraft }
@@ -147,6 +157,7 @@ export type SidebarMessage =
       tracing?: OtelTracingSettings
     }
   | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
+  | { type: 'saveTools'; disabledToolBundles: string[] }
   | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[]; skillDraft?: SkillDraft; skillOverrides?: SkillOverrides }
   | { type: 'toggleBrowserPicker' }
   | { type: 'removeBrowserAttachment'; sessionId: string; id: string }

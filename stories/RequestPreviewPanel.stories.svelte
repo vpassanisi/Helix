@@ -8,7 +8,7 @@
 
   const { Story } = defineMeta({
     title: 'Settings/RequestPreviewPanel', component: RequestPreviewPanel, render: template,
-    args: { prompt: 'Review the changes panel.', showRawJson: false, state: 'success', preview: requestPreview, error: '', onPreview: fn(), onCancel: fn() },
+    args: { showRawJson: false, state: 'success', preview: requestPreview, error: '', onCancel: fn() },
   })
 </script>
 

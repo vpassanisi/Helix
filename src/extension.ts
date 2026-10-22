@@ -167,6 +167,7 @@ class ExtensionApp {
       openSettings: () => this.handleOpenSettings(),
       saveSettings: (message) => this.settings.run(() => this.settings.saveSettings(message as Extract<SidebarMessage, { type: 'saveSettings' }>)),
       saveMcpServers: (message) => this.settings.run(() => this.settings.saveMcpServers(message as Extract<SidebarMessage, { type: 'saveMcpServers' }>)),
+      saveTools: (message) => this.settings.run(() => this.settings.saveTools(message as Extract<SidebarMessage, { type: 'saveTools' }>)),
       refreshModels: () => this.settings.run(() => this.settings.fetchModels()),
       loadModelCatalog: () => this.settings.run(() => this.settings.loadModelCatalog()),
       saveModelCatalog: (message) => this.settings.run(() => this.settings.saveModelCatalog(message as Extract<SidebarMessage, { type: 'saveModelCatalog' }>)),
@@ -210,6 +211,9 @@ class ExtensionApp {
     ++this.submissionGeneration
     this.skills.invalidate()
     await this.browserContext.stop()
+    // Tool bundles are launch scoped, so a saved change is applied as the old
+    // session is being left behind, never while it is in use.
+    if (await this.settings.applyDeferredToolBundles()) this.session.resetReasoningEffort()
     await this.session.newSession()
   }
 

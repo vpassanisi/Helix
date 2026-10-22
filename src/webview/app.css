@@ -105,7 +105,10 @@ h1, h2, p { margin: 0; }
 .model-refresh { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 25px; height: 27px; padding: 0; border: 0; color: var(--muted-foreground); }
 .model-refresh:hover:not(:disabled) { color: var(--foreground); background: var(--color-muted, var(--muted)); }
 
-.settings-view { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 20px; }
+.settings-view { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 20px; display: flex; flex-direction: column; }
+/* A page that takes the height the shell has left, so it scrolls inside itself. */
+.settings-view > .settings-fill { flex: 1 1 auto; min-height: 0; }
+.settings-view > :not(.settings-fill) { flex: none; }
 .settings-heading { position: sticky; top: 0; z-index: 20; display: flex; align-items: flex-start; gap: 9px; margin: 0 -14px 18px; padding: 16px 14px 10px; border-bottom: 1px solid var(--border); background: var(--background); }
 .settings-heading h2 { margin: 1px 0 4px; font-size: 16px; letter-spacing: -.025em; }
 .settings-heading p { color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }

@@ -9,3 +9,4 @@ out/
 
 storybook-static/
 debug-storybook.log
+.playwright-mcp/

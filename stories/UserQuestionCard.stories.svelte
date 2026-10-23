@@ -19,4 +19,5 @@
 <Story name="Pending" />
 <Story name="Submitting" args={{ value: { ...question, status: 'submitting' } }} />
 <Story name="Answered" args={{ value: { ...question, status: 'answered', answer: { id: 'scope', selected: ['Current component (Recommended)'] } } }} />
+<Story name="Answered Custom" args={{ value: { ...question, status: 'answered', answer: { id: 'scope', selected: [], custom: 'Only the styles and the card header.' } } }} />
 <Story name="Cancelled" args={{ value: { ...question, status: 'cancelled' } }} />

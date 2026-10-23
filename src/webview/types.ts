@@ -6,6 +6,7 @@ import type { PendingUserQuestion, UserQuestionAnswer, UserQuestionView } from '
 import type { ExtensionInfo } from '../shared/extension-info.js'
 import type { OtelTracingSettings } from '../shared/otel-tracing.js'
 import type { CompactionEntry } from '../shared/compaction-history.js'
+import type { CommandCatalog } from '../shared/commands.js'
 import type { CodeChange, CodeChangeKind } from '../shared/code-changes.js'
 export type { RequestPreviewResult } from '../runtime/control-protocol.js'
 export type { CodeChange, CodeChangeKind }
@@ -142,6 +143,8 @@ export interface ModelDraft extends SidebarModel {
 export type SidebarMessage =
   | { type: 'loadSkills'; sessionId: string }
   | { type: 'analyzeSkills'; draft: SkillDraft }
+  | { type: 'loadCommands'; sessionId: string }
+  | { type: 'runCommand'; sessionId: string; name: string; args: string }
   | { type: 'ready' }
   | { type: 'openSettings' }
   | {
@@ -181,6 +184,8 @@ export type IncomingMessage =
   | { type: 'skillsInvalidated' }
   | { type: 'skillCatalog'; sessionId: string; catalog: SkillCatalog; error?: string }
   | { type: 'skillSuggestions'; suggestions: SkillSuggestions }
+  | { type: 'commandCatalog'; sessionId: string; catalog: CommandCatalog; error?: string }
+  | { type: 'commandResult'; sessionId: string; name: string; kind: 'success' | 'error'; text?: string }
   | { type: 'submitFailed'; sessionId: string; message: string }
   | { type: 'questionRequest'; request: PendingUserQuestion }
   | { type: 'questionResolved'; sessionId: string; requestId: string; status: 'answered' | 'cancelled' | 'unavailable'; answer?: UserQuestionAnswer }

@@ -7,6 +7,10 @@
   const pending = $derived(value.status === 'pending' || value.status === 'submitting')
   const submitting = $derived(value.status === 'submitting')
   const ready = $derived(custom.trim().length > 0)
+  const answerText = $derived(value.answer?.custom ?? optionDisplayLabel(value.answer?.selected[0] ?? ''))
+  const answerDescription = $derived(value.answer?.custom
+    ? ''
+    : value.question.options.find((option) => option.label === value.answer?.selected[0])?.description ?? '')
 
   function submitOption(label: string): void {
     if (!pending || submitting) return
@@ -48,7 +52,7 @@
       {#if submitting}<span class="sr-only" role="status">Sending answer…</span>{/if}
     </form>
   {:else if value.status === 'answered' && value.answer}
-    <p class="m-0 grid gap-[3px] whitespace-pre-wrap [overflow-wrap:anywhere]"><span class="text-[10px] text-[var(--muted-foreground)]">Your answer</span>{value.answer.custom ?? optionDisplayLabel(value.answer.selected[0] ?? '')}</p>
+    <p class="m-0 grid gap-[3px] [overflow-wrap:anywhere]"><span class="text-[10px] text-[var(--muted-foreground)]">Your answer</span><span class="whitespace-pre-wrap">{answerText}</span>{#if answerDescription}<span class="whitespace-pre-wrap text-[var(--muted-foreground)]">{answerDescription}</span>{/if}</p>
   {:else}
     <p class="m-0 text-[10px] text-[var(--muted-foreground)]" role="status">{value.status === 'unavailable' ? 'Question unavailable' : 'Question cancelled'}</p>
   {/if}

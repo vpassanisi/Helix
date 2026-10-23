@@ -1,4 +1,5 @@
 import { SkillController } from './host/skill-controller.js'
+import { CommandController } from './host/command-controller.js'
 import * as vscode from 'vscode'
 import { WorkspaceChangeTracker } from './runtime/change-tracker.js'
 import { captureEditorContext, editorContextMetadata } from './runtime/editor-context.js'
@@ -19,6 +20,7 @@ class ExtensionApp {
   private readonly changeTracker: WorkspaceChangeTracker
   private readonly settings: SettingsController
   private readonly skills: SkillController
+  private readonly commands: CommandController
   private submissionGeneration = 0
   private readonly requestPreview: RequestPreviewController
   private readonly session: SessionController
@@ -58,6 +60,7 @@ class ExtensionApp {
           return
         }
         if (event.method === 'skills.changed') { this.skills?.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }); void this.loadSkills(); return }
+        if (event.method === 'commands.changed') { this.commands?.invalidate(); void this.loadCommands(); return }
         this.session.handleControlEvent(event)
       },
       onLifecycleError: (error) => this.postError(error),
@@ -81,6 +84,20 @@ class ExtensionApp {
       publish: (suggestions) => this.sidebar.post({ type: 'skillSuggestions', suggestions }),
       publishCatalog: (sessionId, catalog) => this.sidebar.post({ type: 'skillCatalog', sessionId, catalog }),
       diagnostic: (event) => this.skillOutputChannel.appendLine(JSON.stringify(event)),
+    })
+    this.commands = new CommandController({
+      currentSession: () => this.session.currentSessionId,
+      catalog: async (sessionId) => {
+        if (this.runtimeState !== 'ready') await this.runtime.start(await this.settings.runtimeOptions())
+        return this.runtime.commandCatalog(sessionId)
+      },
+      run: (sessionId, name, args) => this.runtime.runCommand(sessionId, name, args),
+      publishCatalog: (sessionId, catalog, error) => this.sidebar.post({
+        type: 'commandCatalog', sessionId, catalog, ...(error === undefined ? {} : { error }),
+      }),
+      publishResult: (sessionId, name, kind, text) => this.sidebar.post({
+        type: 'commandResult', sessionId, name, kind, ...(text === undefined ? {} : { text }),
+      }),
     })
     this.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('deepseekHarness')) { this.skills.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }) }
@@ -155,7 +172,7 @@ class ExtensionApp {
         this.generating = false
         this.session.clearPendingQuestions(state === 'error' ? 'unavailable' : 'cancelled')
       }
-      if (state === 'ready') { this.skills.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }) }
+      if (state === 'ready') { this.skills.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }); this.commands.invalidate(); void this.loadCommands() }
       this.sidebar.post({ type: 'state', state: this.getSidebarState() })
       if (message !== undefined) this.sidebar.post({ type: 'error', message })
     }))
@@ -163,6 +180,11 @@ class ExtensionApp {
     this.messageHandlers = {
       loadSkills: async (message) => { await this.loadSkills((message as Extract<SidebarMessage, { type: 'loadSkills' }>).sessionId) },
       analyzeSkills: async (message) => { if (this.settings.skillPickerEnabled()) this.skills.update((message as Extract<SidebarMessage, { type: 'analyzeSkills' }>).draft) },
+      loadCommands: async (message) => { await this.loadCommands((message as Extract<SidebarMessage, { type: 'loadCommands' }>).sessionId) },
+      runCommand: async (message) => {
+        const run = message as Extract<SidebarMessage, { type: 'runCommand' }>
+        await this.commands.run(run.sessionId, run.name, run.args)
+      },
       ready: () => this.handleReady(),
       openSettings: () => this.handleOpenSettings(),
       saveSettings: (message) => this.settings.run(() => this.settings.saveSettings(message as Extract<SidebarMessage, { type: 'saveSettings' }>)),
@@ -266,6 +288,16 @@ class ExtensionApp {
   }
 
   private async handleReady(): Promise<void> {
+    // The Webview's `ready` is the only bootstrap post that is guaranteed to reach a
+    // script that is listening: the post in resolveWebviewView is sent to a document
+    // that may not have run yet, and a Webview reload (the dev watcher rebuilds
+    // out/webview, and a fresh install runs a cold bundle) resets the app with no
+    // state on its way. Losing that one post leaves activeSessionId empty, and every
+    // session-scoped reply is then dropped by the Webview's session guard: no command
+    // catalog is requested, the About page shows no version, and the `accepted` ack
+    // that clears the composer is discarded. So the full state leads the other
+    // replies, because the selection and replay messages below depend on the guard.
+    this.sidebar.post({ type: 'state', state: this.getSidebarState(), resetTranscript: true })
     this.refreshSelection()
     this.session.replayPendingApprovals()
     this.session.replayPendingQuestions()
@@ -278,6 +310,11 @@ class ExtensionApp {
     catch (error) {
       this.sidebar.post({ type: 'skillCatalog', sessionId, catalog: { skills: [], revision: '', complete: false }, error: error instanceof Error ? error.message : String(error) })
     }
+  }
+
+  private async loadCommands(sessionId = this.session.currentSessionId): Promise<void> {
+    if (sessionId !== this.session.currentSessionId || this.disposed) return
+    await this.commands.load(sessionId)
   }
 
   private async handleOpenSettings(): Promise<void> {

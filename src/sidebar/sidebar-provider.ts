@@ -7,6 +7,7 @@ import type { RuntimeState, SandboxMode } from '../runtime/types.js'
 import { isReasoningFormat, type DiscoveredModel, type ModelDraft, type SavedModel } from '../runtime/model-catalog.js'
 import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import { isRecord } from '../shared/value-utils.js'
+import { isCommandName, type CommandCatalog } from '../shared/commands.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
@@ -15,6 +16,8 @@ import { isOtelTracingSettings, type OtelTracingSettings } from '../shared/otel-
 export type SidebarMessage =
   | { type: 'loadSkills'; sessionId: string }
   | { type: 'analyzeSkills'; draft: SkillDraft }
+  | { type: 'loadCommands'; sessionId: string }
+  | { type: 'runCommand'; sessionId: string; name: string; args: string }
   | { type: 'ready' }
   | { type: 'openSettings' }
   | {
@@ -103,6 +106,8 @@ export type SidebarOutgoingMessage =
   | { type: 'skillsInvalidated' }
   | { type: 'skillCatalog'; sessionId: string; catalog: SkillCatalog; error?: string }
   | { type: 'skillSuggestions'; suggestions: SkillSuggestions }
+  | { type: 'commandCatalog'; sessionId: string; catalog: CommandCatalog; error?: string }
+  | { type: 'commandResult'; sessionId: string; name: string; kind: 'success' | 'error'; text?: string }
   | { type: 'submitFailed'; sessionId: string; message: string }
   | { type: 'questionRequest'; request: PendingUserQuestion }
   | { type: 'questionResolved'; sessionId: string; requestId: string; status: 'answered' | 'cancelled' | 'unavailable'; answer?: UserQuestionAnswer }
@@ -229,6 +234,11 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
   if (!isRecord(value) || !('type' in value)) return false
   const type = value.type
   if (type === 'loadSkills') return typeof value.sessionId === 'string'
+  if (type === 'loadCommands') return typeof value.sessionId === 'string'
+  if (type === 'runCommand') {
+    return typeof value.sessionId === 'string' && typeof value.name === 'string' && isCommandName(value.name) &&
+      typeof value.args === 'string'
+  }
   if (type === 'analyzeSkills') return isSkillDraft(value.draft)
   if (type === 'saveSettings') {
     return 'provider' in value && typeof value.provider === 'string' &&

@@ -15,11 +15,13 @@
   import { ModelCatalogState } from './lib/model-catalog.svelte.js'
   import { ComposerModelState } from './lib/composer-model.svelte.js'
   import { SkillRoutingState } from './lib/skill-routing.svelte.js'
+  import { ComposerCommandState } from './lib/composer-commands.svelte.js'
   import { RequestPreviewState } from './lib/request-preview.svelte.js'
   import { ToolBundlesState } from './lib/tool-bundles-state.svelte.js'
   import { SessionState } from './lib/session-state.svelte.js'
   import { createMessageRouter } from './lib/message-router.svelte.js'
   import { validateQuestionAnswer, type UserQuestionAnswer, type UserQuestionView } from '../shared/user-question.js'
+  import type { CommandInvocation } from '../shared/commands.js'
   import { modelOptionLabel } from './lib/model-mappers.js'
   import type {
     ToolCallView,
@@ -57,7 +59,9 @@
   )
   routing.start()
   routing.watch()
-  const handleMessage = createMessageRouter({ post, state: session, transcript, settingsState, catalog, composerModel, routing, preview, tools })
+  const commands = new ComposerCommandState((message) => post(message), () => session.activeSessionId)
+  commands.start()
+  const handleMessage = createMessageRouter({ post, state: session, transcript, settingsState, catalog, composerModel, routing, preview, tools, commands })
   let composer = $state<{ focus: () => void }>()
   const skillPickerEnabled = $derived(session.skillPickerEnabled)
 
@@ -89,6 +93,12 @@
     const text = session.prompt.trim()
     if (!text) return
 
+    const invocation = commands.invocation(text)
+    if (invocation !== undefined) {
+      runCommand(invocation)
+      return
+    }
+
     if (session.codeChanges.length > 0) {
       transcript.appendChanges(session.codeChanges, session.changesOpen)
       session.codeChanges = []
@@ -113,6 +123,14 @@
         skillOverrides: { include: [...routing.overrides.include], exclude: [...routing.overrides.exclude] } } : {}),
     })
     session.selectionAttached = true
+    void tick().then(() => composer?.focus())
+  }
+
+  /** A resolved slash command: the Host runs it, so the draft is not a prompt. */
+  function runCommand(invocation: CommandInvocation): void {
+    commands.close()
+    session.prompt = ''
+    post({ type: 'runCommand', sessionId: session.activeSessionId, name: invocation.name, args: invocation.args })
     void tick().then(() => composer?.focus())
   }
 
@@ -323,6 +341,7 @@
         skills={routing.catalog.skills}
         skillSuggestions={routing.suggestions}
         skillError={routing.error}
+        {commands}
         {modelOptionLabel}
         onSubmit={submit}
         onModelSelect={handleComposerModelSelection}

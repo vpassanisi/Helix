@@ -1,4 +1,5 @@
 import { isRecord } from '../shared/value-utils.js'
+import type { CommandCatalog, CommandResult } from '../shared/commands.js'
 
 export const CONTROL_PROTOCOL_VERSION = 1
 
@@ -12,6 +13,8 @@ export type ControlRequestMethod =
   | 'session.setApprovalPolicy'
   | 'session.setSandboxMode'
   | 'session.setReasoningEffort'
+  | 'session.command'
+  | 'commands.catalog'
   | 'request.preview.arm'
   | 'provider.request.captureNext'
   | 'capabilities.get'
@@ -28,6 +31,8 @@ export const CONTROL_CAPABILITIES = [
   'session.setApprovalPolicy',
   'session.setSandboxMode',
   'session.setReasoningEffort',
+  'session.command',
+  'commands.catalog',
   'request.preview.arm',
   'provider.request.captureNext',
   'capabilities.get',
@@ -83,9 +88,15 @@ export interface ControlEventEnvelope {
   type: 'event'
   eventId: string
   sessionId: string
-  method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed'
+  method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed' | 'commands.changed'
   params: Record<string, unknown>
 }
+
+/** The Host command registry, as the composer lists it. */
+export type ControlCommandCatalog = CommandCatalog
+
+/** One settled command run: the registry's normalized outcome. */
+export type ControlCommandResult = CommandResult
 
 /** Canonical DSH request fields captured before adapter dispatch. */
 export interface PreviewRequest {

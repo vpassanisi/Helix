@@ -3,8 +3,10 @@
   import BrowserAttachments from './BrowserAttachments.svelte'
   import ChangesPanel from './ChangesPanel.svelte'
   import ComposerModelPicker from './ComposerModelPicker.svelte'
+  import ComposerPrompt from './ComposerPrompt.svelte'
   import SkillsDrawer from './SkillsDrawer.svelte'
   import { formatTokenCount, selectionLineLabel } from '../formatting.js'
+  import type { ComposerCommandState } from '../lib/composer-commands.svelte.js'
   import type { BrowserContextState } from '../../shared/browser-context.js'
   import type { SkillOverrides, SkillSuggestions, SkillSummary } from '../../shared/skills.js'
   import type { CodeChange, SelectionMetadata, SidebarModel } from '../types.js'
@@ -30,6 +32,7 @@
     skillSuggestions?: SkillSuggestions
     skillOverrides: SkillOverrides
     skillError: string
+    commands: ComposerCommandState
     modelOptionLabel: (option: SidebarModel) => string
     onSubmit: () => void
     onModelSelect: (model: string) => void
@@ -42,8 +45,9 @@
     selectionAttached = $bindable(), browserContext, codeChanges, changesOpen = $bindable(),
     models, model, reasoningEffort, modelChanging, contextUsedTokens, contextWindowTokens,
     skillPickerEnabled, skills, skillSuggestions, skillOverrides = $bindable(), skillError,
-    modelOptionLabel, onSubmit, onModelSelect, onReasoningEffortSelect, onRemoveBrowserAttachment, onToggleBrowserPicker }: Props = $props()
-  let promptElement = $state<HTMLTextAreaElement>()
+    commands, modelOptionLabel, onSubmit, onModelSelect, onReasoningEffortSelect,
+    onRemoveBrowserAttachment, onToggleBrowserPicker }: Props = $props()
+  let promptInput = $state<ComposerPrompt>()
   const working = $derived(isGenerating && !waitingForAnswer)
   const contextProgress = $derived(contextWindowTokens === undefined || contextUsedTokens === undefined
     ? 0 : Math.min(100, Math.max(0, (contextUsedTokens / contextWindowTokens) * 100)))
@@ -51,15 +55,7 @@
     : contextUsedTokens === undefined ? `Context window: ${formatTokenCount(contextWindowTokens)} tokens`
       : `Context: ${formatTokenCount(contextUsedTokens)} of ${formatTokenCount(contextWindowTokens)} tokens (${Math.round(contextProgress)}%)`)
 
-  export function focus(): void { promptElement?.focus() }
-
-  function handlePromptKeydown(event: KeyboardEvent): void {
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-      event.preventDefault()
-      if (waitingForAnswer) return
-      onSubmit()
-    }
-  }
+  export function focus(): void { promptInput?.focus() }
 </script>
 
 <div class="px-[14px] pt-0 pb-[14px]">
@@ -89,7 +85,14 @@
   {/if}
   <div class={`relative overflow-visible rounded-[8px] border bg-[var(--composer)] [transition:border-color_.3s_ease,box-shadow_.3s_ease] ${working ? '[border-color:color-mix(in_srgb,var(--brand-gold)_40%,var(--border))] [box-shadow:0_0_12px_color-mix(in_srgb,var(--brand-gold)_12%,transparent)]' : 'border-[var(--border)]'}`}>
     <div aria-hidden="true" class={`pointer-events-none absolute -inset-[3px] rounded-[10px] p-[3px] blur-[3px] [background-image:linear-gradient(110deg,transparent_20%,color-mix(in_srgb,var(--brand-gold)_35%,transparent)_40%,var(--brand-gold)_50%,color-mix(in_srgb,var(--brand-gold)_35%,transparent)_60%,transparent_80%)] [background-size:250%_100%] [background-position:100%_0] [mask-image:linear-gradient(#000_0_0),linear-gradient(#000_0_0)] [mask-origin:content-box,border-box] [mask-clip:content-box,border-box] [mask-composite:exclude] transition-opacity duration-[300ms] ease-[ease] motion-reduce:animate-none motion-reduce:[background-position:50%_0] ${working ? 'animate-composer-shimmer opacity-60' : 'opacity-0'}`}></div>
-    <textarea disabled={submissionPending} bind:this={promptElement} class="textarea min-h-[48px] max-h-[180px] resize-none rounded-none border-0 bg-transparent focus:border-transparent focus:[box-shadow:none] focus-visible:[box-shadow:none] focus:outline-none! focus:outline-offset-0! focus-visible:outline-none! focus-visible:outline-offset-0!" bind:value={prompt} onkeydown={handlePromptKeydown} placeholder="Ask about your code..." aria-label="Prompt" rows="2"></textarea>
+    <ComposerPrompt
+      bind:this={promptInput}
+      bind:prompt
+      {commands}
+      disabled={submissionPending}
+      submitBlocked={waitingForAnswer}
+      {onSubmit}
+    />
     <div class="flex items-center justify-end gap-[8px] px-[8px] pt-[3px] pb-[8px]">
       {#if browserContext?.hasOpenBrowser}
         <span class="mr-auto" data-side="top" data-align="start" data-tooltip={browserContext.picking ? 'Stop selecting browser elements' : browserContext.available ? 'Select browser elements' : 'Browser picker setup required. Use Helix: Select Browser Elements.'}>

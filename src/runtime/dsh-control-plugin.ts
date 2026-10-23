@@ -14,6 +14,7 @@ import {
   type PreviewRequest,
 } from './control-protocol.js'
 import { isRecord, stringValue } from '../shared/value-utils.js'
+import { isCommandName } from '../shared/commands.js'
 import { USER_QUESTION_INSTRUCTIONS } from '../shared/user-question.js'
 import { DshQuestionBridge } from './dsh-question-bridge.js'
 import { DshSkillBridge } from './dsh-skill-bridge.js'
@@ -112,7 +113,7 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
 
   const sendEvent = (
     sessionId: string,
-    method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed',
+    method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed' | 'commands.changed',
     params: Record<string, unknown>,
   ): boolean => send({
     version: CONTROL_PROTOCOL_VERSION,
@@ -157,10 +158,13 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
     return false
   }
 
-  const requireAgent = (request: ControlRequestEnvelope): any => {
+  const authorityOf = (request: ControlRequestEnvelope): string =>
+    stringValue(request.params.authoritySessionId) ?? request.sessionId
+
+  const requireAgent = (request: ControlRequestEnvelope, notFound?: string): any => {
     const agent = getAgent(request.sessionId)
-    if (agent === undefined) throw new PluginControlError(`Session ${request.sessionId} is not active.`, 'SESSION_NOT_FOUND')
-    const authoritySessionId = stringValue(request.params.authoritySessionId) ?? request.sessionId
+    if (agent === undefined) throw new PluginControlError(notFound ?? `Session ${request.sessionId} is not active.`, 'SESSION_NOT_FOUND')
+    const authoritySessionId = authorityOf(request)
     if (!isOwnedBy(agent, authoritySessionId)) {
       throw new PluginControlError(`Session ${request.sessionId} is not owned by ${authoritySessionId}.`, 'SESSION_NOT_OWNED')
     }
@@ -205,6 +209,74 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
   const handleProviderRequestCapture = (request: ControlRequestEnvelope): void => {
     providerRequestCaptureSessionId = request.sessionId
     sendResponse(request, { accepted: true })
+  }
+
+  const commandRegistry = (): any => {
+    const registry = ctx.get?.('commands') ?? ctx.commands
+    if (registry?.list === undefined || registry?.execute === undefined) {
+      throw new PluginControlError('The DSH command registry is unavailable.', 'CONTROL_REQUEST_FAILED')
+    }
+    return registry
+  }
+
+  /**
+   * Registry descriptors are handler-free views. A definition owned by the
+   * deployment is a Harness command; anything else was registered for this
+   * workspace, which is the label the composer shows.
+   */
+  const commandDescriptor = (descriptor: any): Record<string, string> | undefined => {
+    const name = stringValue(descriptor?.name)
+    const description = stringValue(descriptor?.description)
+    if (name === undefined || !isCommandName(name) || description === undefined) return undefined
+    const hint = stringValue(descriptor?.input?.hint)
+    const definitionId = stringValue(descriptor?.definitionId)
+    return {
+      name,
+      description,
+      ...(hint === undefined ? {} : { hint }),
+      source: definitionId !== undefined && !definitionId.startsWith('@deepseek-ai/') ? 'workspace' : 'harness',
+    }
+  }
+
+  /**
+   * The composer opens its popup before a chat has an Agent: a Helix session is
+   * minted here and reaches DSH with its first prompt. The registry's global
+   * scope is what a deployment registers, so a session that is not live yet
+   * lists that view, and `agent/created` reloads it with the Agent's own scoped
+   * commands on top.
+   */
+  const handleCommandCatalog = (request: ControlRequestEnvelope): void => {
+    const agent = getAgent(request.sessionId)
+    const authoritySessionId = authorityOf(request)
+    if (agent !== undefined && !isOwnedBy(agent, authoritySessionId)) {
+      throw new PluginControlError(`Session ${request.sessionId} is not owned by ${authoritySessionId}.`, 'SESSION_NOT_OWNED')
+    }
+    const commands = commandRegistry().list(agent)
+    sendResponse(request, {
+      available: true,
+      commands: (Array.isArray(commands) ? commands : []).map(commandDescriptor).filter((entry) => entry !== undefined),
+    })
+  }
+
+  /**
+   * Run one composer command through the Host registry, so the session log
+   * carries its `command/run` and `command/done` pair and `/compact` reaches the
+   * compaction seam the registry's own definition calls.
+   */
+  const handleCommandRun = async (request: ControlRequestEnvelope): Promise<void> => {
+    const name = requiredString(request.params.name, 'name')
+    if (!isCommandName(name)) throw new PluginControlError('The command name is not valid.', 'INVALID_ARGUMENT')
+    const agent = requireAgent(request, `/${name} needs a chat that has started. Send a message first.`)
+    const args = stringValue(request.params.args)?.trim()
+    const execution = await commandRegistry().execute(agent, args ? `/${name} ${args}` : `/${name}`, [], new AbortController().signal)
+    if (execution === undefined) throw new PluginControlError(`/${name} is not a command.`, 'INVALID_ARGUMENT')
+    const text = stringValue(execution.result?.text)
+    const commandId = stringValue(execution.commandId)
+    sendResponse(request, {
+      kind: execution.result?.kind === 'error' ? 'error' : 'success',
+      ...(text === undefined ? {} : { text }),
+      ...(commandId === undefined ? {} : { commandId }),
+    })
   }
 
   const handleAgentRequest = (request: ControlRequestEnvelope): void => {
@@ -270,6 +342,8 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
       }
       if (request.method === 'request.preview.arm') return handlePreviewArm(request)
       if (request.method === 'provider.request.captureNext') return handleProviderRequestCapture(request)
+      if (request.method === 'commands.catalog') return handleCommandCatalog(request)
+      if (request.method === 'session.command') return await handleCommandRun(request)
       handleAgentRequest(request)
     } catch (error) {
       sendResponse(request, undefined, {
@@ -434,11 +508,23 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
     return config
   }
 
+  const onCommandsChange = (): void => {
+    sendEvent('', 'commands.changed', {})
+  }
+
+  /** An Agent arriving adds its scoped layer, so the composer lists again. */
+  const onAgentCommandsChange = ({ agent }: any): void => {
+    const sessionId = stringValue(agent?.id)
+    if (sessionId !== undefined) sendEvent(sessionId, 'commands.changed', {})
+  }
+
   try {
     ctx.on?.('agent/created', skills.created, { global: true })
     ctx.on?.('agent/disposed', skills.disposed, { global: true })
     ctx.on?.('agent/pre-step', skills.preStep, { global: true, prepend: true })
     ctx.on?.('skills/change', () => sendEvent('', 'skills.changed', {}))
+    ctx.on?.('commands/change', onCommandsChange)
+    ctx.on?.('agent/created', onAgentCommandsChange, { global: true })
     ctx.on?.('tools/execute', questions.execute, { global: true })
     ctx.on?.('user-questions/request', questions.request, { global: true })
     ctx.on?.('approval/request', onApprovalRequest, { global: true })

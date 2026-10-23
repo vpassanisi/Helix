@@ -24,6 +24,8 @@ import { SerialTaskQueue } from './serial-task-queue.js'
 import type { UserQuestionAnswer } from '../shared/user-question.js'
 import { stringValue } from '../shared/value-utils.js'
 import type { SkillCatalog, SkillTurnSelection } from '../shared/skills.js'
+import type { CommandCatalog } from '../shared/commands.js'
+import type { ControlCommandResult } from './control-protocol.js'
 import { piAiRuntimeModelProfiles, type ChatTemplateValue } from './model-catalog.js'
 import type {
   DisposableLike,
@@ -297,6 +299,27 @@ export class HarnessRuntime {
   async setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void> {
     const handle = this.requireHandle()
     await handle.controlBridge.setReasoningEffort(sessionId, reasoningEffort)
+  }
+
+  /**
+   * The Host command registry for one session, which is where `/compact` and
+   * every other composer command lives. An older bridge without the capability
+   * is reported as unavailable, not as an empty catalog.
+   */
+  async commandCatalog(sessionId: string): Promise<CommandCatalog> {
+    const bridge = this.handle?.controlBridge
+    if (bridge === undefined || !bridge.capabilities.includes('commands.catalog')) {
+      return { commands: [], available: false }
+    }
+    return bridge.commandCatalog(sessionId)
+  }
+
+  async runCommand(sessionId: string, name: string, args: string): Promise<ControlCommandResult> {
+    const handle = this.requireHandle()
+    if (!handle.controlBridge.capabilities.includes('session.command')) {
+      throw new Error('The running Harness does not accept composer commands.')
+    }
+    return handle.controlBridge.runCommand(sessionId, name, args)
   }
 
   async armRequestPreview(sessionId: string, captureId: string): Promise<void> {

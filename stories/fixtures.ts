@@ -2,6 +2,7 @@ import type { ChatMessage, CodeChange, IncomingMessage, ModelEditorDraft, Sideba
 import type { BrowserElementContext } from '../src/shared/browser-context.js'
 import type { UserQuestionView } from '../src/shared/user-question.js'
 import type { SkillSummary, SkillSuggestions } from '../src/shared/skills.js'
+import type { CommandCatalog, ComposerCommand } from '../src/shared/commands.js'
 
 export const changes: CodeChange[] = [
   { path: 'src/webview/components/ChangesPanel.svelte', kind: 'created', additions: 92, deletions: 0 },
@@ -70,6 +71,17 @@ export const suggestions: SkillSuggestions = {
   sessionId: 'preview', revision: 1, status: 'ready', selected: ['frontend', 'basecoat'],
   probabilities: { frontend: 0.96, basecoat: 0.89, 'better-writing': 0.31 }, threshold: 0.75, elapsedMs: 120,
 }
+
+export const commands: ComposerCommand[] = [
+  { name: 'compact', description: 'Compact older conversation history', source: 'harness' },
+  { name: 'goal', description: 'Create, pause, resume, or complete the session goal', hint: '[action]', source: 'harness' },
+  { name: 'plan', description: 'Enter or leave plan mode', hint: '[off|message]', source: 'harness' },
+  { name: 'permissions', description: 'Change the permission preset', source: 'harness' },
+  { name: 'review-diff', description: 'Review the current diff against the base branch', hint: '[focus]', source: 'workspace' },
+  { name: 'release-notes', description: 'Draft release notes from the commits since the last tag', source: 'workspace' },
+]
+export const commandCatalog: CommandCatalog = { commands, available: true }
+export const commandCatalogUnavailable: CommandCatalog = { commands: [], available: false }
 
 export const chatMessages: ChatMessage[] = [
   { id: 1, role: 'user', label: 'You', text: 'Round the option buttons to match the answer box.',

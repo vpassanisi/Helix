@@ -31,5 +31,10 @@
 <Story name="Browser attachments" args={{ browserContext: { sessionId: 'preview', available: true, hasOpenBrowser: true, picking: false, attachments } }} />
 <Story name="Changes while generating" args={{ isGenerating: true, codeChanges: changes, changesOpen: true }} />
 <Story name="Skills enabled" args={{ skillPickerEnabled: true }} />
+<Story name="Slash menu" args={{ prompt: '/' }} />
+<Story name="Slash filter" args={{ prompt: '/comp' }} />
+<Story name="Command ready" args={{ prompt: '/compact' }} />
+<Story name="Command with args" args={{ prompt: '/goal pause' }} />
+<Story name="Unknown command" args={{ prompt: '/xyzzy' }} />
 <Story name="Full context" args={{ contextUsedTokens: 128000 }} />
 <Story name="Unknown context" args={{ contextUsedTokens: undefined, contextWindowTokens: undefined }} />

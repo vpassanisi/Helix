@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { ComponentProps } from 'svelte'
   import Composer from '../../src/webview/components/Composer.svelte'
+  import { ComposerCommandState } from '../../src/webview/lib/composer-commands.svelte.js'
   import { preferredReasoningEffort } from '../../src/runtime/model-catalog.js'
+  import { commandCatalog } from '../fixtures.js'
   type Args = ComponentProps<typeof Composer>
   let { args }: { args: Args } = $props()
   let prompt = $state('')
@@ -13,6 +15,10 @@
   let isGenerating = $state(false)
   let waitingForAnswer = $state(false)
   let browserContext = $state<Args['browserContext']>()
+  const commands = new ComposerCommandState(() => undefined, () => 'preview')
+  commands.applyCatalog(commandCatalog)
+  // In the canvas the caret is the end of the draft, which is where typing leaves it.
+  $effect(() => { commands.sync(prompt, prompt.length) })
   $effect(() => {
     prompt = args.prompt
     selectionAttached = args.selectionAttached
@@ -27,10 +33,11 @@
 </script>
 
 <div class="mx-[-14px] flex min-h-[520px] flex-col justify-end">
-  <Composer {...args} bind:prompt bind:selectionAttached bind:changesOpen bind:skillOverrides {model} {reasoningEffort} {isGenerating} {waitingForAnswer} {browserContext}
+  <Composer {...args} bind:prompt bind:selectionAttached bind:changesOpen bind:skillOverrides {model} {reasoningEffort} {isGenerating} {waitingForAnswer} {commands} {browserContext}
     onSubmit={() => {
       args.onSubmit()
       if (isGenerating || waitingForAnswer) { isGenerating = false; waitingForAnswer = false }
+      else if (commands.invocation(prompt)) { prompt = ''; commands.close() }
       else { prompt = ''; isGenerating = true }
     }}
     onModelSelect={(id) => {

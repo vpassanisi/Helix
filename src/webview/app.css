@@ -8,6 +8,8 @@
 @import "basecoat-css/components/switch.css";
 @import "basecoat-css/components/dropdown-menu.css";
 @import "basecoat-css/components/popover.css";
+@import "basecoat-css/components/command.css";
+@import "basecoat-css/components/kbd.css";
 @import "basecoat-css/components/tooltip.css";
 @import "./theme.css";
 
@@ -30,7 +32,7 @@ button { color: inherit; }
 .masthead { padding: 4px 14px; border-bottom: 1px solid var(--border); }
 .title-row { position: relative; display: flex; min-height: 27px; align-items: center; justify-content: flex-start; gap: 10px; }
 .title-copy { display: flex; min-width: 0; align-items: center; gap: 9px; }
-h1, h2, p { margin: 0; }
+@layer base { h1, h2, p { margin: 0; } }
 .title-copy h1 { color: var(--brand-gold); font-size: 17px; line-height: 1.05; letter-spacing: -.035em; font-weight: 650; }
 .title-actions { display: flex; align-items: center; }
 .title-actions { position: absolute; top: 50%; right: 0; gap: 4px; transform: translateY(-50%); }
@@ -121,3 +123,32 @@ h1, h2, p { margin: 0; }
 .settings-status.warning { color: #d0d0d0; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Composer slash commands.
+ * The draft is a contenteditable document: a resolved command is a span, the
+ * caret is where the popup opens. Nothing mirrors the text, so there is no
+ * second layer whose box metrics have to be kept in step. */
+.composer-input { position: relative; }
+.composer-prompt { min-height: 48px; max-height: 180px; padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5); overflow-y: auto; font: inherit; color: var(--foreground); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; caret-color: var(--foreground); cursor: text; outline: none; }
+.composer-prompt:empty::before { content: attr(data-placeholder); color: var(--muted-foreground); }
+.composer-prompt[contenteditable="false"] { opacity: .55; cursor: default; }
+/* Gold only, never bold: a wider glyph moves the caret the popup is anchored to. */
+.composer-command-token { color: var(--brand-gold); }
+
+/* The command popup: Basecoat's Command surface, driven by the composer. */
+.composer-command-menu { --command-menu-width: min(340px, 100%); width: var(--command-menu-width); gap: 2px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover); box-shadow: 0 14px 34px -14px rgb(0 0 0 / .7); animation: command-menu-in .12s ease-out; }
+@media (prefers-reduced-motion: reduce) { .composer-command-menu { animation: none; } }
+@keyframes command-menu-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.composer-command-head { display: flex; align-items: center; gap: 5px; padding: 3px 6px 4px; color: var(--muted-foreground); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.composer-command-count { flex: 1; text-align: right; font-variant-numeric: tabular-nums; }
+.composer-command-list { max-height: 216px; }
+.composer-command-list[role="menu"]::before { padding: 8px 6px; color: var(--muted-foreground); font-size: 10px; }
+.composer-command-row { display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; align-items: center; gap: 6px; width: 100%; padding: 5px 6px; border: 0; border-radius: 5px; background: transparent; text-align: left; font-size: 10px; }
+.composer-command-row .composer-command-name { color: var(--brand-gold); font-weight: 600; white-space: nowrap; }
+.composer-command-row .composer-command-hint { color: var(--muted-foreground); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.composer-command-row .composer-command-description { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+.composer-command-row[aria-selected="true"] .composer-command-description { color: var(--foreground); }
+.composer-command-key { display: inline-flex; }
+.composer-command-menu [role="menuitem"][data-selected="true"] { background: var(--accent); color: var(--foreground); }
+.composer-command-menu [role="menuitem"]:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 65%, transparent); }
+.composer-command-menu [role="menuitem"]:disabled { opacity: .5; }

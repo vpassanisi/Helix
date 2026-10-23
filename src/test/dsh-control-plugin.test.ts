@@ -361,3 +361,108 @@ test('retries the plugin connection after a transient startup race', async () =>
     else process.env.HELIX_CONTROL_TOKEN = originalToken
   }
 })
+
+test('lists and runs composer commands through the Host command registry', async () => {
+  const agent = { id: 'root-session', status: 'idle', session: { header: {}, append: () => undefined } }
+  const agents = new Map<string, unknown>([['root-session', agent]])
+  const calls: unknown[][] = []
+  const registry = {
+    list: (target: unknown) => {
+      calls.push(['list', target])
+      return [
+        { name: 'compact', description: 'Compact older conversation history', definitionId: '@deepseek-ai/dsh-command-compact' },
+        { name: 'plan', description: 'Enter or leave plan mode', input: { hint: '[off|message]' }, definitionId: '@deepseek-ai/dsh-plan-mode' },
+        { name: 'review-diff', description: 'Review the current diff', definitionId: 'helix-workspace-commands' },
+        { name: 'Needs Slash', description: 'not listable, the name is invalid' },
+        { name: 'feedback', description: 42 },
+      ]
+    },
+    execute: async (target: unknown, line: string, attachments: unknown[], signal: unknown) => {
+      calls.push(['execute', target, line, attachments, signal instanceof AbortSignal])
+      if (line === '/missing') return undefined
+      return { commandId: 'cmd-1', result: { kind: 'success', text: 'Compacted 3 history items (~9,600 tokens).' } }
+    },
+  }
+
+  const bridge = new LocalControlBridge()
+  await bridge.start()
+  const endpoint = bridge.endpoint
+  const token = bridge.token
+  assert.ok(endpoint)
+  assert.ok(token)
+  let commandsChangeHandler: (() => void) | undefined
+  let agentCreatedHandler: ((payload: { agent: unknown }) => void) | undefined
+  const originalEndpoint = process.env.HELIX_CONTROL_ENDPOINT
+  const originalToken = process.env.HELIX_CONTROL_TOKEN
+  process.env.HELIX_CONTROL_ENDPOINT = endpoint
+  process.env.HELIX_CONTROL_TOKEN = token
+
+  try {
+    helixControlPlugin({
+      get: (name: string) => name === 'agents'
+        ? { get: (id: string) => agents.get(id) }
+        : name === 'commands' ? registry : undefined,
+      on: (name: string, handler: (...args: unknown[]) => void) => {
+        if (name === 'commands/change') commandsChangeHandler = handler as () => void
+        if (name === 'agent/created') agentCreatedHandler = handler as (payload: { agent: unknown }) => void
+      },
+      effect: (factory: () => () => void) => { factory() },
+    })
+    assert.equal(await bridge.waitForConnection(), true)
+
+    assert.deepEqual(await bridge.commandCatalog('root-session'), {
+      available: true,
+      commands: [
+        { name: 'compact', description: 'Compact older conversation history', source: 'harness' },
+        { name: 'plan', description: 'Enter or leave plan mode', hint: '[off|message]', source: 'harness' },
+        { name: 'review-diff', description: 'Review the current diff', source: 'workspace' },
+      ],
+    }, 'a command with an invalid name or a non-text description is not listed')
+    assert.deepEqual(calls[0], ['list', agent])
+
+    assert.deepEqual(await bridge.runCommand('root-session', 'compact', ''), {
+      kind: 'success', text: 'Compacted 3 history items (~9,600 tokens).', commandId: 'cmd-1',
+    })
+    assert.deepEqual(calls.at(-1), ['execute', agent, '/compact', [], true], 'the Host registry owns the parse, the logging, and the abort signal')
+    await bridge.runCommand('root-session', 'plan', 'off')
+    assert.equal(calls.at(-1)?.[2], '/plan off')
+
+    await assert.rejects(bridge.runCommand('root-session', 'missing', ''), (error: { code?: string }) => error.code === 'INVALID_ARGUMENT')
+    await assert.rejects(bridge.runCommand('root-session', 'Bad Name', ''), (error: { code?: string }) => error.code === 'INVALID_ARGUMENT')
+
+    assert.deepEqual(await bridge.commandCatalog('missing-session'), {
+      available: true,
+      commands: [
+        { name: 'compact', description: 'Compact older conversation history', source: 'harness' },
+        { name: 'plan', description: 'Enter or leave plan mode', hint: '[off|message]', source: 'harness' },
+        { name: 'review-diff', description: 'Review the current diff', source: 'workspace' },
+      ],
+    }, 'a chat with no Agent yet lists the global scope, so the popup has rows to show')
+    assert.deepEqual(calls.at(-1), ['list', undefined], 'the registry answers a scope-less listing')
+
+    await assert.rejects(
+      bridge.runCommand('missing-session', 'compact', ''),
+      (error: { code?: string; message?: string }) => error.code === 'SESSION_NOT_FOUND' && /Send a message first\./.test(String(error.message)),
+      'a command needs the session log its Agent owns',
+    )
+
+    const changes: string[] = []
+    const listed = new Promise<void>((resolve) => {
+      const watch = bridge.onEvent((event) => {
+        if (event.method !== 'commands.changed') return
+        changes.push(event.sessionId)
+        if (changes.length === 2) { watch.dispose(); resolve() }
+      })
+    })
+    commandsChangeHandler?.()
+    agentCreatedHandler?.({ agent })
+    await listed
+    assert.deepEqual(changes, ['', 'root-session'], 'a registry change and an arriving Agent both re-list the composer popup')
+  } finally {
+    await bridge.close()
+    if (originalEndpoint === undefined) delete process.env.HELIX_CONTROL_ENDPOINT
+    else process.env.HELIX_CONTROL_ENDPOINT = originalEndpoint
+    if (originalToken === undefined) delete process.env.HELIX_CONTROL_TOKEN
+    else process.env.HELIX_CONTROL_TOKEN = originalToken
+  }
+})

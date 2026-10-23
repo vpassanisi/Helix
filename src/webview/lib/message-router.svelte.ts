@@ -12,6 +12,7 @@ import { isRecord, parsePayload, stringValue } from '../../shared/value-utils.js
 import type { PendingUserQuestion } from '../../shared/user-question.js'
 import type { ChatTranscript } from './chat-transcript.svelte.js'
 import type { ComposerModelState } from './composer-model.svelte.js'
+import type { ComposerCommandState } from './composer-commands.svelte.js'
 import type { ModelCatalogState } from './model-catalog.svelte.js'
 import type { RequestPreviewState } from './request-preview.svelte.js'
 import type { SessionState } from './session-state.svelte.js'
@@ -28,6 +29,7 @@ export interface MessageRouterDeps {
   catalog: ModelCatalogState
   composerModel: ComposerModelState
   routing: SkillRoutingState
+  commands: ComposerCommandState
   preview: RequestPreviewState
   tools: ToolBundlesState
 }
@@ -45,7 +47,7 @@ type HandlerMap = { [T in IncomingMessage['type']]: (message: MessageOfType<T>) 
  * belongs to one conversation checks the active session before it acts.
  */
 export function createMessageRouter(deps: MessageRouterDeps): (message: IncomingMessage) => void {
-  const { post, state, transcript, settingsState, catalog, composerModel, routing, preview, tools } = deps
+  const { post, state, transcript, settingsState, catalog, composerModel, routing, commands, preview, tools } = deps
   const sessionId = () => state.activeSessionId
   const owns = (messageSessionId: string | undefined): boolean => messageSessionId === state.activeSessionId
 
@@ -95,6 +97,7 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       routing.clearOverrides()
       routing.clearSuggestions()
       routing.clearCatalog()
+      commands.clear()
       state.dropPendingSubmission()
       routing.forgetKey()
       composerModel.applyRuntimeEffort(message.state.reasoningEffort)
@@ -343,6 +346,15 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       routing.applyCatalog(message.catalog, message.error)
     },
     skillSuggestions: (message) => routing.applySuggestions(message.suggestions, state.skillPickerEnabled, state.activeSessionId),
+    commandCatalog: (message) => {
+      if (!owns(message.sessionId)) return
+      commands.applyCatalog(message.catalog, message.error)
+    },
+    commandResult: (message) => {
+      if (!owns(message.sessionId)) return
+      transcript.appendMessage('activity', `Command ${message.kind === 'success' ? 'ran' : 'failed'}`,
+        message.text ?? (message.kind === 'success' ? `/${message.name} finished.` : `/${message.name} did not finish.`))
+    },
     submitFailed: (message) => {
       if (!owns(message.sessionId)) return
       if (state.pendingSubmission) {

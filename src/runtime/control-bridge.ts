@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { UserQuestionAnswer } from '../shared/user-question.js'
 import type { SkillCatalog, SkillTurnSelection } from '../shared/skills.js'
+import { isCommandCatalog } from '../shared/commands.js'
+import { isRecord } from '../shared/value-utils.js'
 import {
   CONTROL_PROTOCOL_VERSION,
   CONTROL_CAPABILITIES,
@@ -12,6 +14,8 @@ import {
   isControlRequestMethod,
   parseControlLine,
   type ControlApprovalOutcome,
+  type ControlCommandCatalog,
+  type ControlCommandResult,
   type ControlEnvelope,
   type ControlEventEnvelope,
   type ControlRequestEnvelope,
@@ -48,6 +52,8 @@ export interface ControlBroker {
   setApprovalPolicy(sessionId: string, policy: 'ask' | 'never', authoritySessionId?: string): Promise<void>
   setSandboxMode(sessionId: string, mode: 'read-only' | 'workspace-write' | 'danger-full-access', authoritySessionId?: string): Promise<void>
   setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void>
+  commandCatalog(sessionId: string): Promise<ControlCommandCatalog>
+  runCommand(sessionId: string, name: string, args: string, timeoutMs?: number): Promise<ControlCommandResult>
   armRequestPreview(sessionId: string, captureId: string): Promise<void>
   captureNextProviderRequest(sessionId: string): Promise<void>
   close(): Promise<void>
@@ -275,6 +281,28 @@ export class LocalControlBridge implements ControlBroker {
 
   async skillCatalog(sessionId: string): Promise<SkillCatalog> {
     return await this.request('skills.catalog', sessionId) as SkillCatalog
+  }
+
+  /**
+   * A command run is a Host-side operation, and `/compact` runs a summarization
+   * request inside it, so the ordinary five-second control timeout is far too
+   * short. The bridge default is the caller's to lower, never to rely on.
+   */
+  async commandCatalog(sessionId: string): Promise<ControlCommandCatalog> {
+    const result = await this.request('commands.catalog', sessionId)
+    return isCommandCatalog(result) ? result : { commands: [], available: false }
+  }
+
+  async runCommand(sessionId: string, name: string, args: string, timeoutMs = 300_000): Promise<ControlCommandResult> {
+    const result = await this.request('session.command', sessionId, { name, args }, timeoutMs)
+    if (!isRecord(result) || (result.kind !== 'success' && result.kind !== 'error')) {
+      throw new ControlBridgeError('The DSH bridge returned an unusable command result.', 'BRIDGE_PROTOCOL')
+    }
+    return {
+      kind: result.kind,
+      ...(typeof result.text === 'string' ? { text: result.text } : {}),
+      ...(typeof result.commandId === 'string' ? { commandId: result.commandId } : {}),
+    }
   }
   async stageSkills(sessionId: string, selection: SkillTurnSelection): Promise<void> {
     await this.request('skills.stage', sessionId, { ...selection })

@@ -3,6 +3,7 @@ import { access, readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { HarnessClient, HarnessClientOptions } from '@deepseek-ai/dsh-sdk-client'
 import type { ControlBroker, ControlBridgeOptions } from '../runtime/control-bridge.js'
+import type { ControlRequestMethod } from '../runtime/control-protocol.js'
 import { HarnessRuntime } from '../runtime/harness-runtime.js'
 import { RequestPreviewCancelledError, RequestPreviewController, type RequestPreviewRuntime } from '../host/request-preview-controller.js'
 import type { RuntimeOptions } from '../runtime/types.js'
@@ -17,12 +18,12 @@ function runtimeOptions(): RuntimeOptions {
   }
 }
 
-function fakeBridge(connected: boolean, calls: string[]): ControlBroker {
+function fakeBridge(connected: boolean, calls: string[], capabilities: readonly ControlRequestMethod[] = []): ControlBroker {
   return {
     endpoint: 'test-endpoint',
     token: 'test-token',
     connected,
-    capabilities: [],
+    capabilities,
     answerQuestion: async () => undefined,
     start: async () => { calls.push('bridge.start') },
     waitForConnection: async () => connected,
@@ -33,6 +34,14 @@ function fakeBridge(connected: boolean, calls: string[]): ControlBroker {
     setApprovalPolicy: async () => undefined,
     setSandboxMode: async () => undefined,
     setReasoningEffort: async (sessionId, reasoningEffort) => { calls.push(`bridge.reasoning:${sessionId}:${reasoningEffort ?? 'default'}`) },
+    commandCatalog: async (sessionId) => {
+      calls.push(`bridge.command-catalog:${sessionId}`)
+      return { commands: [{ name: 'compact', description: 'Compact older conversation history' }], available: true }
+    },
+    runCommand: async (sessionId, name, args) => {
+      calls.push(`bridge.command:${sessionId}:${name}:${args}`)
+      return { kind: 'success', text: 'Compacted 3 history items (~9,600 tokens).' }
+    },
     armRequestPreview: async (sessionId, captureId) => { calls.push(`bridge.preview:${sessionId}:${captureId}`) },
     captureNextProviderRequest: async (sessionId) => { calls.push(`bridge.capture-provider-request:${sessionId}`) },
     close: async () => { calls.push('bridge.close') },
@@ -122,6 +131,39 @@ test('stages reasoning effort on the running session without restarting DSH', as
     'bridge.reasoning:active-session:high',
     'bridge.preview:active-session:capture-id',
     'client.prompt',
+  ])
+  await runtime.dispose()
+})
+
+test('composer commands stay behind the bridge capability', async () => {
+  const calls: string[] = []
+  const silent = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) => fakeClient(calls),
+  })
+
+  await silent.start(runtimeOptions())
+  assert.deepEqual(await silent.commandCatalog('session'), { commands: [], available: false },
+    'a bridge that does not advertise the registry reports no commands, not an empty catalog')
+  await assert.rejects(silent.runCommand('session', 'compact', ''), /does not accept composer commands/)
+  assert.deepEqual(calls, ['bridge.start', 'client.start', 'client.initialize'], 'the bridge is never asked')
+  await silent.dispose()
+
+  const callsWith: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, callsWith, ['commands.catalog', 'session.command']),
+    createClient: (_options: HarnessClientOptions) => fakeClient(callsWith),
+  })
+
+  await runtime.start(runtimeOptions())
+  assert.deepEqual(await runtime.commandCatalog('session'), {
+    commands: [{ name: 'compact', description: 'Compact older conversation history' }], available: true,
+  })
+  assert.deepEqual(await runtime.runCommand('session', 'compact', ''), {
+    kind: 'success', text: 'Compacted 3 history items (~9,600 tokens).',
+  })
+  assert.deepEqual(callsWith.filter((call) => call.startsWith('bridge.command')), [
+    'bridge.command-catalog:session', 'bridge.command:session:compact:',
   ])
   await runtime.dispose()
 })

@@ -2,7 +2,7 @@
   "name": "helix-vscode",
   "displayName": "Helix",
   "description": "A VS Code sidebar Webview UI for Helix.",
-  "version": "0.0.110",
+  "version": "0.0.111",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -106,7 +106,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Tool bundles left out of new DSH runtimes. Saved from the Tools settings page and applied when the runtime starts, which happens on the next new session."
+          "description": "Tool bundles left out of new DSH runtimes. Saved to the current VS Code profile from the Tools settings page, so each profile keeps its own list, and applied when the runtime starts, which happens on the next new session."
         },
         "deepseekHarness.mcpServers": {
           "type": "array",

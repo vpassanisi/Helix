@@ -59,6 +59,10 @@
     Saving does not restart anything. The current session keeps the tools it started with. The saved list applies the next time the runtime starts, which happens when you start a new session.
   </p>
 
+  <p class="m-0 max-w-[46ch] text-[var(--muted-foreground)] text-[10px] leading-[1.45]">
+    The saved list lives in the settings of the current VS Code profile, alongside the connection settings. A window running a different profile has its own list, and reloading it does not pick up this one.
+  </p>
+
   {#each groups as group (group.id)}
     <div class="card min-w-0 shadow-none" data-size="sm">
       <header>

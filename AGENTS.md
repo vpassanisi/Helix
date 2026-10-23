@@ -1,3 +1,5 @@
+be direct with your responses, I do not want verbose rambling responses with ancillary information. keep it short and to the point.
+
 # Project Overview
 
 Helix is a Visual Studio Code extension that provides a chat-based coding assistant in a sidebar. It uses the DeepSeek Harness (DSH) runtime to manage model sessions and is designed to work with hosted and local models. The assistant can use relevant context from the active workspace, including selected editor text.

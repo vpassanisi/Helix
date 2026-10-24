@@ -9,6 +9,7 @@ import {
   toolStepKey,
 } from '../../shared/harness-events.js'
 import { isRecord, parsePayload, stringValue } from '../../shared/value-utils.js'
+import { GEN_UI_TOOL_NAME, parseGenUiCall } from '../../shared/gen-ui.js'
 import type { PendingUserQuestion } from '../../shared/user-question.js'
 import type { ChatTranscript } from './chat-transcript.svelte.js'
 import type { ComposerModelState } from './composer-model.svelte.js'
@@ -185,12 +186,35 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
     if (chunk.type === 'finish' || (chunk.type === 'block-end' && isRecord(chunk.block) && chunk.block.type === 'reasoning')) transcript.finishThinking(message.agentSessionId)
   }
 
-  function handleToolCallEvent(sessionIdValue: string | undefined, data: Record<string, unknown>): void {
+  function handleToolCallEvent(sessionIdValue: string | undefined, data: Record<string, unknown>, rootSession: boolean): void {
     const callId = toolCallId(data, `tool-call-${transcript.allocateId()}`)
     if (sessionIdValue !== undefined) state.liveToolCallTracker.finishCall(sessionIdValue, callId)
     const stepKey = toolStepKey(sessionIdValue, data, state.activeSessionId)
     if (stepKey !== undefined) state.toolCallsByStep[stepKey] = callId
     const toolName = stringValue(data.name)
+
+    // A card the agent drew is its own transcript row, built from the spec in
+    // the call's arguments. Not a tool row: the arguments are the content the
+    // user reads, not a payload to inspect. Only the conversation the user is
+    // reading may put one on screen — a subagent's card has no transcript to
+    // land in, and the tool tells that agent so.
+    if (toolName === GEN_UI_TOOL_NAME) {
+      // Streaming already put a "preparing" row on screen for this call, and the
+      // tracker let the id go at the line above, so no later reconcile can
+      // collect it. The card row replaces that row; nothing else clears it, and
+      // a card with a spinner under it spins for the rest of the session.
+      transcript.removePreparingToolCalls([callId])
+      if (!rootSession) return
+      transcript.finishThinking()
+      const call = parseGenUiCall(data.arguments)
+      if (call.ok) {
+        transcript.appendUi({ callId, spec: call.spec, status: 'rendered', ...(call.title === undefined ? {} : { title: call.title }) })
+      } else {
+        transcript.appendUi({ callId, spec: { root: '', elements: {} }, status: 'failed', error: call.message })
+      }
+      return
+    }
+
     const toolArguments = parsePayload(data.arguments)
     const plannedChange = toolName === undefined || toolArguments === undefined
       ? undefined
@@ -218,6 +242,16 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       : toolResultIsError(resultContent) ? 'Tool reported an error.' : undefined
     const meta = data.meta === undefined ? undefined : stringifyPayload(data.meta)
     const callId = toolResultCallId(link, `tool-result-${transcript.allocateId()}`)
+    // A card owns its content already, so its result is only a status: the
+    // plugin's rejection text lands on the card the user can see, not in a
+    // tool row that would bury it.
+    if (transcript.hasUi(callId)) {
+      transcript.removePreparingToolCalls([callId])
+      transcript.updateUi(callId, error === undefined
+        ? { status: 'rendered', error: undefined }
+        : { status: 'failed', error: toolResultText(resultContent) || error })
+      return
+    }
     if (sessionIdValue !== undefined) state.liveToolCallTracker.finishCall(sessionIdValue, callId)
     const pendingKey = pendingToolKey(link)
     const plannedChange = pendingKey === undefined ? undefined : state.pendingCodeChanges[pendingKey]
@@ -289,7 +323,7 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
     }
 
     if (event.type === 'tool/call') {
-      handleToolCallEvent(sessionIdValue, data)
+      handleToolCallEvent(sessionIdValue, data, isRootSessionEvent)
       return
     }
 

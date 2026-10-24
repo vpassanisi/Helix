@@ -7,6 +7,8 @@ export type ControlRequestMethod =
   | 'skills.catalog'
   | 'skills.stage'
   | 'skills.clear'
+  | 'modelInstructions.stage'
+  | 'modelInstructions.clear'
   | 'turn.cancel'
   | 'session.steer'
   | 'session.inject'
@@ -25,6 +27,8 @@ export const CONTROL_CAPABILITIES = [
   'skills.catalog',
   'skills.stage',
   'skills.clear',
+  'modelInstructions.stage',
+  'modelInstructions.clear',
   'turn.cancel',
   'session.steer',
   'session.inject',

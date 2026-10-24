@@ -3,6 +3,7 @@ import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import type { BinaryThinkingMode, ChatTemplateValue, ReasoningFormat } from '../runtime/model-catalog.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer, UserQuestionView } from '../shared/user-question.js'
+import type { GenUiAction, GenUiView } from '../shared/gen-ui.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
 import type { OtelTracingSettings } from '../shared/otel-tracing.js'
 import type { CompactionEntry } from '../shared/compaction-history.js'
@@ -34,7 +35,7 @@ export interface ToolCallView {
   question?: UserQuestionView
 }
 
-export type ChatRole = 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction' | 'changes' | 'divider'
+export type ChatRole = 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction' | 'changes' | 'divider' | 'ui'
 
 export interface ChatMessage {
   id: number
@@ -46,6 +47,8 @@ export interface ChatMessage {
   context?: SelectionMetadata
   browserLabels?: string[]
   tool?: ToolCallView
+  /** A card the agent drew with `show_ui`, rendered from its catalog spec. */
+  ui?: GenUiView
   compaction?: CompactionEntry
   changes?: CodeChange[]
   panelOpen?: boolean
@@ -124,18 +127,20 @@ export interface SidebarModel {
   binaryThinkingMode?: BinaryThinkingMode
   chatTemplateKwargs?: Record<string, ChatTemplateValue>
   chatTemplateArgs?: Record<string, ChatTemplateValue>
+  systemInstructions?: string
 }
 
 export interface SidebarDiscoveredModel extends SidebarModel {
   loaded?: boolean
 }
 
-export interface ModelEditorDraft extends Omit<SidebarModel, 'reasoningEfforts' | 'chatTemplateKwargs' | 'chatTemplateArgs'> {
+export interface ModelEditorDraft extends Omit<SidebarModel, 'reasoningEfforts' | 'chatTemplateKwargs' | 'chatTemplateArgs' | 'systemInstructions'> {
   key: number
   sourceId?: string
   reasoningEfforts: string[]
   chatTemplateKwargsText: string
   chatTemplateArgsText: string
+  systemInstructions: string
 }
 
 export interface ModelDraft extends SidebarModel {
@@ -177,6 +182,7 @@ export type SidebarMessage =
   | { type: 'cancelRequestPreview' }
   | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
   | { type: 'questionAnswer'; sessionId: string; requestId: string; answer: UserQuestionAnswer }
+  | { type: 'uiAction'; sessionId: string; callId: string; action: GenUiAction }
 
 export interface WebviewApi {
   postMessage(message: SidebarMessage): void

@@ -6,8 +6,10 @@
   import ThinkingCard from './ThinkingCard.svelte'
   import ToolCallCard from './ToolCallCard.svelte'
   import UserQuestionCard from './UserQuestionCard.svelte'
+  import GenUiCard from './GenUiCard.svelte'
   import { renderMarkdown } from '../markdown.js'
   import { selectionLineLabel } from '../formatting.js'
+  import type { GenUiAction } from '../../shared/gen-ui.js'
   import type { UserQuestionAnswer } from '../../shared/user-question.js'
   import type { ChatMessage } from '../types.js'
 
@@ -18,9 +20,10 @@
     thinking: boolean
     onanswer: (answer: UserQuestionAnswer) => void
     onapprove: (outcome: 'allowed-once' | 'rejected') => void
+    onui: (action: GenUiAction) => void
   }
 
-  let { message, activeSessionId, thinking, onanswer, onapprove }: Props = $props()
+  let { message, activeSessionId, thinking, onanswer, onapprove, onui }: Props = $props()
 </script>
 
 {#if message.role === 'changes' && message.changes}
@@ -33,6 +36,8 @@
       <CompactionCard entry={message.compaction} subagent={message.compaction.sessionId !== activeSessionId} />
     {:else if message.role === 'reasoning'}
       <ThinkingCard label={message.label} text={message.text} active={thinking} />
+    {:else if message.role === 'ui' && message.ui}
+      <GenUiCard view={message.ui} {onui} />
     {:else if message.role === 'tool' && message.tool}
       {#if message.tool.question}
         <UserQuestionCard value={message.tool.question} {onanswer} />

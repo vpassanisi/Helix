@@ -2,6 +2,7 @@ import type { ChatMessage, CodeChange, IncomingMessage, ModelEditorDraft, Sideba
 import type { BrowserElementContext } from '../src/shared/browser-context.js'
 import type { UserQuestionView } from '../src/shared/user-question.js'
 import type { SkillSummary, SkillSuggestions } from '../src/shared/skills.js'
+import type { GenUiView } from '../src/shared/gen-ui.js'
 import { commandLine, commandLineHtml, type CommandCatalog, type ComposerCommand } from '../src/shared/commands.js'
 
 export const changes: CodeChange[] = [
@@ -13,12 +14,13 @@ export const changes: CodeChange[] = [
 
 export const models: SidebarModel[] = [
   { id: 'deepseek-v4-flash', displayName: 'DeepSeek Flash', contextWindow: 128000, acceptsImages: false, reasoningFormat: 'openai', reasoningEfforts: ['low', 'medium', 'high'] },
-  { id: 'local-coder', displayName: 'Local Coder', contextWindow: 32000, acceptsImages: true, reasoningFormat: 'qwen', binaryThinkingMode: 'on', reasoningEfforts: [] },
+  { id: 'local-coder', displayName: 'Local Coder', contextWindow: 32000, acceptsImages: true, reasoningFormat: 'qwen', binaryThinkingMode: 'on', reasoningEfforts: [],
+    systemInstructions: 'This model over-reads files. Search with grep and read a line range, not a whole file.' },
 ]
 export const discoveredModels: SidebarDiscoveredModel[] = [...models, { id: 'new-coder', displayName: 'New Coder', contextWindow: 64000 }]
 export const modelDrafts: ModelEditorDraft[] = models.map((model, index) => ({
   ...model, key: index + 1, sourceId: model.id, reasoningEfforts: model.reasoningEfforts ?? [],
-  chatTemplateKwargsText: '{}', chatTemplateArgsText: '{}',
+  chatTemplateKwargsText: '{}', chatTemplateArgsText: '{}', systemInstructions: model.systemInstructions ?? '',
 }))
 export { modelOptionLabel } from '../src/webview/lib/model-mappers.js'
 
@@ -174,6 +176,106 @@ export const hostTurn: IncomingMessage[] = [
       data: { callId: 'tool-1', message: { content: 'export default App' } } } },
   } },
   { type: 'codeChanges', sessionId: 'session-1', changes: [changes[1]!], active: true },
+  { type: 'notification', sessionId: 'session-1', notification: {
+    method: 'session.status', params: { sessionId: 'session-1', status: 'idle' } },
+  },
+]
+
+/** Cards as a `show_ui` call leaves them: a title, a spec, a status. */
+export const genUiTestSuite: GenUiView = {
+  callId: 'ui-suite',
+  title: 'Test suite',
+  status: 'rendered',
+  spec: {
+    root: 'card',
+    state: { suite: { passing: 18, failing: 3, seconds: 41 } },
+    elements: {
+      card: { type: 'Card', props: { title: 'Ship readiness', subtitle: 'main, 2 minutes ago' }, children: ['grid', 'bar', 'note', 'actions'] },
+      grid: { type: 'Grid', props: { columns: 2 }, children: ['passing', 'failing'] },
+      passing: { type: 'Metric', props: { label: 'Passing', value: '18', tone: 'success' } },
+      failing: { type: 'Metric', props: { label: 'Failing', value: '3', tone: 'danger', delta: 'webdav, search, otel' } },
+      bar: { type: 'Progress', props: { label: 'Suites reported', value: 4, max: 6 } },
+      note: { type: 'Text', props: { text: 'Two of the three failures are the new timeout in the search suite.', tone: 'muted' } },
+      actions: { type: 'Stack', props: { direction: 'horizontal' }, children: ['rerun', 'badge'] },
+      rerun: { type: 'Button', props: { label: 'Re-run the 3 failing tests', variant: 'primary' }, on: { press: { action: 'prompt', params: { text: 'Re-run the three failing tests and show the output.' } } } },
+      badge: { type: 'Badge', props: { label: '41s', tone: 'neutral' } },
+    },
+  },
+}
+
+export const genUiAlerts: GenUiView = {
+  callId: 'ui-alerts',
+  title: 'Deploy check',
+  status: 'rendered',
+  spec: {
+    root: 'card',
+    elements: {
+      card: { type: 'Stack', props: {}, children: ['head', 'danger', 'warn', 'table', 'sep', 'list'] },
+      head: { type: 'Heading', props: { text: 'Blocked on two things', level: 'h2' } },
+      danger: { type: 'Alert', props: { tone: 'danger', title: 'Migration is not applied', text: 'release_042 is pending on staging. Deploying now drops the old column.' } },
+      warn: { type: 'Alert', props: { tone: 'warning', text: 'The otel plugin test suite is not running in CI.' } },
+      table: { type: 'Table', props: { caption: 'Environments', columns: ['Env', 'Build', 'Age'], rows: [['staging', 'a91f2c', '2h'], ['prod', '7d0e11', '3d']] } },
+      sep: { type: 'Separator', props: { spacing: 'md' } },
+      list: { type: 'List', props: { ordered: true }, children: ['first', 'second'] },
+      first: { type: 'ListItem', props: { text: 'Apply the migration', note: 'ops.run("migrate --release 042")' } },
+      second: { type: 'ListItem', props: { text: 'Re-run the deploy', tone: 'muted' } },
+    },
+  },
+}
+
+export const genUiReleaseNoteForm: GenUiView = {
+  callId: 'ui-form',
+  title: 'Release note',
+  status: 'rendered',
+  spec: {
+    root: 'card',
+    state: { form: { note: '', ship: true } },
+    elements: {
+      card: { type: 'Card', props: { title: 'Write the release note' }, children: ['note', 'ship', 'preview', 'send'] },
+      note: { type: 'TextInput', props: { label: 'What ships?', placeholder: 'One sentence for the changelog', value: { $bindState: '/form/note' } } },
+      ship: { type: 'Checkbox', props: { label: 'Publish after the release note is written', checked: { $bindState: '/form/ship' } } },
+      preview: { type: 'Text', props: { text: { $template: 'Preview: ${/form/note}' }, tone: 'muted' } },
+      send: { type: 'Button', props: { label: 'Send to Helix', variant: 'primary' }, on: { press: { action: 'prompt', params: { text: { $template: 'Write the release note from this: ${/form/note}' } } } } },
+    },
+  },
+}
+
+export const genUiFailed: GenUiView = {
+  callId: 'ui-failed',
+  title: 'Quarterly report',
+  status: 'failed',
+  spec: { root: '', elements: {} },
+  error: 'spec does not match the Helix catalog: chart: "Marquee" is not a Helix component. Use one of Stack, Grid, Card, Heading, Text.',
+}
+
+export const genUiDismissed: GenUiView = { ...genUiTestSuite, callId: 'ui-dismissed', status: 'dismissed' }
+
+/** The card, in the transcript among the other rows. */
+export const uiCardMessage: ChatMessage = { id: 9, role: 'ui', label: 'Card', text: '', ui: genUiTestSuite }
+
+/**
+ * A turn that ends with a card. The spec rides in the tool call's arguments,
+ * exactly as the runtime hands it over, and the result is a one-line summary —
+ * the card is the content, not the tool row.
+ */
+export const hostCardTurn: IncomingMessage[] = [
+  { type: 'state', state: { activeSessionId: 'session-1', runtimeState: 'ready', reasoningEffort: 'high' } },
+  { type: 'settings', settings: hostSettings },
+  { type: 'modelCatalog', models, reasoningHistory: {} },
+  { type: 'accepted', sessionId: 'session-1', modelId: 'deepseek-v4-flash', reasoningEffort: 'high' },
+  { type: 'assistantStream', sessionId: 'session-1', agentSessionId: 'session-1', frame: { type: 'start' } },
+  { type: 'assistantStream', sessionId: 'session-1', agentSessionId: 'session-1',
+    frame: { type: 'chunk', chunk: { type: 'text-delta', text: 'Here is where the suite stands.' } } },
+  { type: 'notification', sessionId: 'session-1', notification: {
+    method: 'session.event',
+    params: { sessionId: 'session-1', event: { type: 'tool/call',
+      data: { name: 'show_ui', callId: 'ui-suite', arguments: JSON.stringify({ title: 'Test suite', spec: genUiTestSuite.spec }) } } },
+  } },
+  { type: 'notification', sessionId: 'session-1', notification: {
+    method: 'session.event',
+    params: { sessionId: 'session-1', event: { type: 'tool/result',
+      data: { callId: 'ui-suite', message: { content: 'Shown to the user as a card (9 elements).' } } } },
+  } },
   { type: 'notification', sessionId: 'session-1', notification: {
     method: 'session.status', params: { sessionId: 'session-1', status: 'idle' } },
   },

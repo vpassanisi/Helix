@@ -38,6 +38,14 @@ For custom routes, the chat model picker discovers models from an OpenAI-compati
 
 Saving connection settings automatically starts or restarts the runtime with the new values. The default provider is `deepseek-official` and the default model is `deepseek-flash` (DeepSeek V4.1 Flash in DSH 0.2.1-rc.2). With an empty API URL, inference uses the DSH Messages endpoint; custom OpenAI-compatible routes use the configured provider, API URL, and API key.
 
+## Model instructions
+
+Open **Settings → Models** and open a model card. **Model instructions** holds text for that one model: a small local coder that reads whole files instead of searching, a reasoning model that needs an answer length cap, a route where a tool is known to misbehave. The text is saved in the models catalog beside the model ID, context window, and Vision switch, so it follows the model into every workspace. Up to 20,000 characters per model.
+
+When you send a message, the extension stages the selected model's text for that session. DSH assembles it as its own system prompt section, `helix:model-instructions`, and the loop sends it on every request the session makes. Card text is inserted as written, so `{{ }}` stays literal. A session on a different model never receives it. Clearing the field removes the section on the next message, and **Request preview** shows the section so you can read what a turn sends.
+
+AGENTS.md covers one folder across every model. Model instructions cover one model across every folder. Both reach the prompt: the card text lands after the harness sections, near the end.
+
 ## Skill selection
 
 The skills picker is experimental and hidden by default. Set `"deepseekHarness.experimentalSkillPicker": true` in VS Code settings to restore the drawer and decisions connection controls. With the flag off, Helix skips skill routing and preloading, preserves saved decisions settings and credentials, and lets the agent discover and load skills normally. Flag changes take effect without reloading the extension.
@@ -76,6 +84,14 @@ The extension disables DSH's built-in Web Search and Web Fetch tools. Use an MCP
 ## Agent questions
 
 The main agent can call `ask_user_question` to pause its turn and show a question card in the conversation. Each question has two or three choices, exactly one recommendation, and a custom-response input. Submit an answer to continue the same turn, or use Stop to cancel. Pending questions return when the sidebar reopens; restarting the runtime cancels them.
+
+## Interactive UI cards
+
+The main agent can call `show_ui` to draw a card in the conversation: a test-suite dashboard, a comparison table, a list of findings with a button that re-runs them, a form whose button sends the typed text back as a prompt. Cards are built from a fixed catalog of eighteen components (Stack, Grid, Card, Heading, Text, Separator, Badge, Alert, Table, Metric, Progress, CodeBlock, List, ListItem, Button, TextInput, SelectInput, Checkbox) drawn with Basecoat and the VS Code theme, plus six actions: `prompt`, `inject`, `openPath`, `openLink`, `copy`, `dismiss`. A spec that names anything outside the catalog is refused, and the reason goes back to the model as a tool error so it can correct the call.
+
+Buttons act as the user, not as the model. `prompt` starts a turn with the text the card carries, `inject` adds it to the turn that is running, `openPath` opens a file in the editor, `openLink` hands an http(s) URL to VS Code. A card runs no code and renders no HTML: paths and URLs are checked in the extension host against the folders that are open, at the moment you click.
+
+Dismiss and Copy (the card's own spec) sit in the card header. The tool is listed in the Tools page as **Generative UI cards**, and switching it off applies on the next runtime start. Cards belong to the current transcript: a new chat, a webview reload, or a runtime restart clears them.
 
 ## Editor context
 

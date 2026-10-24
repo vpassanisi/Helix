@@ -10,6 +10,7 @@ import { SessionHierarchy } from '../runtime/session-hierarchy.js'
 import { stringValue } from '../shared/value-utils.js'
 import type { BrowserElementContext } from '../shared/browser-context.js'
 import { validateUserQuestion, validatePlanReviewQuestion, validateQuestionAnswer, isPlanReview, type PendingUserQuestion } from '../shared/user-question.js'
+import type { GenUiAction } from '../shared/gen-ui.js'
 import type {
   SidebarProvider,
   SidebarMessage,
@@ -47,6 +48,7 @@ export interface SessionControllerOptions {
   getMaxSelectionCharacters: () => number
   getSelectedModelId: () => string
   resolveReasoningEffort: (selection: string | null, modelId: string) => Promise<string | undefined>
+  getModelInstructions: (modelId: string) => Promise<string | undefined>
   rememberReasoningEffort: (modelId: string, effort: string | undefined) => Promise<void>
   onError: (error: unknown) => void
   onStateChanged: (resetTranscript?: boolean) => void
@@ -102,6 +104,25 @@ export class SessionController {
       pending.resolving = false
       this.options.sidebar.post({ type: 'questionAnswerFailed', sessionId: pending.sessionId, requestId: pending.requestId,
         message: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  /**
+   * What a card asked for, once the Host has re-validated it. A prompt starts a
+   * turn; an inject joins the turn that is already running. Opening files and
+   * links is not the conversation's business, so it never reaches here.
+   */
+  async handleUiAction(sessionId: string, action: GenUiAction): Promise<void> {
+    if (sessionId !== this.activeSessionId) return
+    if (action.kind === 'prompt') {
+      await this.submit(action.text, false)
+      return
+    }
+    if (action.kind !== 'inject') return
+    try {
+      await this.options.runtime.inject(sessionId, action.text)
+    } catch (error) {
+      this.options.onError(error)
     }
   }
 
@@ -163,6 +184,10 @@ export class SessionController {
         if (skills) await this.options.runtime.clearSkills(sessionId).catch(() => undefined)
         return false
       }
+      // The model card's own instructions, staged for this session only.
+      const modelInstructions = (await this.options.getModelInstructions(modelId)) ?? null
+      await this.options.runtime.stageModelInstructions?.(sessionId, modelInstructions)?.catch(() => undefined)
+      if (!this.isCurrent(generation, sessionId)) return false
       await this.options.runtime.setReasoningEffort(sessionId, reasoningEffort ?? null)
       if (!this.isCurrent(generation, sessionId)) return false
       await this.options.runtime.prompt(sessionId, contentBlocks)

@@ -26,5 +26,6 @@
     changesOpen={false}
     onanswer={() => {}}
     onapprove={() => {}}
+    onui={() => {}}
   />
 </div>

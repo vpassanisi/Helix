@@ -21,9 +21,11 @@
   import { SessionState } from './lib/session-state.svelte.js'
   import { createMessageRouter } from './lib/message-router.svelte.js'
   import { validateQuestionAnswer, type UserQuestionAnswer, type UserQuestionView } from '../shared/user-question.js'
+  import type { GenUiAction } from '../shared/gen-ui.js'
   import type { CommandInvocation } from '../shared/commands.js'
   import { modelOptionLabel } from './lib/model-mappers.js'
   import type {
+    ChatMessage,
     ToolCallView,
     IncomingMessage,
     SidebarMessage,
@@ -183,6 +185,52 @@
     if (requestId !== undefined) post({ type: 'approvalDecision', sessionId: session.activeSessionId, requestId, outcome })
   }
 
+  /**
+   * What a card asks for. Dismiss and copy stay in the Webview. A prompt runs a
+   * new turn, or joins the running one as an inject. Opening a file or a link
+   * is the Host's decision: a card names an intent, Helix decides whether it is
+   * allowed and by what path.
+   */
+  function handleUiAction(message: ChatMessage, action: GenUiAction): void {
+    const callId = message.ui?.callId
+    if (callId === undefined) return
+    if (action.kind === 'dismiss') {
+      transcript.updateUi(callId, { status: 'dismissed' })
+      return
+    }
+    if (action.kind === 'copy') {
+      void navigator.clipboard?.writeText(action.text)
+      return
+    }
+    if (action.kind === 'prompt' && !session.isGenerating && !transcript.waitingForAnswer) {
+      sendPromptFromCard(action.text)
+      return
+    }
+    if (action.kind === 'prompt' || action.kind === 'inject') {
+      post({ type: 'uiAction', sessionId: session.activeSessionId, callId, action: { kind: 'inject', text: action.text } })
+      return
+    }
+    post({ type: 'uiAction', sessionId: session.activeSessionId, callId, action })
+  }
+
+  /** A card's prompt button, run as a normal turn: the user's line lands at once. */
+  function sendPromptFromCard(text: string): void {
+    transcript.finishThinking()
+    transcript.interruptCompaction()
+    routing.resetForTurn()
+    session.waitingForFirstResponse = true
+    const userId = transcript.appendMessage('user', 'You', text)
+    session.pendingSubmission = { text, userId }
+    session.isGenerating = true
+    post({
+      type: 'submit',
+      prompt: text,
+      includeSelection: false,
+      reasoningEffort: composerModel.reasoningEffort,
+      sessionId: session.activeSessionId,
+    })
+  }
+
   function openSettings(page: SettingsPage): void {
     if (settingsState.page !== undefined && settingsState.page !== page) resetSettingsPageDrafts(settingsState.page)
     settingsState.open(page)
@@ -318,6 +366,7 @@
         bind:changesOpen={session.changesOpen}
         onanswer={(message, answer) => answerQuestion(message.tool!.question!, answer)}
         onapprove={(message, outcome) => decideApproval(message.tool!, outcome)}
+        onui={handleUiAction}
       />
 
       <Composer

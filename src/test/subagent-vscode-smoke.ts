@@ -94,6 +94,7 @@ export async function run(): Promise<void> {
     getMaxSelectionCharacters: () => 32_000,
     getSelectedModelId: () => options.model,
     resolveReasoningEffort: async () => undefined,
+    getModelInstructions: async () => undefined,
     rememberReasoningEffort: async () => undefined,
     onError: (error) => errors.push(String(error)),
     onStateChanged: () => undefined,

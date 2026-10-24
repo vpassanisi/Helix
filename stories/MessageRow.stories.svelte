@@ -2,11 +2,11 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { fn } from 'storybook/test'
   import MessageRow from '../src/webview/components/MessageRow.svelte'
-  import { chatMessages, planCommandMessage, planRuleMessage, planRuleOffMessage, questionMessage } from './fixtures.js'
+  import { chatMessages, genUiDismissed, genUiFailed, planCommandMessage, planRuleMessage, planRuleOffMessage, questionMessage, uiCardMessage } from './fixtures.js'
 
   const { Story } = defineMeta({
     title: 'Chat/MessageRow', component: MessageRow,
-    args: { message: chatMessages[0], activeSessionId: 'preview', thinking: false, onanswer: fn(), onapprove: fn() },
+    args: { message: chatMessages[0], activeSessionId: 'preview', thinking: false, onanswer: fn(), onapprove: fn(), onui: fn() },
   })
 </script>
 
@@ -18,6 +18,9 @@
 <Story name="Compaction" args={{ message: chatMessages[5] }} />
 <Story name="Changes" args={{ message: chatMessages[6] }} />
 <Story name="Question" args={{ message: questionMessage }} />
+<Story name="Card" args={{ message: uiCardMessage, onui: fn() }} />
+<Story name="Card rejected" args={{ message: { ...uiCardMessage, ui: genUiFailed }, onui: fn() }} />
+<Story name="Card dismissed" args={{ message: { ...uiCardMessage, ui: genUiDismissed }, onui: fn() }} />
 <Story name="Plan command" args={{ message: planCommandMessage }} />
 <Story name="Plan mode rule" args={{ message: planRuleMessage }} />
 <Story name="Plan mode rule off" args={{ message: planRuleOffMessage }} />

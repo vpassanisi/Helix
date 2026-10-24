@@ -99,7 +99,7 @@ export async function run(): Promise<void> {
       changeTracker: { start: () => undefined, finish: () => undefined } as unknown as WorkspaceChangeTracker,
       getRuntimeState: () => runtime.currentState, getRuntimeOptions: async () => { throw new Error('Already started') },
       getEditorContext: () => undefined, getMaxSelectionCharacters: () => 32_000, getSelectedModelId: () => 'test/question-model',
-      resolveReasoningEffort: async () => undefined, rememberReasoningEffort: async () => undefined,
+      resolveReasoningEffort: async () => undefined, getModelInstructions: async () => undefined, rememberReasoningEffort: async () => undefined,
       onError: (error) => errors.push(String(error)), onStateChanged: () => post({ type: 'state', state: state(), resetTranscript: true }),
     })
     await runtime.start({ cwd: directory, dshHome: directory, sessionStorageRoot: join(directory, 'sessions'),

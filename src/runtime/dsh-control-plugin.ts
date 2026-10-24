@@ -16,6 +16,7 @@ import {
 import { isRecord, stringValue } from '../shared/value-utils.js'
 import { isCommandName } from '../shared/commands.js'
 import { USER_QUESTION_INSTRUCTIONS } from '../shared/user-question.js'
+import { MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS } from './model-catalog.js'
 import { DshQuestionBridge } from './dsh-question-bridge.js'
 import { DshSkillBridge } from './dsh-skill-bridge.js'
 
@@ -33,6 +34,8 @@ const SANDBOX_MODES = new Set<ControlSandboxMode>([
   'workspace-write',
   'danger-full-access',
 ])
+/** One plain sentence telling the model who wrote the card text beneath it. */
+const MODEL_INSTRUCTIONS_HEADER = 'The user provided these instructions directly to you, and customized them for this model.'
 
 type PluginErrorCode = 'SESSION_NOT_FOUND' | 'SESSION_NOT_OWNED' | 'APPROVAL_NOT_PENDING' | 'INVALID_ARGUMENT' | 'CONTROL_REQUEST_FAILED'
 
@@ -60,6 +63,7 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
   let reconnectAttempt = 0
   const approvals = new Map<string, PendingApproval>()
   const reasoningEfforts = new Map<string, string | null>()
+  const modelInstructions = new Map<string, string>()
   const requestPreviews = new Map<string, string>()
   const requestPreviewBreakdowns = new Map<string, PreviewPromptBreakdown>()
   const skills = new DshSkillBridge(ctx, config.cwd ?? process.cwd())
@@ -330,6 +334,8 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
       if (request.method === 'skills.catalog') { sendResponse(request, await skills.catalog(request.sessionId)); return }
       if (request.method === 'skills.stage') { await skills.stage(request.sessionId, request.params); sendResponse(request, { accepted: true }); return }
       if (request.method === 'skills.clear') { skills.clear(request.sessionId); sendResponse(request, { accepted: true }); return }
+      if (request.method === 'modelInstructions.stage') { stageModelInstructions(request.sessionId, request.params); sendResponse(request, { accepted: true }); return }
+      if (request.method === 'modelInstructions.clear') { modelInstructions.delete(request.sessionId); sendResponse(request, { accepted: true }); return }
       if (request.method === 'capabilities.get') return handleCapabilities(request)
       if (request.method === 'approval.resolve') return handleApprovalResolution(request)
       if (request.method === 'question.answer') {
@@ -480,6 +486,33 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
     })()
   }
 
+  /**
+   * A model card's instructions, staged for the session that selected the model.
+   * The Host knows the selection at submit; the prompt assembles per Agent, so the
+   * text rides the session and never a global registry.
+   */
+  const stageModelInstructions = (sessionId: string, params: Record<string, unknown>): void => {
+    if (!('instructions' in params)) throw new PluginControlError('Model instructions are required.', 'INVALID_ARGUMENT')
+    const instructions = params.instructions
+    if (instructions !== null && typeof instructions !== 'string') {
+      throw new PluginControlError('Model instructions must be text.', 'INVALID_ARGUMENT')
+    }
+    const trimmed = typeof instructions === 'string' ? instructions.trim() : ''
+    if (trimmed === '') {
+      modelInstructions.delete(sessionId)
+      return
+    }
+    if (trimmed.length > MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS) {
+      throw new PluginControlError(`Model instructions exceed ${MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS} characters.`, 'INVALID_ARGUMENT')
+    }
+    modelInstructions.set(sessionId, trimmed)
+  }
+
+  const onAgentDisposed = ({ agent }: any): void => {
+    const sessionId = stringValue(agent?.id)
+    if (sessionId !== undefined) modelInstructions.delete(sessionId)
+  }
+
   const onSystemPromptAssemble = async (
     assembly: any,
     context: any,
@@ -487,6 +520,12 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
   ): Promise<any> => {
     const sessionId = stringValue(context?.agent?.id)
     const assembled = await skills.assemble(assembly, context, next)
+    const instructions = sessionId === undefined ? undefined : modelInstructions.get(sessionId)
+    if (Array.isArray(assembled.sections) && instructions !== undefined &&
+      !assembled.sections.some((section: any) => section.name === 'helix:model-instructions')) {
+      // Literal text: a card may quote braces, and prompt variables are not the user's syntax.
+      assembled.sections.push({ name: 'helix:model-instructions', text: `${MODEL_INSTRUCTIONS_HEADER}\n\n${instructions}`, interpolate: false })
+    }
     if (Array.isArray(assembled.sections) && !assembled.sections.some((section: any) => section.name === 'helix:user-questions')) {
       assembled.sections.push({ name: 'helix:user-questions', text: USER_QUESTION_INSTRUCTIONS })
     }
@@ -521,6 +560,7 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
   try {
     ctx.on?.('agent/created', skills.created, { global: true })
     ctx.on?.('agent/disposed', skills.disposed, { global: true })
+    ctx.on?.('agent/disposed', onAgentDisposed, { global: true })
     ctx.on?.('agent/pre-step', skills.preStep, { global: true, prepend: true })
     ctx.on?.('skills/change', () => sendEvent('', 'skills.changed', {}))
     ctx.on?.('commands/change', onCommandsChange)
@@ -547,6 +587,7 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
       }
       requestPreviews.clear()
       requestPreviewBreakdowns.clear()
+      modelInstructions.clear()
     }, 'helix-control-bridge.lifecycle')
   } catch (error) {
     if (!isInactiveContextError(error)) throw error

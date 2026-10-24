@@ -10,6 +10,7 @@ import { SessionController } from './host/session-controller.js'
 import { SettingsController } from './host/settings-controller.js'
 import { RequestPreviewCancelledError, RequestPreviewController } from './host/request-preview-controller.js'
 import { BrowserContextController } from './host/browser-context-controller.js'
+import { validateGenUiAction, type GenUiAction } from './shared/gen-ui.js'
 
 type SidebarHandler = (message: SidebarMessage) => Promise<void>
 
@@ -124,6 +125,10 @@ class ExtensionApp {
     this.requestPreview = new RequestPreviewController({
       getRuntimeOptions: () => this.settings.runtimeOptions(),
       resolveReasoningEffort: () => this.settings.resolveReasoningEffort(null),
+      prepareModelInstructions: async () => {
+        const options = await this.settings.runtimeOptions()
+        return this.settings.modelInstructions(options.model)
+      },
       prepareSkills: async (runtime, sessionId, prompt) => {
         if (!this.settings.skillPickerEnabled()) return undefined
         const router = new SkillController({ currentSession: () => sessionId,
@@ -149,6 +154,7 @@ class ExtensionApp {
         .get<number>('maxSelectionCharacters', 32_000),
       getSelectedModelId: () => vscode.workspace.getConfiguration('deepseekHarness').get<string>('model', 'deepseek-flash'),
       resolveReasoningEffort: (selection, modelId) => this.settings.resolveReasoningEffort(selection, modelId),
+      getModelInstructions: (modelId) => this.settings.modelInstructions(modelId),
       rememberReasoningEffort: async (modelId, effort) => {
         try {
           await this.settings.rememberReasoningEffort(modelId, effort)
@@ -224,8 +230,42 @@ class ExtensionApp {
       cancelRequestPreview: () => this.requestPreview.cancel(),
       approvalDecision: (message) => this.session.resolveApproval(message as Extract<SidebarMessage, { type: 'approvalDecision' }>),
       questionAnswer: (message) => this.session.answerQuestion(message as Extract<SidebarMessage, { type: 'questionAnswer' }>),
+      uiAction: (message) => this.handleUiAction(message as Extract<SidebarMessage, { type: 'uiAction' }>),
       newSession: () => this.newSession(),
     }
+  }
+
+  /**
+   * A card's intent, from a spec the model wrote. The shape arrives checked at
+   * the wire; this is where it is measured against what is true now: the URL
+   * scheme, the folders that are open. A card names what it wants; the Host
+   * decides whether it may have it, and nothing is opened quietly in the
+   * background.
+   */
+  private async handleUiAction(message: Extract<SidebarMessage, { type: 'uiAction' }>): Promise<void> {
+    let action: GenUiAction
+    try {
+      action = validateGenUiAction(message.action, (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath))
+    } catch (error) {
+      this.postError(error)
+      return
+    }
+    if (action.kind === 'openLink') {
+      if (!await vscode.env.openExternal(vscode.Uri.parse(action.url))) {
+        this.postError(new Error(`VS Code did not open ${action.url}`))
+      }
+      return
+    }
+    if (action.kind === 'openPath') {
+      try {
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(action.path))
+        await vscode.window.showTextDocument(document, { preview: true })
+      } catch {
+        this.postError(new Error(`${action.label ?? action.path} could not be opened. It may have been deleted, or it may live in a folder VS Code is not showing.`))
+      }
+      return
+    }
+    await this.session.handleUiAction(message.sessionId, action)
   }
 
   refreshSelection(): void {

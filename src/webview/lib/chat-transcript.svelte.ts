@@ -3,6 +3,7 @@ import { commandLine, commandLineHtml } from '../../shared/commands.js'
 import { CompactionHistory, type CompactionEntry } from '../../shared/compaction-history.js'
 import { assistantTextBlocks } from '../../shared/harness-events.js'
 import type { UserQuestionView } from '../../shared/user-question.js'
+import type { GenUiView } from '../../shared/gen-ui.js'
 import type { ApprovalView, ChatMessage, ChatRole, CodeChange, SelectionMetadata, ToolCallView } from '../types.js'
 
 export type StreamRole = 'assistant' | 'reasoning'
@@ -74,6 +75,33 @@ export class ChatTranscript {
       changes: changes.map((change) => ({ ...change })),
       panelOpen: open,
     }]
+  }
+
+  /**
+   * A card the agent drew with `show_ui`. It is its own transcript row, not a
+   * tool row: what the user reads is the UI, and the tool call behind it has
+   * nothing to show.
+   */
+  appendUi(view: GenUiView): void {
+    this.finishThinking()
+    this.messages = [...this.messages, {
+      id: this.nextMessageId++,
+      role: 'ui',
+      label: view.title ?? 'Card',
+      text: '',
+      ui: { ...view },
+    }]
+    void this.scrollToBottom()
+  }
+
+  /** True when a call id belongs to a card, so its tool result does not open a tool row. */
+  hasUi(callId: string): boolean {
+    return this.messages.some((message) => message.ui?.callId === callId)
+  }
+
+  updateUi(callId: string, patch: Partial<GenUiView>): void {
+    this.messages = this.messages.map((message) =>
+      message.ui?.callId === callId ? { ...message, ui: { ...message.ui, ...patch } } : message)
   }
 
   appendStreamText(role: StreamRole, text: string, sessionId?: string): void {

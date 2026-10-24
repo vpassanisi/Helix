@@ -307,6 +307,11 @@
                   <small class="text-[9px]!">Values may be strings, numbers, booleans, null, or DSH variables: thinking.enabled, thinking.effort, thinking.budget.</small>
                 </div>
               {/if}
+              <div class="field col-span-full min-w-0" role="group">
+                <label class="text-[9px]!" for={`model-instructions-${draft.key}`}>Model instructions</label>
+                <textarea id={`model-instructions-${draft.key}`} class={templateInputClass} rows="5" bind:value={draft.systemInstructions} aria-describedby={`model-instructions-help-${draft.key}`} placeholder={'Instructions this model needs and others do not, for example: prefer the grep tool over reading whole files.'} disabled={editsDisabled}></textarea>
+                <small class="text-[9px]! leading-[1.35]!" id={`model-instructions-help-${draft.key}`}>Sent with every request on this model, in every workspace. For one folder and every model, use AGENTS.md.</small>
+              </div>
             </div>
           </fieldset>
         {/each}

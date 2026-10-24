@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   activeSelectionAfterCatalogSave,
   modelEndpointCandidates,
+  MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS,
   normalizeModelDrafts,
   parseModelCatalog,
   parseSavedModelCatalogJson,
@@ -367,4 +368,27 @@ test('adding the currently active legacy model applies its saved context without
     model: 'legacy-setting',
     contextWindow: 0,
   }), { model: 'legacy-setting', contextWindow: 32768 })
+})
+
+test('keeps model instructions on the model card that carries them', () => {
+  const models = normalizeModelDrafts([
+    { id: 'model-a', systemInstructions: '  Prefer grep over reading whole files.  ' },
+    { id: 'model-b', systemInstructions: '   ' },
+    { id: 'model-c' },
+  ])
+
+  assert.equal(models[0].systemInstructions, 'Prefer grep over reading whole files.', 'the card text is stored trimmed')
+  assert.equal('systemInstructions' in models[1], false, 'blank card text is not stored')
+  assert.equal('systemInstructions' in models[2], false, 'a card with no instructions is unchanged')
+  assert.equal(
+    JSON.parse(serializeSavedModelCatalog(models)).models[0].systemInstructions,
+    'Prefer grep over reading whole files.',
+    'the catalog file round-trips the card text',
+  )
+
+  assert.throws(
+    () => normalizeModelDrafts([{ id: 'model-a', systemInstructions: 'x'.repeat(MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS + 1) }]),
+    /exceed 20000 characters/,
+  )
+  assert.throws(() => normalizeModelDrafts([{ id: 'model-a', systemInstructions: 42 }]), /invalid model instructions/)
 })

@@ -175,6 +175,18 @@ export class SettingsController {
     return resolveSavedModelReasoningEffort(models, modelId, selection, this.reasoningEffortHistory()[modelId])
   }
 
+  /**
+   * The instructions this model's card carries, for the session that selected it.
+   * A models file that cannot be read sends the message without them.
+   */
+  async modelInstructions(modelId: string): Promise<string | undefined> {
+    try {
+      return (await this.readModelCatalog()).find((entry) => entry.id === modelId)?.systemInstructions
+    } catch {
+      return undefined
+    }
+  }
+
   async rememberReasoningEffort(modelId: string, effort: string | undefined): Promise<void> {
     if (effort === undefined) return
     const models = await this.readModelCatalog()

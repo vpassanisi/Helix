@@ -19,7 +19,7 @@ import {
 } from './control-bridge.js'
 import { builtInWebPatchLines, mcpEnvironmentVariable, mcpPatchLines } from './mcp.js'
 import { pluginPatchLines } from './plugins.js'
-import { toolBundlePatchLines } from '../shared/tool-bundles.js'
+import { GEN_UI_TOOL_BUNDLE_ID, normalizeDisabledToolBundles, toolBundlePatchLines } from '../shared/tool-bundles.js'
 import { SerialTaskQueue } from './serial-task-queue.js'
 import type { UserQuestionAnswer } from '../shared/user-question.js'
 import { stringValue } from '../shared/value-utils.js'
@@ -259,6 +259,16 @@ export class HarnessRuntime {
     await bridge.stageSkills(sessionId, selection)
   }
   async clearSkills(sessionId: string): Promise<void> { await this.handle?.controlBridge.clearSkills?.(sessionId) }
+
+  /**
+   * A model card's own instructions, staged for one session. Best-effort: an
+   * older runtime plugin has no such method, and a missing model card note must
+   * never block a message.
+   */
+  async stageModelInstructions(sessionId: string, instructions: string | null): Promise<void> {
+    await this.handle?.controlBridge.stageModelInstructions?.(sessionId, instructions)
+  }
+  async clearModelInstructions(sessionId: string): Promise<void> { await this.handle?.controlBridge.clearModelInstructions?.(sessionId) }
 
   async cancelTurn(sessionId: string): Promise<void> {
     try {
@@ -616,6 +626,13 @@ export class HarnessRuntime {
       `        cwd: ${yamlString(options.cwd)}`,
       '    - id: helix-question-tool',
       `      name: ${yamlString(new URL('./dsh-question-tool-plugin.js', import.meta.url).href)}`,
+      '    - id: helix-gen-ui-tool',
+      `      name: ${yamlString(new URL('./dsh-gen-ui-tool-plugin.js', import.meta.url).href)}`,
+      '      config:',
+      // Helix's own bundle is mounted by a Helix plugin, so its Tools-page
+      // switch arrives as config rather than a runtime disable row: the plugin
+      // then takes out both the tool and its prompt section.
+      `        enabled: ${!normalizeDisabledToolBundles(options.disabledToolBundles ?? []).includes(GEN_UI_TOOL_BUNDLE_ID)}`,
     )
     patchLines.push(...pluginPatchLines(options.plugins ?? []))
     if (options.sessionStorageRoot !== undefined) {

@@ -16,7 +16,7 @@
     const { loaded, ...entry } = model
     drafts = [{ ...entry, key: Math.max(0, ...drafts.map((draft) => draft.key)) + 1,
       reasoningEfforts: entry.reasoningEfforts ?? [], reasoningFormat: 'auto', binaryThinkingMode: 'on',
-      acceptsImages: false, chatTemplateKwargsText: '{}', chatTemplateArgsText: '{}' }, ...drafts]
+      acceptsImages: false, chatTemplateKwargsText: '{}', chatTemplateArgsText: '{}', systemInstructions: '' }, ...drafts]
     status = 'Model added.'
   }}
   onStatus={(text, tone) => { args.onStatus(text, tone); status = text }}

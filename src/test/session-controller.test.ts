@@ -6,10 +6,11 @@ import type { RoutedNotification } from '../runtime/types.js'
 import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
 import type { SidebarProvider, SidebarOutgoingMessage } from '../sidebar/sidebar-provider.js'
 
-function controllerWithPrompt(prompt: () => Promise<void>, waitForSession: () => Promise<void> = async () => undefined) {
+function controllerWithPrompt(prompt: () => Promise<void>, waitForSession: () => Promise<void> = async () => undefined, modelInstructions = 'Prefer grep over reading whole files.') {
   const calls: string[] = []
   const messages: SidebarOutgoingMessage[] = []
   const remembered: Array<[string, string | undefined]> = []
+  const staged: Array<[string, string | null]> = []
   const errors: string[] = []
   let sessionRouteHandler: ((routed: RoutedNotification) => void) | undefined
   const runtime = {
@@ -18,6 +19,7 @@ function controllerWithPrompt(prompt: () => Promise<void>, waitForSession: () =>
       return { dispose: () => { if (sessionRouteHandler === handler) sessionRouteHandler = undefined } }
     },
     setReasoningEffort: async (_sessionId: string, effort: string | null) => { calls.push(`set:${effort}`) },
+    stageModelInstructions: async (sessionId: string, instructions: string | null) => { staged.push([sessionId, instructions]) },
     prompt: async () => { calls.push('prompt'); await prompt() },
     waitForSession: async (sessionId: string) => { calls.push(`wait:${sessionId}`); await waitForSession() },
     cancelTurn: async () => undefined,
@@ -34,6 +36,7 @@ function controllerWithPrompt(prompt: () => Promise<void>, waitForSession: () =>
     getMaxSelectionCharacters: () => 32_000,
     getSelectedModelId: () => 'model-a',
     resolveReasoningEffort: async () => 'low',
+    getModelInstructions: async () => modelInstructions,
     rememberReasoningEffort: async (modelId, effort) => { calls.push('remember'); remembered.push([modelId, effort]) },
     onError: (error) => { errors.push(String(error)) },
     onStateChanged: () => undefined,
@@ -44,7 +47,7 @@ function controllerWithPrompt(prompt: () => Promise<void>, waitForSession: () =>
       : controller.currentSessionId
     sessionRouteHandler?.({ rootSessionId: controller.currentSessionId, sessionId, notification })
   }
-  return { controller, calls, messages, remembered, errors, runtime, emitNotification }
+  return { controller, calls, messages, remembered, staged, errors, runtime, emitNotification }
 }
 
 function sessionStatuses(messages: SidebarOutgoingMessage[]): unknown[] {
@@ -222,4 +225,36 @@ test('a plan review is validated as a review, keeps its plan text, and answers w
   await controller.answerQuestion({ type: 'questionAnswer', sessionId, requestId: 'plan-1', answer: { id: 'plan-review', selected: ['Ship it'] } })
   assert.deepEqual(errors, [], 'the accepted review is settled, so a stale reply is ignored, not an error')
   await controller.dispose()
+})
+
+test('sends the selected model card instructions ahead of the prompt', async () => {
+  const { controller, runtime, staged, calls, errors } = controllerWithPrompt(async () => undefined)
+  const order: string[] = []
+  const prompt = runtime.prompt.bind(runtime)
+  runtime.prompt = (sessionId, blocks) => { order.push('prompt'); return prompt(sessionId, blocks) }
+  const stage = runtime.stageModelInstructions.bind(runtime)
+  runtime.stageModelInstructions = (sessionId, instructions) => { order.push('stage'); return stage(sessionId, instructions) }
+
+  await controller.submit('hello', false)
+  assert.deepEqual(order, ['stage', 'prompt'], 'the card is staged before the prompt assembles')
+  assert.deepEqual(staged, [[controller.currentSessionId, 'Prefer grep over reading whole files.']])
+  assert.ok(calls.includes('prompt'))
+  assert.deepEqual(errors, [])
+  await controller.dispose()
+})
+
+test('a model card that cannot be staged never blocks the message', async () => {
+  const missing = controllerWithPrompt(async () => undefined)
+  delete (missing.runtime as unknown as Record<string, unknown>).stageModelInstructions
+  await missing.controller.submit('hello', false)
+  assert.ok(missing.calls.includes('prompt'), 'a runtime with no staging method still sends the message')
+  assert.deepEqual(missing.errors, [])
+  await missing.controller.dispose()
+
+  const rejected = controllerWithPrompt(async () => undefined)
+  rejected.runtime.stageModelInstructions = async () => { throw new Error('The bridge is closed.') }
+  await rejected.controller.submit('hello', false)
+  assert.ok(rejected.calls.includes('prompt'), 'a staging failure is not the user\'s problem')
+  assert.deepEqual(rejected.errors, [])
+  await rejected.controller.dispose()
 })

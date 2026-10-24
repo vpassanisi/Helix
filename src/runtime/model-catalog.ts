@@ -56,6 +56,14 @@ export interface PiAiModelRuntimeProfile {
   }
 }
 
+/**
+ * One model card's own instructions. The catalog is shared by every workspace,
+ * so this text travels with the model: it reaches the system prompt of every
+ * session that selects this model, and no other. AGENTS.md covers the workspace;
+ * this covers the model.
+ */
+export const MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS = 20_000
+
 export interface SavedModel {
   id: string
   displayName?: string
@@ -66,6 +74,7 @@ export interface SavedModel {
   binaryThinkingMode?: BinaryThinkingMode
   chatTemplateKwargs?: Record<string, ChatTemplateValue>
   chatTemplateArgs?: Record<string, ChatTemplateValue>
+  systemInstructions?: string
 }
 
 export interface ModelDraft extends SavedModel {
@@ -177,6 +186,14 @@ export function normalizeSavedModels(value: unknown): SavedModel[] {
     }
     if ('chatTemplateArgs' in entry && entry.chatTemplateArgs !== undefined) {
       model.chatTemplateArgs = normalizeChatTemplateValues(entry.chatTemplateArgs, id, 'chatTemplateArgs')
+    }
+    if ('systemInstructions' in entry && entry.systemInstructions !== undefined) {
+      if (typeof entry.systemInstructions !== 'string') throw new Error(`Model "${id}" has invalid model instructions.`)
+      const systemInstructions = entry.systemInstructions.trim()
+      if (systemInstructions.length > MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS) {
+        throw new Error(`Model "${id}" model instructions exceed ${MAX_MODEL_SYSTEM_INSTRUCTIONS_CHARACTERS} characters.`)
+      }
+      if (systemInstructions) model.systemInstructions = systemInstructions
     }
     const hasGradedEffort = model.reasoningEfforts?.some((effort) => isDshReasoningLevel(effort) && effort !== 'off') ?? false
     if (model.reasoningEfforts?.includes('off') && !hasGradedEffort) {

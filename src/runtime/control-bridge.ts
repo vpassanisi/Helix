@@ -38,6 +38,8 @@ export interface ControlBroker {
   skillCatalog?(sessionId: string): Promise<SkillCatalog>
   stageSkills?(sessionId: string, selection: SkillTurnSelection): Promise<void>
   clearSkills?(sessionId: string): Promise<void>
+  stageModelInstructions?(sessionId: string, instructions: string | null): Promise<void>
+  clearModelInstructions?(sessionId: string): Promise<void>
   readonly endpoint: string | undefined
   readonly token: string | undefined
   readonly connected: boolean
@@ -308,6 +310,11 @@ export class LocalControlBridge implements ControlBroker {
     await this.request('skills.stage', sessionId, { ...selection })
   }
   async clearSkills(sessionId: string): Promise<void> { await this.request('skills.clear', sessionId) }
+
+  async stageModelInstructions(sessionId: string, instructions: string | null): Promise<void> {
+    await this.request('modelInstructions.stage', sessionId, { instructions })
+  }
+  async clearModelInstructions(sessionId: string): Promise<void> { await this.request('modelInstructions.clear', sessionId) }
 
   async armRequestPreview(sessionId: string, captureId: string): Promise<void> {
     await this.request('request.preview.arm', sessionId, { captureId })

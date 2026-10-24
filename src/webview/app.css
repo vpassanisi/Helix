@@ -100,7 +100,7 @@ button { color: inherit; }
     to { background-position: 0% 0; }
   }
   --animate-changes-panel-in: changes-panel-in .18s ease-out both;
-  --animate-thinking-edge: thinking-edge 2.8s ease-in-out infinite alternate;
+  --animate-thinking-edge: thinking-edge 3.7s ease-in-out infinite alternate;
   @keyframes thinking-edge { from { background-position: 0 100%; } to { background-position: 0 0%; } }
   --animate-thinking-shimmer: thinking-shimmer 2.8s ease-in-out infinite alternate;
   @keyframes thinking-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }

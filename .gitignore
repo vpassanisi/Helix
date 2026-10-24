@@ -1,5 +1,6 @@
 node_modules/
 out/
+.npm-cache/
 *.vsix
 .DS_Store
 .vscode-test-profile/

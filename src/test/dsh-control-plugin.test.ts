@@ -466,3 +466,79 @@ test('lists and runs composer commands through the Host command registry', async
     else process.env.HELIX_CONTROL_TOKEN = originalToken
   }
 })
+
+test('stages the model card instructions on the session that selected it', async () => {
+  const agents = new Map<string, { id: string }>([
+    ['root-session', { id: 'root-session' }],
+    ['child-session', { id: 'child-session' }],
+  ])
+  let assembleHandler: ((assembly: any, context: any, next: () => Promise<any>) => Promise<any>) | undefined
+  const disposedHandlers: Array<(payload: { agent: { id: string } }) => void> = []
+
+  const bridge = new LocalControlBridge()
+  await bridge.start()
+  const originalEndpoint = process.env.HELIX_CONTROL_ENDPOINT
+  const originalToken = process.env.HELIX_CONTROL_TOKEN
+  process.env.HELIX_CONTROL_ENDPOINT = bridge.endpoint
+  process.env.HELIX_CONTROL_TOKEN = bridge.token
+
+  const freshAssembly = () => ({
+    sections: [{ name: 'harness:identity', text: 'You are a coding assistant.' }],
+    contexts: [],
+    tools: [],
+    variables: {},
+  })
+  const assembleFor = async (sessionId: string): Promise<any> => {
+    const assembly = freshAssembly()
+    return assembleHandler?.(assembly, { agent: { id: sessionId } }, async () => assembly)
+  }
+  const instructionSection = (assembled: any): any =>
+    assembled.sections.find((section: any) => section.name === 'helix:model-instructions')
+
+  try {
+    helixControlPlugin({
+      get: (name: string) => name === 'agents' ? { get: (id: string) => agents.get(id) } : undefined,
+      on: (name: string, handler: (...args: any[]) => void) => {
+        if (name === 'system-prompt/assemble') {
+          assembleHandler = handler as unknown as typeof assembleHandler
+        }
+        if (name === 'agent/disposed') disposedHandlers.push(handler as (payload: { agent: { id: string } }) => void)
+      },
+      effect: (factory: () => () => void) => { factory() },
+    })
+    assert.equal(await bridge.waitForConnection(), true)
+    assert.equal(bridge.capabilities.includes('modelInstructions.stage'), true)
+    assert.ok(assembleHandler)
+
+    await bridge.stageModelInstructions('root-session', 'Prefer grep over reading whole files. Keep {{braces}} literal.')
+    const staged = await assembleFor('root-session')
+    const section = instructionSection(staged)
+    assert.ok(section, 'the selected model card reaches its own session prompt')
+    assert.match(section.text, /Prefer grep over reading whole files/)
+    assert.ok(section.text.indexOf('Prefer grep') > section.text.indexOf('The user provided these instructions'), 'the framing sentence precedes the card text')
+    assert.match(section.text, /\{\{braces\}\}/)
+    assert.equal(section.interpolate, false, 'card text stays literal, not prompt-variable syntax')
+
+    const untouched = await assembleFor('child-session')
+    assert.equal(instructionSection(untouched), undefined, 'another session never sees this model card')
+
+    await bridge.stageModelInstructions('root-session', null)
+    assert.equal(instructionSection(await assembleFor('root-session')), undefined, 'an empty card stops the section')
+
+    await bridge.stageModelInstructions('root-session', 'Use the short answer style.')
+    for (const handler of disposedHandlers) handler({ agent: { id: 'root-session' } })
+    assert.equal(instructionSection(await assembleFor('root-session')), undefined, 'a torn-down Agent drops its staged card')
+
+    await assert.rejects(
+      bridge.stageModelInstructions('root-session', 'x'.repeat(20_001)),
+      (error: { code?: string }) => error.code === 'INVALID_ARGUMENT',
+      'an oversized card is refused, not silently truncated',
+    )
+  } finally {
+    await bridge.close()
+    if (originalEndpoint === undefined) delete process.env.HELIX_CONTROL_ENDPOINT
+    else process.env.HELIX_CONTROL_ENDPOINT = originalEndpoint
+    if (originalToken === undefined) delete process.env.HELIX_CONTROL_TOKEN
+    else process.env.HELIX_CONTROL_TOKEN = originalToken
+  }
+})

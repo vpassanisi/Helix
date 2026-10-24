@@ -18,6 +18,12 @@ export interface ToolBundleOption {
   locked?: 'disabled'
 }
 
+/** Helix's own tool bundle, mounted by a Helix plugin, so it toggles by config. */
+export const GEN_UI_TOOL_BUNDLE_ID = 'helix-gen-ui'
+
+/** Bundles whose switch is plugin config, not a runtime disable row. */
+const CONFIG_TOGGLED_BUNDLE_IDS = new Set<string>([GEN_UI_TOOL_BUNDLE_ID])
+
 export const TOOL_BUNDLE_OPTIONS: readonly ToolBundleOption[] = [
   { id: 'tool-fs', label: 'File tools', group: 'files', tools: ['read', 'write', 'edit', 'read_image'], hint: 'Read, write, and edit files in the workspace.' },
   { id: 'tool-fs-search', label: 'Search tools', group: 'files', tools: ['glob', 'grep'], hint: 'Find files and search file contents.' },
@@ -36,6 +42,7 @@ export const TOOL_BUNDLE_OPTIONS: readonly ToolBundleOption[] = [
   { id: 'tool-skill', label: 'Skills', group: 'context', tools: ['skill'], hint: 'Load the instructions of a listed skill.' },
   { id: 'mcp-resources', label: 'MCP resources', group: 'context', tools: ['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource'], hint: 'Read resources published by the MCP servers.' },
   { id: 'user-questions', label: 'Ask the user', group: 'context', tools: ['ask_user_question'], hint: 'Ask a question and wait for the answer. Helix shows these in the chat.' },
+  { id: GEN_UI_TOOL_BUNDLE_ID, label: 'Generative UI cards', group: 'context', tools: ['show_ui'], hint: 'Render tables, dashboards, pickers, and forms as interactive cards in the chat.' },
   { id: 'tool-web', label: 'Web search and fetch', group: 'web', tools: ['web_search', 'web_fetch'], hint: 'Helix disables every web bundle for this runtime.', locked: 'disabled' },
 ]
 
@@ -58,7 +65,11 @@ export function toolBundleLabel(id: string): string {
 
 /** Patch rows that take a bundle out of the runtime. */
 export function toolBundlePatchLines(disabled: readonly string[]): string[] {
-  return normalizeDisabledToolBundles(disabled).flatMap((id) => [`- id: ${JSON.stringify(id)}`, '  disabled: true'])
+  return normalizeDisabledToolBundles(disabled)
+    // A Helix-owned bundle is mounted by a Helix plugin, so its switch is plugin
+    // config. There is no runtime plugin under its id to disable.
+    .filter((id) => !CONFIG_TOGGLED_BUNDLE_IDS.has(id))
+    .flatMap((id) => [`- id: ${JSON.stringify(id)}`, '  disabled: true'])
 }
 
 /** Bundle ids the enabled options stand for, for the page summary. */

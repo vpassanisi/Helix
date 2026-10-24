@@ -23,6 +23,7 @@ export function toModelEditorDraft(entry: SidebarModel, key: number): ModelEdito
     reasoningEfforts: reasoningEfforts ?? [],
     chatTemplateKwargsText: JSON.stringify(chatTemplateKwargs ?? {}, null, 2),
     chatTemplateArgsText: JSON.stringify(chatTemplateArgs ?? {}, null, 2),
+    systemInstructions: entry.systemInstructions ?? '',
   }
 }
 
@@ -37,6 +38,7 @@ export function discoveredToEditorDraft(entry: SidebarDiscoveredModel, key: numb
     binaryThinkingMode: 'on',
     chatTemplateKwargsText: '{}',
     chatTemplateArgsText: '{}',
+    systemInstructions: '',
   }
 }
 
@@ -65,6 +67,7 @@ export function toModelDraft(draft: ModelEditorDraft): ModelDraft {
     binaryThinkingMode: draft.binaryThinkingMode,
     chatTemplateKwargs: parseChatTemplateDraft(draft.chatTemplateKwargsText, `Model "${draft.id}" chat template kwargs`),
     chatTemplateArgs: parseChatTemplateDraft(draft.chatTemplateArgsText, `Model "${draft.id}" chat template args`),
+    systemInstructions: draft.systemInstructions.trim() === '' ? undefined : draft.systemInstructions.trim(),
   }
 }
 

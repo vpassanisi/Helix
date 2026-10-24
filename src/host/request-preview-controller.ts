@@ -13,6 +13,7 @@ const CAPTURE_TIMEOUT_MS = 60_000
 export interface RequestPreviewRuntime {
   skillCatalog?(sessionId: string): Promise<SkillCatalog>
   stageSkills?(sessionId: string, selection: SkillTurnSelection): Promise<void>
+  stageModelInstructions?(sessionId: string, instructions: string | null): Promise<void>
   start(options: RuntimeOptions): Promise<void>
   setReasoningEffort(sessionId: string, reasoningEffort: string | null): Promise<void>
   armRequestPreview(sessionId: string, captureId: string): Promise<void>
@@ -26,6 +27,8 @@ export interface RequestPreviewControllerOptions {
   createRuntime?: (onControlEvent: (event: ControlEvent) => void) => RequestPreviewRuntime
   captureTimeoutMs?: number
   prepareSkills?: (runtime: RequestPreviewRuntime, sessionId: string, prompt: string) => Promise<SkillTurnSelection | undefined>
+  /** The selected model card's own instructions, so a preview carries what a real turn sends. */
+  prepareModelInstructions?: (runtime: RequestPreviewRuntime, sessionId: string) => Promise<string | undefined>
 }
 
 interface ActivePreview {
@@ -122,6 +125,10 @@ export class RequestPreviewController {
       if (this.options.prepareSkills && runtime.stageSkills) {
         const selection = await Promise.race([this.options.prepareSkills(runtime, sessionId, prompt), active.cancellation])
         if (selection) await Promise.race([runtime.stageSkills(sessionId, selection), active.cancellation])
+      }
+      if (this.options.prepareModelInstructions && runtime.stageModelInstructions) {
+        const instructions = await Promise.race([this.options.prepareModelInstructions(runtime, sessionId), active.cancellation])
+        await Promise.race([runtime.stageModelInstructions(sessionId, instructions ?? null), active.cancellation])
       }
       await Promise.race([runtime.setReasoningEffort(sessionId, reasoningEffort ?? null), active.cancellation])
       await Promise.race([runtime.armRequestPreview(sessionId, captureId), active.cancellation])

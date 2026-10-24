@@ -10,6 +10,7 @@ import { isRecord } from '../shared/value-utils.js'
 import { isCommandName, type CommandCatalog } from '../shared/commands.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
 import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
+import type { GenUiAction } from '../shared/gen-ui.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
 import { isOtelTracingSettings, type OtelTracingSettings } from '../shared/otel-tracing.js'
 
@@ -43,6 +44,7 @@ export type SidebarMessage =
   | { type: 'cancelRequestPreview' }
   | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
   | { type: 'questionAnswer'; sessionId: string; requestId: string; answer: UserQuestionAnswer }
+  | { type: 'uiAction'; sessionId: string; callId: string; action: GenUiAction }
   | { type: 'refreshModels' }
   | { type: 'loadModelCatalog' }
   | { type: 'saveModelCatalog'; models: ModelDraft[] }
@@ -289,6 +291,12 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
       (value.answer.custom === undefined || typeof value.answer.custom === 'string')
   }
 
+  // Only the envelope is checked here. What the action may actually do is the
+  // Host's decision, made against the folders that are open right now.
+  if (type === 'uiAction') {
+    return typeof value.sessionId === 'string' && typeof value.callId === 'string' && isUiActionShape(value.action)
+  }
+
   if (type === 'previewRequest') return 'prompt' in value && typeof value.prompt === 'string'
   if (type === 'removeBrowserAttachment') return typeof value.sessionId === 'string' && typeof value.id === 'string'
 
@@ -300,6 +308,20 @@ function isSidebarMessage(value: unknown): value is SidebarMessage {
     type === 'cancelTurn' ||
     type === 'cancelRequestPreview' ||
     type === 'refreshModels'
+}
+
+/**
+ * The shape of a card's intent, checked on the wire. Whether the intent is
+ * allowed — a URL scheme, a path inside the folders that are open — is the
+ * Host's decision, made against what is true right now.
+ */
+function isUiActionShape(value: unknown): value is GenUiAction {
+  if (!isRecord(value)) return false
+  if (value.kind === 'dismiss') return true
+  if (value.kind === 'prompt' || value.kind === 'inject' || value.kind === 'copy') return typeof value.text === 'string'
+  if (value.kind === 'openPath') return typeof value.path === 'string' && (value.label === undefined || typeof value.label === 'string')
+  if (value.kind === 'openLink') return typeof value.url === 'string' && (value.label === undefined || typeof value.label === 'string')
+  return false
 }
 
 function isModelDraft(value: unknown): value is ModelDraft {

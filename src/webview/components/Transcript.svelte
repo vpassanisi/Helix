@@ -3,6 +3,7 @@
   import ChangesPanel from './ChangesPanel.svelte'
   import MessageRow from './MessageRow.svelte'
   import type { ChatTranscript } from '../lib/chat-transcript.svelte.js'
+  import type { GenUiAction } from '../../shared/gen-ui.js'
   import type { UserQuestionAnswer } from '../../shared/user-question.js'
   import type { ChatMessage, CodeChange } from '../types.js'
 
@@ -15,9 +16,10 @@
     changesOpen: boolean
     onanswer: (message: ChatMessage, answer: UserQuestionAnswer) => void
     onapprove: (message: ChatMessage, outcome: 'allowed-once' | 'rejected') => void
+    onui: (message: ChatMessage, action: GenUiAction) => void
   }
 
-  let { transcript, activeSessionId, isGenerating, waitingForFirstResponse, codeChanges, changesOpen = $bindable(false), onanswer, onapprove }: Props = $props()
+  let { transcript, activeSessionId, isGenerating, waitingForFirstResponse, codeChanges, changesOpen = $bindable(false), onanswer, onapprove, onui }: Props = $props()
 </script>
 
 <div class="transcript" bind:this={transcript.transcriptElement} onscroll={(event) => transcript.onScroll(event)} aria-live="polite">
@@ -28,6 +30,7 @@
       thinking={isGenerating && !transcript.waitingForAnswer && transcript.activeThinkingId === message.id}
       onanswer={(answer) => onanswer(message, answer)}
       onapprove={(outcome) => onapprove(message, outcome)}
+      onui={(action) => onui(message, action)}
     />
   {/each}
   {#if waitingForFirstResponse}

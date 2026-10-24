@@ -5,6 +5,12 @@ export interface UserQuestion {
   question: string
   header?: string
   options: Array<{ label: string; description?: string }>
+  /** Marks a runtime-owned decision, so each boundary validates it with that decision's rules. */
+  intent?: 'plan-review'
+  /** The plan under review, on a `plan-review` question. */
+  detail?: string
+  /** The asker's own approve label; the answer must echo it verbatim. */
+  approveLabel?: string
 }
 
 export interface UserQuestionAnswer {
@@ -70,6 +76,75 @@ export function validateQuestionCall(value: unknown): UserQuestion {
     throw new Error('ask_user_question must ask exactly one question per call.')
   }
   return validateUserQuestion(value.questions[0])
+}
+
+/**
+ * A plan-mode review is not an `ask_user_question` call: it carries the plan as `detail`,
+ * offers the asker's own two labels, and answers by naming one of them verbatim. Validate
+ * that contract, and never the Helix house rules for model-authored questions — a plan
+ * review is a fixed decision, so no `(Recommended)` marker and no label rewriting.
+ *
+ * Both boundaries validate, so the input is either the asker's raw question, where the
+ * intent is the object `{ kind: 'plan-review', approve }`, or the normalized Helix
+ * question, where it is the string `'plan-review'` beside `approveLabel`. The output is
+ * the normalized form, so re-validating it changes nothing.
+ */
+export function validatePlanReviewQuestion(value: unknown): UserQuestion {
+  if (!isRecord(value) || typeof value.id !== 'string' || !value.id.trim() ||
+      typeof value.question !== 'string' || !value.question.trim()) {
+    throw new Error('Plan review requires a nonempty question and id.')
+  }
+  const intent = value.intent
+  const approve = (isRecord(intent) && intent.kind === 'plan-review' && typeof intent.approve === 'string' && intent.approve.trim())
+    ? intent.approve
+    : (intent === 'plan-review' && typeof value.approveLabel === 'string' && value.approveLabel.trim())
+      ? value.approveLabel
+      : ''
+  if (!approve) {
+    throw new Error('Plan review requires a plan-review intent naming its approve option.')
+  }
+  if (typeof value.detail !== 'string' || !value.detail.trim()) {
+    throw new Error('Plan review requires the plan text in detail.')
+  }
+  if (value.multi_select === true || value.multiSelect === true) {
+    throw new Error('Plan review is a single decision; it cannot be multi-select.')
+  }
+  if (!Array.isArray(value.options) || value.options.length < 1 || value.options.length > 2) {
+    throw new Error('Plan review offers the approve option and at most one alternative.')
+  }
+  const options = value.options.map((option) => {
+    if (!isRecord(option) || typeof option.label !== 'string' || !option.label.trim() ||
+        (option.description !== undefined && typeof option.description !== 'string')) {
+      throw new Error('Each plan review option requires a nonempty label and an optional text description.')
+    }
+    return { label: option.label, ...(option.description === undefined ? {} : { description: option.description }) }
+  })
+  if (!options.some((option) => option.label === approve)) {
+    throw new Error(`Plan review approve option "${approve}" names none of its options.`)
+  }
+  if (new Set(options.map((option) => option.label)).size !== options.length) {
+    throw new Error('Plan review options must have distinct labels.')
+  }
+  if (value.header !== undefined && typeof value.header !== 'string') throw new Error('Plan review header must be text.')
+  return { id: value.id, question: value.question, options, detail: value.detail,
+    intent: 'plan-review', approveLabel: approve,
+    ...(typeof value.header === 'string' ? { header: value.header } : {}) }
+}
+
+/** True when a question is the plan-mode review, at every boundary that forwards it. */
+export function isPlanReview(value: unknown): boolean {
+  return isRecord(value) && value.intent === 'plan-review'
+}
+
+/**
+ * True for the raw `exit_plan_mode` request, where the intent is the asker's own object
+ * (`{ kind, approve, callId }`); the question Helix forwards after validation carries the
+ * normalized `intent: 'plan-review'` string instead.
+ */
+export function isPlanReviewRequest(value: unknown): boolean {
+  if (!isRecord(value) || !Array.isArray(value.questions)) return false
+  const question: unknown = value.questions[0]
+  return isRecord(question) && isRecord(question.intent) && question.intent.kind === 'plan-review'
 }
 
 export function validateQuestionAnswer(question: UserQuestion, value: unknown): UserQuestionAnswer {

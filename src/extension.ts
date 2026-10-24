@@ -22,6 +22,8 @@ class ExtensionApp {
   private readonly skills: SkillController
   private readonly commands: CommandController
   private submissionGeneration = 0
+  private warmGeneration = 0
+  private warmTask: Promise<void> | undefined
   private readonly requestPreview: RequestPreviewController
   private readonly session: SessionController
   private readonly browserContext: BrowserContextController
@@ -91,7 +93,15 @@ class ExtensionApp {
         if (this.runtimeState !== 'ready') await this.runtime.start(await this.settings.runtimeOptions())
         return this.runtime.commandCatalog(sessionId)
       },
-      run: (sessionId, name, args) => this.runtime.runCommand(sessionId, name, args),
+      run: async (sessionId, name, args) => {
+        // A command typed while the warm start is still in flight queues behind it:
+        // the Host runs a command against the session's Agent, and warming is what
+        // opens it, so running early answers that a chat has to start first.
+        await this.warmTask
+        if (this.runtimeState !== 'ready') await this.runtime.start(await this.settings.runtimeOptions())
+        if (sessionId !== this.session.currentSessionId) throw new Error('The session changed before the command ran.')
+        return this.runtime.runCommand(sessionId, name, args)
+      },
       publishCatalog: (sessionId, catalog, error) => this.sidebar.post({
         type: 'commandCatalog', sessionId, catalog, ...(error === undefined ? {} : { error }),
       }),
@@ -237,6 +247,26 @@ class ExtensionApp {
     // session is being left behind, never while it is in use.
     if (await this.settings.applyDeferredToolBundles()) this.session.resetReasoningEffort()
     await this.session.newSession()
+    this.warmTask = this.warmSession()
+  }
+
+  /**
+   * Warm the session the composer is showing: start the runtime and open the
+   * DSH Agent behind the session. The Host runs a composer command against that
+   * Agent, so without this the first line typed — `/plan` — answers that a chat
+   * has to start first. Failures are left to the runtime state listener, which
+   * reports the state and its message once.
+   */
+  async warmSession(): Promise<void> {
+    const generation = ++this.warmGeneration
+    const sessionId = this.session.currentSessionId
+    try {
+      if (this.runtimeState !== 'ready') await this.runtime.start(await this.settings.runtimeOptions())
+      if (this.disposed || generation !== this.warmGeneration || sessionId !== this.session.currentSessionId) return
+      await this.runtime.ensureSession(sessionId)
+    } catch {
+      // The start already told the Webview why it failed.
+    }
   }
 
   toggleBrowserPicker(): Promise<void> { return this.browserContext.toggle() }
@@ -275,6 +305,7 @@ class ExtensionApp {
   async shutdown(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    ++this.warmGeneration
     this.skills.invalidate()
     await this.browserContext.dispose()
     await this.session.dispose()
@@ -302,6 +333,7 @@ class ExtensionApp {
     this.session.replayPendingApprovals()
     this.session.replayPendingQuestions()
     await this.settings.postSettings()
+    this.warmTask = this.warmSession()
   }
 
   private async loadSkills(sessionId = this.session.currentSessionId): Promise<void> {

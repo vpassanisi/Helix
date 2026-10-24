@@ -9,7 +9,9 @@
 
   let { label, text, active }: Props = $props()
   const activeEdgeClasses = "border-l-[color-mix(in_srgb,var(--brand-gold)_60%,var(--border))] before:absolute before:top-0 before:bottom-0 before:-left-px before:w-[2px] before:rounded-[2px] before:bg-[linear-gradient(180deg,transparent_15%,var(--brand-gold)_45%,#f5dfbd_50%,var(--brand-gold)_55%,transparent_85%)] before:[background-size:100%_250%] before:[box-shadow:0_0_6px_color-mix(in_srgb,var(--brand-gold)_25%,transparent)] before:pointer-events-none before:animate-thinking-edge before:content-[''] motion-reduce:before:animate-none motion-reduce:before:[background-position:0_50%]"
-  const activeLabelClasses = 'text-transparent [background-image:linear-gradient(110deg,#a6a6a6_30%,#dedede_48%,#a6a6a6_66%)] [background-size:250%_100%] bg-clip-text animate-thinking-shimmer motion-reduce:animate-none motion-reduce:bg-none motion-reduce:text-[#a6a6a6]'
+  /** The active label shimmers between a dark trough and a light peak: the trough sits
+   * under the idle label's #b6b6b6 so the sweep reads as movement, not a static grey. */
+  const activeLabelClasses = 'text-transparent [background-image:linear-gradient(110deg,#8a8a8a_30%,#dedede_48%,#8a8a8a_66%)] [background-size:250%_100%] bg-clip-text animate-thinking-shimmer motion-reduce:animate-none motion-reduce:bg-none motion-reduce:text-[#8a8a8a]'
 
   function isNearBottom(element: HTMLElement): boolean {
     return element.scrollHeight - element.clientHeight - element.scrollTop <= 24

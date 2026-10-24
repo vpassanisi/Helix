@@ -1,4 +1,4 @@
-import { isRecord } from './value-utils.js'
+import { escapeHtml, isRecord } from './value-utils.js'
 
 /**
  * Composer slash commands.
@@ -88,6 +88,15 @@ export function commandLine(name: string, args: string): string {
 }
 
 /**
+ * A run command as a transcript line: the `/name` token in a gold span, the
+ * arguments as escaped text. Both parts are escaped, so the markup is safe.
+ */
+export function commandLineHtml(name: string, args: string): string {
+  const token = escapeHtml(commandLine(name, ''))
+  return `<span class="message-command-token">${token}</span>${escapeHtml(args ? ` ${args}` : '')}`
+}
+
+/**
  * The command token the caret sits in. A command only counts at the very start
  * of the composer, and only while the caret is on the name itself — moving past
  * the whitespace into the arguments closes the popup.
@@ -99,6 +108,16 @@ export function slashTrigger(text: string, caret: number): SlashTrigger | undefi
     if (caret > 0 && caret <= end) return { start: 0, end, query: text.slice(1, end) }
   }
   return undefined
+}
+
+/**
+ * The popup's open rule: the `/name` token under the caret, until that token has
+ * been completed to a command or dismissed. Completing a command settles the
+ * draft the popup is measured against, which is what shuts it.
+ */
+export function commandPopupOpen(text: string, caret: number, dismissed: string | undefined): boolean {
+  const trigger = slashTrigger(text, caret)
+  return trigger !== undefined && trigger.query !== dismissed
 }
 
 /** The command a finished line runs, when its leading token is a known command. */

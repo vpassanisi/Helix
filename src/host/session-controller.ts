@@ -9,7 +9,7 @@ import type { RoutedNotification, RuntimeOptions, RuntimeState } from '../runtim
 import { SessionHierarchy } from '../runtime/session-hierarchy.js'
 import { stringValue } from '../shared/value-utils.js'
 import type { BrowserElementContext } from '../shared/browser-context.js'
-import { validateUserQuestion, validateQuestionAnswer, type PendingUserQuestion } from '../shared/user-question.js'
+import { validateUserQuestion, validatePlanReviewQuestion, validateQuestionAnswer, isPlanReview, type PendingUserQuestion } from '../shared/user-question.js'
 import type {
   SidebarProvider,
   SidebarMessage,
@@ -225,7 +225,9 @@ export class SessionController {
       const toolCallId = stringValue(event.params.toolCallId)
       if (!requestId || !toolCallId || this.pendingQuestions.has(requestId)) return
       try {
-        const question = validateUserQuestion(event.params.question)
+        const question = isPlanReview(event.params.question)
+          ? validatePlanReviewQuestion(event.params.question)
+          : validateUserQuestion(event.params.question)
         const request = { sessionId: event.sessionId, requestId, toolCallId, question }
         this.pendingQuestions.set(requestId, { ...request, resolving: false })
         this.options.sidebar.post({ type: 'questionRequest', request })

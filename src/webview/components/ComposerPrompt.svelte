@@ -2,9 +2,9 @@
   import { tick } from 'svelte'
   import ComposerCommandMenu from './ComposerCommandMenu.svelte'
   import {
-    caretAnchor,
     caretOffset,
     domDraftKey,
+    draftAnchor,
     draftKey,
     draftRuns,
     readDraft,
@@ -36,6 +36,18 @@
   let pendingCaret: number | undefined = undefined
   /** The last caret the editor reported, so a render puts it back where it was. */
   let lastCaret = 0
+  /** The draft offset of the `/` the open popup is anchored on; `undefined` when it is shut. */
+  let anchoredAt: number | undefined = undefined
+
+  /** Measure the `/` the popup is anchored on: once on the way in, and as the editor scrolls. */
+  function placePopup(): void {
+    const start = anchoredAt
+    if (start === undefined) return
+    void tick().then(() => {
+      if (editorElement === undefined || fieldElement === undefined) return
+      commands.anchor = draftAnchor(editorElement, fieldElement, start)
+    })
+  }
 
   export function focus(): void { editorElement?.focus() }
 
@@ -67,17 +79,26 @@
     lastCaret = caret
     if (text !== prompt) prompt = text
     commands.sync(text, caret)
-    if (!commands.open) return
-    void tick().then(() => {
-      if (editorElement === undefined || fieldElement === undefined) return
-      commands.anchor = caretAnchor(editorElement, fieldElement)
-    })
+    if (!commands.open) {
+      anchoredAt = undefined
+      return
+    }
+    // The popup opens on the `/` and stays there: the box is measured once, on
+    // the way in, so typing the name does not walk the list across the editor.
+    if (anchoredAt !== undefined) return
+    anchoredAt = commands.trigger?.start ?? 0
+    placePopup()
   }
 
-  /** Write the highlighted command into the draft and put the caret after it. */
+  /** Write the highlighted command into the draft, shut the popup, and put the caret after it. */
   function complete(): void {
     const completed = commands.accept()
     if (completed === undefined) return
+    // A click on a row fills the draft without a keystroke, so nothing else in
+    // this component runs: focus the editor to leave a caret the user can type
+    // at, and drop the anchor the next popup will measure afresh.
+    editorElement?.focus()
+    anchoredAt = undefined
     pendingCaret = completed.caret
     prompt = completed.text
   }
@@ -172,6 +193,7 @@
     onkeydown={handleKeydown}
     oninput={refresh}
     onpaste={handlePaste}
+    onscroll={() => { placePopup() }}
     oncompositionstart={() => { composing = true }}
     oncompositionend={() => { composing = false; refresh() }}
     onclick={refresh}

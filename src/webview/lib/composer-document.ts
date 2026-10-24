@@ -111,6 +111,29 @@ export function draftKey(runs: readonly ComposerRun[]): string {
   return editorRuns(runs).map((run) => `${run.kind === 'command' ? 'c' : 't'}\u0000${run.text}`).join('\u0001')
 }
 
+/** A key no draft key can equal: the DOM is not the shape the renderer built. */
+const STRAY_DOM_KEY = '\u0000stray'
+
+/**
+ * A shape `renderDraft` builds: a plain span, or the gold token span.
+ *
+ * Deleting a gold token in one selection leaves Chromium's typing style on its
+ * colour, and the characters typed after it arrive wrapped in a `<font color>`
+ * or a `<span style>`. A key that reads only the token class calls that plain
+ * text, the render is skipped, and the text stays gold.
+ *
+ * Only a text node's own parent is judged. A block element is a line of the
+ * draft — the slices count it as a newline — and rebuilding on the sight of one
+ * moves the caret to a stale offset and merges the line the user is typing on.
+ */
+export function canonicalRenderedElement(tagName: string, attributeNames: readonly string[]): boolean {
+  return tagName === 'SPAN'
+    && (attributeNames.length === 0 || (attributeNames.length === 1 && attributeNames[0] === 'class'))
+}
+
+const attributeNamesOf = (element: Element): string[] =>
+  Array.from(element.attributes, (attribute) => attribute.name)
+
 /** The draft key of what the editor currently holds, for the render comparison. */
 export function domDraftKey(container: HTMLElement): string {
   const runs: ComposerRun[] = []
@@ -121,7 +144,12 @@ export function domDraftKey(container: HTMLElement): string {
       else last.text += '\n'
       continue
     }
-    const styled = slice.node.parentElement?.classList.contains(COMMAND_CLASS) === true
+    const parent = slice.node.parentElement
+    // Text sitting in the editor itself is the caret's own; a wrapper is styling.
+    if (parent !== null && parent !== container && !canonicalRenderedElement(parent.tagName, attributeNamesOf(parent))) {
+      return STRAY_DOM_KEY
+    }
+    const styled = parent?.classList.contains(COMMAND_CLASS) === true
     const last = runs[runs.length - 1]
     if (last !== undefined && (styled ? last.kind !== 'command' : last.kind !== 'text')) {
       runs.push({ kind: styled ? 'command' : 'text', text: slice.text } as ComposerRun)
@@ -188,15 +216,8 @@ export function setCaretOffset(container: HTMLElement, offset: number): void {
   selection.addRange(range)
 }
 
-/**
- * Where the popup opens: the caret's box, relative to the composer field. The
- * field is the positioned box and the editor is the scroller inside it, so the
- * caret's viewport offset is the answer; the editor's own scroll is not added.
- */
-export function caretAnchor(container: HTMLElement, field: HTMLElement): { x: number; y: number } {
-  const selection = window.getSelection()
-  if (selection === null || selection.rangeCount === 0) return { x: 0, y: 0 }
-  const range = selection.getRangeAt(0)
+/** A range's box relative to the positioned field; an unmapped range anchors at the origin. */
+function measure(range: Range, container: HTMLElement, field: HTMLElement): { x: number; y: number } {
   if (!container.contains(range.startContainer)) return { x: 0, y: 0 }
   const rect = range.getBoundingClientRect()
   if (rect.height === 0 && rect.width === 0 && rect.x === 0 && rect.y === 0) return { x: 0, y: 0 }
@@ -205,4 +226,40 @@ export function caretAnchor(container: HTMLElement, field: HTMLElement): { x: nu
     x: Math.max(0, rect.left - box.left),
     y: Math.max(0, rect.top - box.top),
   }
+}
+
+/**
+ * The box of the character at a draft offset, relative to the composer field.
+ * Measuring a glyph, not the collapsed caret, is the point: the command popup
+ * opens on the `/` and stays there while the name is typed out, instead of
+ * chasing the caret.
+ */
+export function draftAnchor(container: HTMLElement, field: HTMLElement, offset: number): { x: number; y: number } {
+  const range = document.createRange()
+  let total = 0
+  let previous: Text | null = null
+  for (const slice of draftSlices(container)) {
+    if (slice.node === null) {
+      // A newline: anchor at the end of the line it ends.
+      if (offset <= total && previous !== null) {
+        range.setStartAfter(previous)
+        range.collapse(true)
+        return measure(range, container, field)
+      }
+      total += slice.text.length
+      continue
+    }
+    if (offset < total + slice.text.length) {
+      const index = offset - total
+      range.setStart(slice.node, index)
+      range.setEnd(slice.node, Math.min(index + 1, slice.text.length))
+      return measure(range, container, field)
+    }
+    total += slice.text.length
+    previous = slice.node
+  }
+  // Nothing sits at that offset — an empty draft: the head of the editor.
+  range.selectNodeContents(container)
+  range.collapse(true)
+  return measure(range, container, field)
 }

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   commandLine,
+  commandLineHtml,
+  commandPopupOpen,
   completeCommand,
   filterCommands,
   isCommandCatalog,
@@ -37,6 +39,19 @@ test('a command line resolves with the Host name grammar', () => {
   assert.equal(parseCommandInvocation('  /compact'), undefined, 'the command must start the line')
   assert.equal(commandLine('plan', 'off'), '/plan off')
   assert.equal(commandLine('compact', ''), '/compact')
+})
+
+test('the transcript line paints the command token gold and escapes the arguments', () => {
+  assert.equal(
+    commandLineHtml('plan', 'build a parser'),
+    '<span class="message-command-token">/plan</span> build a parser',
+  )
+  assert.equal(commandLineHtml('compact', ''), '<span class="message-command-token">/compact</span>')
+  assert.equal(
+    commandLineHtml('feedback', 'a <script> & "quote"'),
+    '<span class="message-command-token">/feedback</span> a &lt;script&gt; &amp; &quot;quote&quot;',
+    'the arguments are text, never markup',
+  )
 })
 
 test('the trigger follows the caret through the name and closes on the arguments', () => {
@@ -84,6 +99,28 @@ test('completing a command leaves a resolved token and a caret ready for argumen
   assert.deepEqual(completeCommand('/comp arg', 5, named('goal')), { text: '/goal arg', caret: 6 }, 'arguments already typed survive the completion')
   assert.deepEqual(completeCommand('/comp arg', 5, named('compact')), { text: '/compact arg', caret: 9 })
   assert.deepEqual(completeCommand('/', 1, named('compact')), { text: '/compact', caret: 8 })
+})
+
+test('accepting a listed row shuts the popup', () => {
+  const typed: Array<[string, number]> = [['/', 1], ['/comp', 5], ['/compact', 8], ['/compact arg', 8]]
+  for (const [text, caret] of typed) {
+    const rows = filterCommands(catalog, slashTrigger(text, caret)?.query ?? '')
+    assert.ok(rows.length > 0, `typing "${text}" lists rows`)
+    for (const command of rows) {
+      const completed = completeCommand(text, caret, command)
+      assert.equal(commandPopupOpen(completed.text, completed.caret, command.name), false,
+        `picking /${command.name} from "${text}" closes the popup`)
+    }
+  }
+})
+
+test('the popup follows the token under the caret, not the row that was accepted', () => {
+  assert.equal(commandPopupOpen('/comp', 5, undefined), true)
+  assert.equal(commandPopupOpen('/goal ', 6, 'goal'), false, 'the caret is past the token the completion left')
+  assert.equal(commandPopupOpen('/compact', 8, 'compact'), false, 'the completed name does not reopen the popup')
+  assert.equal(commandPopupOpen('/compactx', 9, 'compact'), true, 'naming a new token lists again')
+  assert.equal(commandPopupOpen('/compact arg', 12, 'compact'), false, 'the caret is naming arguments')
+  assert.equal(commandPopupOpen('ask about /compact', 16, undefined), false, 'a slash mid-sentence is not a command')
 })
 
 test('catalog payloads from the Host are validated', () => {

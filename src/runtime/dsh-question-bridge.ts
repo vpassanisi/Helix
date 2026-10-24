@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { validateQuestionCall, validateQuestionAnswer, type PendingUserQuestion, type UserQuestionAnswer } from '../shared/user-question.js'
+import { isPlanReviewRequest, validatePlanReviewQuestion, validateQuestionCall, validateQuestionAnswer,
+  type PendingUserQuestion, type UserQuestionAnswer } from '../shared/user-question.js'
 
 interface WaitingQuestion extends PendingUserQuestion {
   signal: AbortSignal
@@ -11,6 +12,7 @@ interface WaitingQuestion extends PendingUserQuestion {
 /** Uses the runtime's own tool and userQuestions service, without importing another DSH instance. */
 export class DshQuestionBridge {
   private readonly executions = new Map<string, { callId: string; signal: AbortSignal }>()
+  private readonly reviews = new Map<string, string>()
   private readonly waiting = new Map<string, WaitingQuestion>()
 
   constructor(private readonly ctx: any, private readonly connected: () => boolean,
@@ -37,6 +39,7 @@ export class DshQuestionBridge {
   }
 
   request = async (request: any, next: () => Promise<any>): Promise<any> => {
+    if (isPlanReviewRequest(request)) return this.review(request)
     const sessionId = request.agent?.id
     const execution = this.executions.get(sessionId)
     // Other consumers of userQuestions keep their own answerers.
@@ -57,6 +60,33 @@ export class DshQuestionBridge {
     })
   }
 
+  /**
+   * Claim the plan-mode review. `exit_plan_mode` asks through `ctx.userQuestions` with no
+   * tool execution of ours to gate on, so this is the only place the plan can reach the
+   * user; leaving it to `next()` ends the waterfall with no answerer and the tool fails.
+   */
+  private review = async (request: any): Promise<any> => {
+    const sessionId = request.agent?.id
+    this.assertRoot(request.agent)
+    const question = validatePlanReviewQuestion(request.questions[0])
+    const signal: AbortSignal = request.signal ?? new AbortController().signal
+    if (signal.aborted) throw new Error('Plan review cancelled before the user answered.')
+    if (this.reviews.has(sessionId)) throw new Error('A plan review is already running for this agent.')
+    const requestId = randomUUID()
+    const callId = request.questions[0].intent?.callId
+    const toolCallId = typeof callId === 'string' && callId.trim() ? callId : `plan-review-${requestId}`
+    return new Promise((resolve, reject) => {
+      const pending: WaitingQuestion = { sessionId, requestId, toolCallId, question, signal,
+        resolve, reject, abort: () => this.finish(requestId, 'cancelled') }
+      this.reviews.set(sessionId, requestId)
+      this.waiting.set(requestId, pending)
+      signal.addEventListener('abort', pending.abort, { once: true })
+      if (!this.connected() || !this.emit(sessionId, 'question.request', { requestId, toolCallId, question })) {
+        this.finish(requestId, 'unavailable', undefined, true)
+      }
+    })
+  }
+
   answer(sessionId: string, requestId: string, value: unknown): void {
     const pending = this.waiting.get(requestId)
     if (!pending || pending.sessionId !== sessionId) throw new Error('Question is no longer pending in this session.')
@@ -69,6 +99,7 @@ export class DshQuestionBridge {
     const pending = this.waiting.get(requestId)
     if (!pending) return
     this.waiting.delete(requestId)
+    if (this.reviews.get(pending.sessionId) === requestId) this.reviews.delete(pending.sessionId)
     pending.signal.removeEventListener('abort', pending.abort)
     this.emit(pending.sessionId, 'question.resolved', { requestId, status, ...(answer ? { answer } : {}) })
     if (cancelTurn) {
@@ -85,5 +116,6 @@ export class DshQuestionBridge {
   dispose(): void {
     for (const requestId of [...this.waiting.keys()]) this.finish(requestId, 'cancelled', undefined, true)
     this.executions.clear()
+    this.reviews.clear()
   }
 }

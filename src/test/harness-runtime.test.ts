@@ -48,7 +48,7 @@ function fakeBridge(connected: boolean, calls: string[], capabilities: readonly 
   }
 }
 
-function fakeClient(calls: string[], promptError?: Error): HarnessClient {
+function fakeClient(calls: string[], promptError?: Error, workingDirectoryError?: Error): HarnessClient {
   return {
     start: () => { calls.push('client.start') },
     initialize: async () => { calls.push('client.initialize') },
@@ -56,6 +56,11 @@ function fakeClient(calls: string[], promptError?: Error): HarnessClient {
       calls.push('client.prompt')
       if (promptError !== undefined) throw promptError
       return 'turn-1'
+    },
+    getWorkingDirectory: async (sessionId: string) => {
+      calls.push(`client.working-directory:${sessionId}`)
+      if (workingDirectoryError !== undefined) throw workingDirectoryError
+      return process.cwd()
     },
     request: async (method: string, params?: object) => { calls.push(`client.request:${method}:${JSON.stringify(params)}`) },
     close: async () => { calls.push('client.close') },
@@ -109,6 +114,47 @@ test('waits for the DSH session and managed descendants', async () => {
   await runtime.start(runtimeOptions())
   await runtime.waitForSession('root-session')
   assert.equal(calls.includes('client.request:session/wait:{"sessionId":"root-session"}'), true)
+  await runtime.dispose()
+})
+
+test('warming a session opens its DSH Agent before the first prompt', async () => {
+  const calls: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) => fakeClient(calls),
+  })
+
+  await runtime.start(runtimeOptions())
+  await runtime.ensureSession('root-session')
+  assert.deepEqual(calls, ['bridge.start', 'client.start', 'client.initialize', 'client.working-directory:root-session'],
+    'the working directory read is the only wire traffic, and it mints the session')
+  assert.equal(runtime.currentState, 'ready', 'warming leaves the runtime ready')
+  await runtime.dispose()
+})
+
+test('warming a session starts nothing while the runtime is stopped', async () => {
+  const calls: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) => fakeClient(calls),
+  })
+
+  await runtime.ensureSession('root-session')
+  assert.deepEqual(calls, [], 'the caller starts the runtime; warming alone launches no subprocess')
+  await runtime.dispose()
+})
+
+test('a dead transport found while warming is reaped once', async () => {
+  const calls: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) => fakeClient(calls, undefined, new Error('runtime exited')),
+  })
+
+  await runtime.start(runtimeOptions())
+  await assert.rejects(runtime.ensureSession('root-session'), /runtime exited/)
+  assert.equal(runtime.currentState, 'error')
+  assert.equal(calls.filter((call) => call === 'client.close').length, 1)
   await runtime.dispose()
 })
 

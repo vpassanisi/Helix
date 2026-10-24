@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { draftKey, draftRuns, editorRuns, serializeRuns } from '../webview/lib/composer-document.js'
+import { canonicalRenderedElement, draftKey, draftRuns, editorRuns, serializeRuns } from '../webview/lib/composer-document.js'
 import type { ComposerCommand } from '../shared/commands.js'
 
 const catalog: ComposerCommand[] = [
@@ -51,4 +51,17 @@ test('a key changes when a token turns into a command, not when text is appended
   assert.notEqual(resolved, draftKey(draftRuns('/compact ', catalog)), 'a space is a text change')
   assert.equal(draftKey(draftRuns('/compact the', catalog)), draftKey(draftRuns('/compact the', catalog)))
   assert.notEqual(draftKey(draftRuns('/compact the', catalog)), draftKey(draftRuns('/compact thes', catalog)))
+})
+
+test('only the spans the renderer builds are the editor’s own shape', () => {
+  assert.ok(canonicalRenderedElement('SPAN', []), 'a plain text span')
+  assert.ok(canonicalRenderedElement('SPAN', ['class']), 'the gold token span')
+})
+
+test('a wrapper the editor typed for itself is a render transition', () => {
+  assert.equal(canonicalRenderedElement('FONT', ['color']), false, "Chromium's typing style after clearing a command")
+  assert.equal(canonicalRenderedElement('SPAN', ['style']), false, 'a styled span is not one the renderer builds')
+  assert.equal(canonicalRenderedElement('SPAN', ['class', 'data-x']), false, 'a span carrying more than the class')
+  assert.equal(canonicalRenderedElement('DIV', []), false, 'a block is not a run wrapper')
+  assert.equal(canonicalRenderedElement('B', []), false, 'bold is not a run wrapper')
 })

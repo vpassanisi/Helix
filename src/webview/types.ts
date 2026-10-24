@@ -34,13 +34,15 @@ export interface ToolCallView {
   question?: UserQuestionView
 }
 
-export type ChatRole = 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction' | 'changes'
+export type ChatRole = 'user' | 'assistant' | 'reasoning' | 'activity' | 'tool' | 'compaction' | 'changes' | 'divider'
 
 export interface ChatMessage {
   id: number
   role: ChatRole
   label: string
   text: string
+  /** A user line that ran a slash command, as safe markup: the `/name` token is gold. */
+  html?: string
   context?: SelectionMetadata
   browserLabels?: string[]
   tool?: ToolCallView

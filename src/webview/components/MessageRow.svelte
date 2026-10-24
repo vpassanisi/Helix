@@ -2,6 +2,7 @@
   import { Code2, MousePointer2 } from '@lucide/svelte'
   import ChangesPanel from './ChangesPanel.svelte'
   import CompactionCard from './CompactionCard.svelte'
+  import ModeRule from './ModeRule.svelte'
   import ThinkingCard from './ThinkingCard.svelte'
   import ToolCallCard from './ToolCallCard.svelte'
   import UserQuestionCard from './UserQuestionCard.svelte'
@@ -25,8 +26,10 @@
 {#if message.role === 'changes' && message.changes}
   <ChangesPanel changes={message.changes} bind:open={message.panelOpen} variant="summary" />
 {:else}
-  <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'}>
-    {#if message.role === 'compaction' && message.compaction}
+  <article class="message" class:user={message.role === 'user'} class:assistant={message.role === 'assistant'} class:reasoning={message.role === 'reasoning'} class:activity={message.role === 'activity'} class:tool={message.role === 'tool'} class:divider={message.role === 'divider'}>
+    {#if message.role === 'divider'}
+      <ModeRule label={message.text} />
+    {:else if message.role === 'compaction' && message.compaction}
       <CompactionCard entry={message.compaction} subagent={message.compaction.sessionId !== activeSessionId} />
     {:else if message.role === 'reasoning'}
       <ThinkingCard label={message.label} text={message.text} active={thinking} />
@@ -52,6 +55,8 @@
       {/if}
       {#if message.role === 'assistant'}
         <div class="message-body markdown">{@html renderMarkdown(message.text)}</div>
+      {:else if message.role === 'user' && message.html}
+        <div class="message-body">{@html message.html}</div>
       {:else}
         <div class="message-body">{message.text}</div>
       {/if}

@@ -2,7 +2,7 @@
   import { defineMeta } from '@storybook/addon-svelte-csf'
   import { fn } from 'storybook/test'
   import MessageRow from '../src/webview/components/MessageRow.svelte'
-  import { chatMessages, questionMessage } from './fixtures.js'
+  import { chatMessages, planCommandMessage, planRuleMessage, planRuleOffMessage, questionMessage } from './fixtures.js'
 
   const { Story } = defineMeta({
     title: 'Chat/MessageRow', component: MessageRow,
@@ -18,3 +18,6 @@
 <Story name="Compaction" args={{ message: chatMessages[5] }} />
 <Story name="Changes" args={{ message: chatMessages[6] }} />
 <Story name="Question" args={{ message: questionMessage }} />
+<Story name="Plan command" args={{ message: planCommandMessage }} />
+<Story name="Plan mode rule" args={{ message: planRuleMessage }} />
+<Story name="Plan mode rule off" args={{ message: planRuleOffMessage }} />

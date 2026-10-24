@@ -126,10 +126,11 @@
     void tick().then(() => composer?.focus())
   }
 
-  /** A resolved slash command: the Host runs it, so the draft is not a prompt. */
+  /** A resolved slash command: the Host runs it, and what the user typed reads as a turn. */
   function runCommand(invocation: CommandInvocation): void {
     commands.close()
     session.prompt = ''
+    transcript.appendCommand(invocation.name, invocation.args)
     post({ type: 'runCommand', sessionId: session.activeSessionId, name: invocation.name, args: invocation.args })
     void tick().then(() => composer?.focus())
   }

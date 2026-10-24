@@ -23,6 +23,13 @@ export function responseKey(data: Record<string, unknown>): string | undefined {
     : undefined
 }
 
+const HTML_TEXT_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }
+
+/** Make a string safe as HTML text and attribute values, for the Webview's raw-markup renders. */
+export function escapeHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (character) => HTML_TEXT_ESCAPES[character] ?? character)
+}
+
 export function countLines(value: string): number {
   return value.length === 0 ? 0 : value.split(/\r\n|\r|\n/).length
 }

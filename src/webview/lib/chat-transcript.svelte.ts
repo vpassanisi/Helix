@@ -1,4 +1,5 @@
 import { tick } from 'svelte'
+import { commandLine, commandLineHtml } from '../../shared/commands.js'
 import { CompactionHistory, type CompactionEntry } from '../../shared/compaction-history.js'
 import { assistantTextBlocks } from '../../shared/harness-events.js'
 import type { UserQuestionView } from '../../shared/user-question.js'
@@ -32,6 +33,36 @@ export class ChatTranscript {
     this.messages = [...this.messages, { id, role, label, text, context, browserLabels }]
     void this.scrollToBottom()
     return id
+  }
+
+  /**
+   * The transcript line for a run command: a normal user turn whose `/name`
+   * token is gold, so a command the user typed reads as what they typed.
+   */
+  appendCommand(name: string, args: string): void {
+    this.finishThinking()
+    this.messages = [...this.messages, {
+      id: this.nextMessageId++,
+      role: 'user',
+      label: 'You',
+      text: commandLine(name, args),
+      html: commandLineHtml(name, args),
+    }]
+    void this.scrollToBottom()
+  }
+
+  /**
+   * The rule across the transcript that marks a plan mode switch, labelled with
+   * the mode that took effect.
+   */
+  appendPlanRule(active: boolean): void {
+    this.messages = [...this.messages, {
+      id: this.nextMessageId++,
+      role: 'divider',
+      label: 'Plan Mode',
+      text: active ? 'Plan Mode' : 'Plan Mode Off',
+    }]
+    void this.scrollToBottom()
   }
 
   appendChanges(changes: CodeChange[], open: boolean): void {

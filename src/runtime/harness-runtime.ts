@@ -230,6 +230,24 @@ export class HarnessRuntime {
     }
   }
 
+  /**
+   * Open the DSH Agent behind a session before its first prompt. The runtime
+   * mints a session on its first prompt or working-directory operation, and a
+   * Host composer command needs the Agent, so warming a session is what makes
+   * `/plan` and every other command the first thing typed resolve.
+   * Silent when the runtime is not ready: the caller decides when to start it.
+   */
+  async ensureSession(sessionId: string): Promise<void> {
+    const handle = this.handle
+    if (handle === undefined || this.state !== 'ready') return
+    try {
+      await handle.client.getWorkingDirectory(sessionId)
+    } catch (error) {
+      await this.handleClientFailure(handle.client, handle.generation, error)
+      throw error
+    }
+  }
+
   async skillCatalog(sessionId: string): Promise<SkillCatalog> {
     const bridge = this.handle?.controlBridge
     if (!bridge?.skillCatalog) throw new Error('Skill discovery is unavailable in this runtime.')

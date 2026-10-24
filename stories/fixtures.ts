@@ -2,7 +2,7 @@ import type { ChatMessage, CodeChange, IncomingMessage, ModelEditorDraft, Sideba
 import type { BrowserElementContext } from '../src/shared/browser-context.js'
 import type { UserQuestionView } from '../src/shared/user-question.js'
 import type { SkillSummary, SkillSuggestions } from '../src/shared/skills.js'
-import type { CommandCatalog, ComposerCommand } from '../src/shared/commands.js'
+import { commandLine, commandLineHtml, type CommandCatalog, type ComposerCommand } from '../src/shared/commands.js'
 
 export const changes: CodeChange[] = [
   { path: 'src/webview/components/ChangesPanel.svelte', kind: 'created', additions: 92, deletions: 0 },
@@ -62,6 +62,34 @@ export const question: UserQuestionView = {
   ] },
 }
 
+/** The plan-mode review, as `exit_plan_mode` sends it: the whole plan rides in `detail`. */
+export const planReview: UserQuestionView = {
+  sessionId: 'preview', requestId: 'preview-plan-review', toolCallId: 'preview-plan-review-tool', status: 'pending',
+  question: {
+    id: 'plan-review', header: 'Plan review', intent: 'plan-review', approveLabel: 'Approve',
+    question: 'Approve this plan and leave plan mode?',
+    detail: `# Tighten the settings header
+
+Make the sticky settings header — the back button plus page title — match the chat masthead.
+
+## Change 1 — \`src/webview/app.css\`
+
+- \`padding: 16px 14px 10px\` → \`4px 14px\`
+- \`align-items: flex-start\` → \`center\`
+
+## Verification
+
+1. Measure \`.settings-heading\` in Storybook: 36px, like \`.masthead\`.
+2. \`npm run build:webview\`.
+3. Bump the patch version.
+`,
+    options: [
+      { label: 'Approve', description: 'Leave plan mode; the plan is carried out from the next step.' },
+      { label: 'Keep planning', description: 'Stay in plan mode; feedback goes back to the model.' },
+    ],
+  },
+}
+
 export const skills: SkillSummary[] = [
   { name: 'frontend', description: 'Build and refine frontend interfaces.', modelInvocable: true, userInvocable: true },
   { name: 'basecoat', description: 'Use the existing Basecoat components.', modelInvocable: true, userInvocable: true },
@@ -99,6 +127,17 @@ export const questionMessage: ChatMessage = {
   id: 8, role: 'tool', label: 'Tool', text: '',
   tool: { callId: question.toolCallId, name: 'ask_user_question', arguments: '', status: 'running', question },
 }
+
+/** A command the user ran: a normal turn whose `/name` token is gold. */
+export const planCommandMessage: ChatMessage = {
+  id: 9, role: 'user', label: 'You',
+  text: commandLine('plan', 'map the transcript render path, then keep it under 40 lines'),
+  html: commandLineHtml('plan', 'map the transcript render path, then keep it under 40 lines'),
+}
+
+/** The rule that marks where plan mode was entered, and where it was left. */
+export const planRuleMessage: ChatMessage = { id: 10, role: 'divider', label: 'Plan Mode', text: 'Plan Mode' }
+export const planRuleOffMessage: ChatMessage = { id: 11, role: 'divider', label: 'Plan Mode', text: 'Plan Mode Off' }
 
 export const hostSettings: SidebarSettings = {
   provider: 'deepseek',

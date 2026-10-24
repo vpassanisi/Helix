@@ -1,4 +1,5 @@
 import {
+  commandPopupOpen,
   completeCommand,
   filterCommands,
   parseCommandInvocation,
@@ -11,7 +12,7 @@ import type { SidebarMessage } from '../types.js'
 
 const EMPTY_CATALOG: CommandCatalog = { commands: [], available: false }
 
-/** Where the popup opens: the caret position of the `/` the user typed. */
+/** Where the popup opens: the box of the `/` it opened on, fixed while the name is typed. */
 export interface CommandAnchor {
   x: number
   y: number
@@ -19,7 +20,7 @@ export interface CommandAnchor {
 
 /**
  * Slash commands in the composer: the catalog the Host published, the popup
- * that follows the `/` being typed, and the command a finished line runs.
+ * anchored on the `/` being typed, and the command a finished line runs.
  *
  * The composer owns typing and the caret and pushes both here; everything the
  * popup shows is derived from that draft, so it cannot fall behind the text.
@@ -49,9 +50,10 @@ export class ComposerCommandState {
     this.keepActive()
   }
 
-  private trigger = $derived(slashTrigger(this.draft.text, this.draft.caret))
+  /** The `/` being typed, and the draft offset that `/` sits at. */
+  trigger = $derived(slashTrigger(this.draft.text, this.draft.caret))
   /** A registry the runtime refused still opens the popup, to say why. */
-  open = $derived(this.trigger !== undefined && this.trigger.query !== this.dismissed
+  open = $derived(commandPopupOpen(this.draft.text, this.draft.caret, this.dismissed)
     && (this.catalog.available ? this.catalog.commands.length > 0 : this.error.length > 0))
   matches = $derived(this.open && this.catalog.available ? filterCommands(this.catalog.commands, this.trigger?.query ?? '') : [])
   activeCommand = $derived(this.matches[this.active] as ComposerCommand | undefined)
@@ -95,12 +97,18 @@ export class ComposerCommandState {
     this.active = (this.active + delta + rows) % rows
   }
 
-  /** The composer text and caret after completing the highlighted row. */
+  /**
+   * The composer text and caret after completing the highlighted row. The
+   * completed draft is written here too: a completion is programmatic, so no
+   * keystroke re-pushes it, and the popup is measured against the draft it now
+   * holds — which is what shuts the popup on the spot.
+   */
   accept(): { text: string; caret: number } | undefined {
     const command = this.activeCommand
     if (command === undefined) return undefined
     const completed = completeCommand(this.draft.text, this.draft.caret, command)
     this.dismissed = command.name
+    this.draft = completed
     return completed
   }
 

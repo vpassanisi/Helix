@@ -197,3 +197,29 @@ test('New Session and disposal clear pending questions', async () => {
     await controller.dispose()
   }
 })
+
+const planReviewQuestion = {
+  id: 'plan-review', header: 'Plan review', intent: 'plan-review', approveLabel: 'Approve',
+  question: 'Approve this plan and leave plan mode?', detail: '# Tighten the settings header\n',
+  options: [{ label: 'Approve' }, { label: 'Keep planning' }],
+}
+
+test('a plan review is validated as a review, keeps its plan text, and answers with the asker\'s label', async () => {
+  const { controller, runtime, messages, errors } = controllerWithPrompt(async () => undefined)
+  const sessionId = controller.currentSessionId
+  let answer: unknown
+  runtime.answerQuestion = async (_sessionId, _requestId, submitted) => { answer = submitted }
+  controller.handleControlEvent({ eventId: 'plan-1', sessionId, method: 'question.request',
+    params: { requestId: 'plan-1', toolCallId: 'plan-call-1', question: planReviewQuestion } })
+
+  const request = messages.find((message) => message.type === 'questionRequest')
+  assert.ok(request?.type === 'questionRequest')
+  assert.equal(request.request.question.detail, '# Tighten the settings header\n')
+  assert.equal(request.request.question.approveLabel, 'Approve')
+
+  await controller.answerQuestion({ type: 'questionAnswer', sessionId, requestId: 'plan-1', answer: { id: 'plan-review', selected: ['Approve'] } })
+  assert.deepEqual(answer, { id: 'plan-review', selected: ['Approve'] })
+  await controller.answerQuestion({ type: 'questionAnswer', sessionId, requestId: 'plan-1', answer: { id: 'plan-review', selected: ['Ship it'] } })
+  assert.deepEqual(errors, [], 'the accepted review is settled, so a stale reply is ignored, not an error')
+  await controller.dispose()
+})

@@ -84,6 +84,15 @@ button { color: inherit; }
 .message.activity.waiting-for-response { display: flex; min-height: 18px; align-items: center; gap: 7px; }
 .message.tool { padding: 0 10px; color: var(--muted-foreground); font-size: 11px; }
 
+/* A run command keeps the line the user typed, with its `/name` in composer gold. */
+.message-command-token { color: var(--brand-gold); }
+/* A plan mode switch, marked by a rule whose label sits in the middle and whose line reaches both edges. */
+.message.divider { margin: 4px 0 18px; }
+.mode-rule { display: flex; align-items: center; gap: 9px; padding: 0 10px; color: color-mix(in srgb, var(--brand-gold) 82%, var(--muted-foreground)); font-size: 9px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; white-space: nowrap; }
+.mode-rule::before, .mode-rule::after { content: ''; flex: 1 1 0; min-width: 12px; height: 1px; }
+.mode-rule::before { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--brand-gold) 42%, var(--border))); }
+.mode-rule::after { background: linear-gradient(90deg, color-mix(in srgb, var(--brand-gold) 42%, var(--border)), transparent); }
+
 @theme {
   --animate-composer-shimmer: composer-shimmer 3.6s ease-in-out infinite alternate;
   @keyframes composer-shimmer {
@@ -101,7 +110,7 @@ button { color: inherit; }
   }
 }
 .context-chip { display: flex; align-items: center; width: fit-content; max-width: 100%; gap: 8px; margin-bottom: 8px; padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted-foreground); background: var(--composer); font-size: 11px; }
-.message-context { display: flex; align-items: center; width: fit-content; max-width: 66.6667%; gap: 6px; min-width: 0; margin: 0 auto 5px 33.3333%; padding: 5px 8px; border: 1px solid var(--border); border-left: 2px solid #555e66; border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted-foreground); background: var(--composer); font-size: 10px; }
+.message-context { display: flex; align-items: center; width: fit-content; max-width: 66.6667%; gap: 6px; min-width: 0; margin: 0 auto 5px 33.3333%; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted-foreground); background: var(--composer); font-size: 10px; }
 .message-context-file { min-width: 0; overflow: hidden; color: #cfcfcf; text-overflow: ellipsis; white-space: nowrap; }
 .message-context-lines { flex: 0 0 auto; color: #8f8f8f; white-space: nowrap; }
 .model-refresh { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 25px; height: 27px; padding: 0; border: 0; color: var(--muted-foreground); }
@@ -111,8 +120,8 @@ button { color: inherit; }
 /* A page that takes the height the shell has left, so it scrolls inside itself. */
 .settings-view > .settings-fill { flex: 1 1 auto; min-height: 0; }
 .settings-view > :not(.settings-fill) { flex: none; }
-.settings-heading { position: sticky; top: 0; z-index: 20; display: flex; align-items: flex-start; gap: 9px; margin: 0 -14px 18px; padding: 16px 14px 10px; border-bottom: 1px solid var(--border); background: var(--background); }
-.settings-heading h2 { margin: 1px 0 4px; font-size: 16px; letter-spacing: -.025em; }
+.settings-heading { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 9px; margin: 0 -14px 18px; padding: 4px 14px; border-bottom: 1px solid var(--border); background: var(--background); }
+.settings-heading h2 { margin: 0; font-size: 16px; letter-spacing: -.025em; }
 .settings-heading p { color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }
 .settings-page-content { display: grid; min-width: 0; gap: 15px; }
 .field { display: grid; gap: 6px; }

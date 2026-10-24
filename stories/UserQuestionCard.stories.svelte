@@ -4,7 +4,7 @@
   import type { ComponentProps } from 'svelte'
   import UserQuestionCard from '../src/webview/components/UserQuestionCard.svelte'
   import Preview from './previews/UserQuestionPreview.svelte'
-  import { question } from './fixtures.js'
+  import { question, planReview } from './fixtures.js'
 
   const { Story } = defineMeta({
     title: 'Chat/UserQuestionCard', component: UserQuestionCard, render: template,
@@ -21,3 +21,7 @@
 <Story name="Answered" args={{ value: { ...question, status: 'answered', answer: { id: 'scope', selected: ['Current component (Recommended)'] } } }} />
 <Story name="Answered Custom" args={{ value: { ...question, status: 'answered', answer: { id: 'scope', selected: [], custom: 'Only the styles and the card header.' } } }} />
 <Story name="Cancelled" args={{ value: { ...question, status: 'cancelled' } }} />
+<Story name="Plan review" args={{ value: planReview }} />
+<Story name="Plan accepted" args={{ value: { ...planReview, status: 'answered', answer: { id: 'plan-review', selected: ['Approve'] } } }} />
+<Story name="Plan feedback sent" args={{ value: { ...planReview, status: 'answered', answer: { id: 'plan-review', selected: [], custom: 'Give the version bump its own step, and keep the 14px gutter.' } } }} />
+<Story name="Plan cancelled" args={{ value: { ...planReview, status: 'cancelled' } }} />

@@ -250,6 +250,11 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       if (event.type === 'turn/end') transcript.interruptCompaction(sessionIdValue)
     }
 
+    if (event.type === 'plan/mode') {
+      if (isRootSessionEvent) transcript.appendPlanRule(data.active !== false)
+      return
+    }
+
     if (event.type === 'request/context') {
       if (isRootSessionEvent) composerModel.updateContextWindow(data.contextWindow)
       return
@@ -352,6 +357,9 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
     },
     commandResult: (message) => {
       if (!owns(message.sessionId)) return
+      // A successful `/plan` is written as the rule that crosses the transcript
+      // when the mode changes; the card would only repeat it.
+      if (message.name === 'plan' && message.kind === 'success') return
       transcript.appendMessage('activity', `Command ${message.kind === 'success' ? 'ran' : 'failed'}`,
         message.text ?? (message.kind === 'success' ? `/${message.name} finished.` : `/${message.name} did not finish.`))
     },

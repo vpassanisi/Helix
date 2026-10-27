@@ -18,7 +18,7 @@ The goal is to provide a Codex style workflow with first class support for local
 5. Press `F5` to launch the Extension Development Host.
 6. Open the Helix activity bar view.
 
-To build an installable VSIX, run `npm run package`. The package command stages the production dependency tree, including the bundled DSH runtime, before creating the VSIX. Install the generated `local.helix-vscode-0.0.39.vsix` file in VS Code.
+To build an installable VSIX, run `npm run package`. The package command stages the production dependency tree, including the bundled DSH runtime, before creating the VSIX. Install the generated `local.helix-vscode-0.0.39.vsix` file in VS Code. The script starts npm as `node npm-cli.js`, taken from `npm_execpath`, so Windows needs no `npm.cmd` shell spawn; `HELIX_VSCE_BIN` may point at a local vsce executable, not a `.cmd` shim.
 
 ## Fast UI iteration
 

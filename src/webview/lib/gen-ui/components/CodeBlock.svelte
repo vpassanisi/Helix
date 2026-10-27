@@ -40,4 +40,20 @@
     overflow: auto;
     white-space: pre;
   }
+
+  /* The surface is the `pre`, and VS Code's webview hands an inline `code` a
+     chip: background, border, radius and padding. An inline box paints once
+     per line fragment, so an unstyled `code` turns every line of a snippet
+     into its own rounded strip with a gap above and below it. Reset it here:
+     the block fills the `pre`, and the colours come from the `pre` alone. */
+  .gen-ui-code__pre code {
+    display: block;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    white-space: inherit;
+  }
 </style>

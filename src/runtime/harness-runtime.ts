@@ -26,7 +26,7 @@ import { stringValue } from '../shared/value-utils.js'
 import type { SkillCatalog, SkillTurnSelection } from '../shared/skills.js'
 import type { CommandCatalog } from '../shared/commands.js'
 import type { ControlCommandResult } from './control-protocol.js'
-import { piAiRuntimeModelProfiles, type ChatTemplateValue } from './model-catalog.js'
+import { piAiRuntimeModelProfiles, type ChatTemplateValue, type PiAiModelRuntimeProfile } from './model-catalog.js'
 import type {
   DisposableLike,
   RoutedNotification,
@@ -565,57 +565,24 @@ export class HarnessRuntime {
     }
     if (options.provider !== 'deepseek-official') {
       const modelProfiles = piAiRuntimeModelProfiles(options.savedModels ?? [])
-      if (hasContextWindow || modelProfiles.length > 0) {
-        patchLines.push(
-          '- id: llm-pi-ai',
-          '  config:',
-          '    providers:',
-          `      ${yamlString(options.provider)}:`,
-          '        api: openai-completions',
-          '        apiKeyEnv: DEEPSEEK_API_KEY',
-          '        baseURL: !!js process.env.DEEPSEEK_BASE_URL',
-        )
-        if (modelProfiles.length > 0) {
-          patchLines.push('        models:')
-          for (const profile of modelProfiles) {
-            patchLines.push(`          - id: ${yamlString(profile.id)}`)
-            if (profile.name !== undefined) patchLines.push(`            name: ${yamlString(profile.name)}`)
-            if (profile.contextWindow !== undefined) patchLines.push(`            contextWindow: ${profile.contextWindow}`)
-            patchLines.push(`            input: [${profile.input.map(yamlString).join(', ')}]`)
-            if (profile.reasoningEfforts === false) {
-              patchLines.push('            reasoningEfforts: false')
-            } else if (profile.reasoningEfforts !== undefined) {
-              patchLines.push('            reasoningEfforts:')
-              for (const [level, wireValue] of Object.entries(profile.reasoningEfforts)) {
-                patchLines.push(`              ${yamlString(level)}: ${wireValue === null ? 'null' : yamlString(wireValue)}`)
-              }
-            }
-            if (profile.compat !== undefined) {
-              patchLines.push('            compat:')
-              if (profile.compat.thinkingFormat !== undefined) {
-                patchLines.push(`              thinkingFormat: ${yamlString(profile.compat.thinkingFormat)}`)
-              }
-              if (profile.compat.supportsReasoningEffort !== undefined) {
-                patchLines.push(`              supportsReasoningEffort: ${profile.compat.supportsReasoningEffort}`)
-              }
-              if (profile.compat.chatTemplateKwargs !== undefined) {
-                patchLines.push('              chatTemplateKwargs:')
-                patchLines.push(...chatTemplateYamlLines(profile.compat.chatTemplateKwargs, 16))
-              }
-              if (profile.compat.chatTemplateArgs !== undefined) {
-                patchLines.push('              chatTemplateArgs:')
-                patchLines.push(...chatTemplateYamlLines(profile.compat.chatTemplateArgs, 16))
-              }
-            }
-          }
-        } else if (hasContextWindow) {
-          patchLines.push(
-            `        defaultContextWindow: ${contextWindow}`,
-            '        models:',
-            `          - id: ${yamlString(options.model)}`,
-            `            contextWindow: ${contextWindow}`,
-          )
-        }
+      patchLines.push(
+        '- id: llm-pi-ai',
+        '  config:',
+        '    providers:',
+        `      ${yamlString(options.provider)}:`,
+        '        api: openai-completions',
+        '        apiKeyEnv: DEEPSEEK_API_KEY',
+        '        baseURL: !!js process.env.DEEPSEEK_BASE_URL',
+      )
+      if (hasContextWindow && modelProfiles.length === 0) patchLines.push(`        defaultContextWindow: ${contextWindow}`)
+      patchLines.push('        models:')
+      if (modelProfiles.length > 0) {
+        patchLines.push(...piAiModelProfilePatchLines(modelProfiles))
+      } else {
+        // Nothing is saved yet, so declare the id the model picker discovered from this endpoint.
+        patchLines.push(`          - id: ${yamlString(options.model)}`)
+        if (hasContextWindow) patchLines.push(`            contextWindow: ${contextWindow}`)
+        patchLines.push('            input: ["text"]')
       }
     }
     patchLines.push(
@@ -808,6 +775,42 @@ function runtimeBaseUrl(provider: string, baseUrl: string): string {
     return url.toString().replace(/\/$/, '')
   }
   return baseUrl
+}
+
+function piAiModelProfilePatchLines(modelProfiles: PiAiModelRuntimeProfile[]): string[] {
+  const lines: string[] = []
+  for (const profile of modelProfiles) {
+    lines.push(`          - id: ${yamlString(profile.id)}`)
+    if (profile.name !== undefined) lines.push(`            name: ${yamlString(profile.name)}`)
+    if (profile.contextWindow !== undefined) lines.push(`            contextWindow: ${profile.contextWindow}`)
+    lines.push(`            input: [${profile.input.map(yamlString).join(', ')}]`)
+    if (profile.reasoningEfforts === false) {
+      lines.push('            reasoningEfforts: false')
+    } else if (profile.reasoningEfforts !== undefined) {
+      lines.push('            reasoningEfforts:')
+      for (const [level, wireValue] of Object.entries(profile.reasoningEfforts)) {
+        lines.push(`              ${yamlString(level)}: ${wireValue === null ? 'null' : yamlString(wireValue)}`)
+      }
+    }
+    if (profile.compat !== undefined) {
+      lines.push('            compat:')
+      if (profile.compat.thinkingFormat !== undefined) {
+        lines.push(`              thinkingFormat: ${yamlString(profile.compat.thinkingFormat)}`)
+      }
+      if (profile.compat.supportsReasoningEffort !== undefined) {
+        lines.push(`              supportsReasoningEffort: ${profile.compat.supportsReasoningEffort}`)
+      }
+      if (profile.compat.chatTemplateKwargs !== undefined) {
+        lines.push('              chatTemplateKwargs:')
+        lines.push(...chatTemplateYamlLines(profile.compat.chatTemplateKwargs, 16))
+      }
+      if (profile.compat.chatTemplateArgs !== undefined) {
+        lines.push('              chatTemplateArgs:')
+        lines.push(...chatTemplateYamlLines(profile.compat.chatTemplateArgs, 16))
+      }
+    }
+  }
+  return lines
 }
 
 function yamlString(value: string): string {

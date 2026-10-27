@@ -292,6 +292,45 @@ test('writes saved model formats and same-name effort values into the llm-pi-ai 
   await runtime.dispose()
 })
 
+test('registers the llm-pi-ai route for a custom provider with no saved models and no context window', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+
+  await runtime.start({ ...runtimeOptions(), provider: 'llama-local', model: 'qwen2.5-coder-14b-instruct-q5_k_m' })
+
+  const patchPath = clientOptions?.patches?.[0]
+  assert.ok(patchPath)
+  const patch = await readFile(patchPath, 'utf8')
+  assert.match(patch, /- id: llm-pi-ai\n {2}config:\n {4}providers:\n {6}"llama-local":/ )
+  assert.match(patch, /"llama-local":\n {8}api: openai-completions\n {8}apiKeyEnv: DEEPSEEK_API_KEY\n {8}baseURL: !!js process\.env\.DEEPSEEK_BASE_URL\n {8}models:\n {10}- id: "qwen2\.5-coder-14b-instruct-q5_k_m"\n {12}input: \["text"\]/)
+  await runtime.dispose()
+})
+
+test('keeps the context window on the bare llm-pi-ai route for a custom provider', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+
+  await runtime.start({ ...runtimeOptions(), provider: 'llama-local', contextWindow: 32768 })
+
+  const patchPath = clientOptions?.patches?.[0]
+  assert.ok(patchPath)
+  const patch = await readFile(patchPath, 'utf8')
+  assert.match(patch, /"llama-local":[\s\S]*?defaultContextWindow: 32768\n {8}models:\n {10}- id: "test-model"\n {12}contextWindow: 32768\n {12}input: \["text"\]/)
+  await runtime.dispose()
+})
+
 test('does not send llm-pi-ai model formats through the fixed deepseek-official route', async () => {
   let clientOptions: HarnessClientOptions | undefined
   const runtime = new HarnessRuntime({

@@ -132,7 +132,14 @@ test('the prompt the model is given describes exactly the catalog the renderer c
   for (const name of helixGenUiCatalog.actionNames) assert.ok(text.includes(name), `${name} is not described to the model`)
   assert.ok(text.includes(GEN_UI_TOOL_NAME))
   assert.ok(text.includes('Never print it as prose'), 'the prompt must forbid printing the spec')
-  assert.ok(text.length < 6_000, `the prompt section costs ${text.length} characters`)
+  // The card ends the turn; agents otherwise render one and then write the answer again.
+  assert.ok(text.includes('is the response, not a prelude to one'), 'the prompt must say the card closes the turn')
+  // A card shows data or collects input. Agents drift into writing the answer
+  // inside one, so the prompt states the boundary and the budget that enforces it.
+  assert.ok(text.includes('the shape of the answer, not the answer'), 'the prompt must say a card carries structure, not prose')
+  assert.ok(text.includes('TEXT BUDGET:'), 'the prompt must give a text budget for a card')
+  assert.ok(text.includes('NOT FOR:'), 'the prompt must say what a card is not for')
+  assert.ok(text.length < 7_000, `the prompt section costs ${text.length} characters`)
 })
 
 test('the card tool is a Tools page toggle and is not a config patch line', () => {

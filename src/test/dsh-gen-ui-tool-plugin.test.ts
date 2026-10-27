@@ -36,6 +36,7 @@ test('a card call answers with a count, not with the spec it just sent', async (
   assert.equal(blocks.length, 1)
   assert.match(blocks[0].text, /1 elements/)
   assert.match(blocks[0].text, /Do not repeat/)
+  assert.match(blocks[0].text, /end the turn on it/)
 })
 
 test('a spec the catalog refuses is a tool error the model can act on', async () => {

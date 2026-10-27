@@ -11,11 +11,12 @@
   const ready = $derived(custom.trim().length > 0)
   /** The asker's label travels on the wire; the button says what it does. */
   const approveLabel = $derived(value.question.approveLabel ?? value.question.options[0]?.label ?? 'Approve')
-  const accepted = $derived(value.answer?.selected[0] === approveLabel)
-  const answerText = $derived(value.answer?.custom ?? (accepted ? 'Accept and implement' : optionDisplayLabel(value.answer?.selected[0] ?? '')))
-  const answerDescription = $derived(value.answer?.custom || accepted
-    ? ''
-    : value.question.options.find((option) => option.label === value.answer?.selected[0])?.description ?? '')
+  /** Only a plan review has a single action. A question's first option is a choice like any other. */
+  const accepted = $derived(plan && value.answer?.selected[0] === approveLabel)
+  const chosen = $derived(value.question.options.find((option) => option.label === value.answer?.selected[0]))
+  const answerText = $derived(value.answer?.custom ?? (accepted ? 'Accept and implement' : optionDisplayLabel(chosen?.label ?? value.answer?.selected[0] ?? '')))
+  /** The clicked option's subtext, so the answer reads as the choice it was. */
+  const answerDescription = $derived(accepted || value.answer?.custom ? '' : chosen?.description ?? '')
 
   function submitOption(label: string): void {
     if (!pending || submitting) return
@@ -49,7 +50,6 @@
     <div aria-hidden="true" class="pointer-events-none absolute -inset-[3px] rounded-[10px] p-[3px] blur-[3px] [background-image:linear-gradient(110deg,transparent_20%,color-mix(in_srgb,var(--brand-gold)_35%,transparent)_40%,var(--brand-gold)_50%,color-mix(in_srgb,var(--brand-gold)_35%,transparent)_60%,transparent_80%)] [background-size:250%_100%] [background-position:100%_0] [mask-image:linear-gradient(#000_0_0),linear-gradient(#000_0_0)] [mask-origin:content-box,border-box] [mask-composite:exclude] animate-composer-shimmer opacity-60 motion-reduce:animate-none motion-reduce:[background-position:50%_0]"></div>
   {/if}
   {#if plan}<div class="mb-[4px] text-[10px] tracking-[.08em] uppercase text-[var(--muted-foreground)]">{value.question.header ?? 'Plan review'}</div>{/if}
-  {#if value.question.header && !plan}<div class="mb-[4px] text-[10px] text-[var(--muted-foreground)]">{value.question.header}</div>{/if}
   {#if plan}
     <div class="markdown wrap-anywhere mb-[8px] p-[8px] text-[11px] leading-[1.5] [font-family:inherit]">{@html renderMarkdown(value.question.detail ?? '')}</div>
   {:else}
@@ -63,6 +63,7 @@
         {:else}
           {#each value.question.options as option, index (`${index}:${option.label}`)}
             <button class="btn flex w-full h-auto items-start justify-start rounded-[8px] px-[6px] py-[4px] [font:inherit] text-left whitespace-normal cursor-pointer" data-variant="ghost" type="button" onclick={() => submitOption(option.label)}>
+              <span class="mr-[7px] h-[5px] w-[5px] flex-none self-center rounded-full bg-[color-mix(in_srgb,var(--muted-foreground)_45%,transparent)]" aria-hidden="true"></span>
               <span class="block min-w-0">
                 <span class="flex flex-wrap items-center gap-[6px] [overflow-wrap:anywhere]">{optionDisplayLabel(option.label)}{#if index === 0}<span class="badge px-[5px] py-px text-[9px]" data-variant="secondary">Recommended</span>{/if}</span>
                 {#if option.description}<span class="block mt-[2px] text-[var(--muted-foreground)] [overflow-wrap:anywhere]">{option.description}</span>{/if}
@@ -81,7 +82,7 @@
       {#if submitting}<span class="sr-only" role="status">Sending answer…</span>{/if}
     </form>
   {:else if value.status === 'answered' && value.answer}
-    <p class="m-0 grid gap-[3px] [overflow-wrap:anywhere]"><span class="text-[10px] text-[var(--muted-foreground)]">{plan ? (accepted ? 'Plan accepted' : 'Feedback sent') : 'Your answer'}</span><span class="whitespace-pre-wrap">{answerText}</span>{#if answerDescription}<span class="whitespace-pre-wrap text-[var(--muted-foreground)]">{answerDescription}</span>{/if}</p>
+    <p class="m-0 grid grid-cols-[5px_minmax(0,1fr)] gap-x-[7px] gap-y-[3px] [overflow-wrap:anywhere]"><span class="col-span-2 text-[10px] text-[var(--muted-foreground)]">{plan ? (accepted ? 'Plan accepted' : 'Feedback sent') : 'Answer'}</span><span class="row-start-2 row-span-2 h-[5px] w-[5px] self-center rounded-full bg-[color-mix(in_srgb,var(--muted-foreground)_45%,transparent)]" aria-hidden="true"></span><span class="col-start-2 row-start-2 whitespace-pre-wrap">{answerText}</span>{#if answerDescription}<span class="col-start-2 row-start-3 whitespace-pre-wrap text-[var(--muted-foreground)]">{answerDescription}</span>{/if}</p>
   {:else}
     <p class="m-0 text-[10px] text-[var(--muted-foreground)]" role="status">{value.status === 'unavailable' ? `${plan ? 'Plan review' : 'Question'} unavailable` : plan ? 'Plan review cancelled' : 'Question cancelled'}</p>
   {/if}

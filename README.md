@@ -38,6 +38,8 @@ For custom routes, the chat model picker discovers models from an OpenAI-compati
 
 Saving connection settings automatically starts or restarts the runtime with the new values. The default provider is `deepseek-official` and the default model is `deepseek-flash` (DeepSeek V4.1 Flash in DSH 0.2.1-rc.2). With an empty API URL, inference uses the DSH Messages endpoint; custom OpenAI-compatible routes use the configured provider, API URL, and API key.
 
+Against llama.cpp, set the API URL to the server's OpenAI-compatible root, for example `http://127.0.0.1:8080/v1`, and give the provider route any lowercase hyphenated name. The extension registers that route in the DSH process at startup from these settings, and nothing is shared between machines, so the name, API URL, and key are typed on each machine. Releases up to 0.0.150 registered the route only once the machine's model catalog held an entry, so a fresh VS Code profile answered `no provider with that name`. Fill the catalog from the model picker, which reads `GET /v1/models`, and set the context window to the server's `--ctx-size`. llama.cpp ignores the `Authorization` header, so any non-empty API key passes the route's credential check; an empty key stops the request.
+
 ## Model instructions
 
 Open **Settings → Models** and open a model card. **Model instructions** holds text for that one model: a small local coder that reads whole files instead of searching, a reasoning model that needs an answer length cap, a route where a tool is known to misbehave. The text is saved in the models catalog beside the model ID, context window, and Vision switch, so it follows the model into every workspace. Up to 20,000 characters per model.
@@ -87,7 +89,9 @@ The main agent can call `ask_user_question` to pause its turn and show a questio
 
 ## Interactive UI cards
 
-The main agent can call `show_ui` to draw a card in the conversation: a test-suite dashboard, a comparison table, a list of findings with a button that re-runs them, a form whose button sends the typed text back as a prompt. Cards are built from a fixed catalog of eighteen components (Stack, Grid, Card, Heading, Text, Separator, Badge, Alert, Table, Metric, Progress, CodeBlock, List, ListItem, Button, TextInput, SelectInput, Checkbox) drawn with Basecoat and the VS Code theme, plus six actions: `prompt`, `inject`, `openPath`, `openLink`, `copy`, `dismiss`. A spec that names anything outside the catalog is refused, and the reason goes back to the model as a tool error so it can correct the call.
+The main agent can call `show_ui` to draw a card in the conversation: a test-suite dashboard, a comparison table, a progress board, a picker, a form whose button sends the typed text back as a prompt. Cards are built from a fixed catalog of eighteen components (Stack, Grid, Card, Heading, Text, Separator, Badge, Alert, Table, Metric, Progress, CodeBlock, List, ListItem, Button, TextInput, SelectInput, Checkbox) drawn with Basecoat and the VS Code theme, plus six actions: `prompt`, `inject`, `openPath`, `openLink`, `copy`, `dismiss`. A spec that names anything outside the catalog is refused, and the reason goes back to the model as a tool error so it can correct the call.
+
+A card shows data, or it is a surface the reader acts on. The prompt says so and sets a text budget with it: one heading, two lines of text, one alert, plain fragments in labels and cells, no markdown. The answer itself stays in the reply beside the card.
 
 Buttons act as the user, not as the model. `prompt` starts a turn with the text the card carries, `inject` adds it to the turn that is running, `openPath` opens a file in the editor, `openLink` hands an http(s) URL to VS Code. A card runs no code and renders no HTML: paths and URLs are checked in the extension host against the folders that are open, at the moment you click.
 

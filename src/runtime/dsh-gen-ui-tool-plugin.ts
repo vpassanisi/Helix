@@ -7,7 +7,7 @@ interface GenUiPluginConfig {
 }
 
 const SHOW_UI_DESCRIPTION =
-  'Render a card in the chat from the Helix component catalog: tables, comparisons, dashboards, pickers, checklists, progress, code with actions, forms whose buttons send messages back. Call it with a complete json-render spec. The user sees the card; they do not see this call\u2019s arguments. Only the main agent can render, and only one card per turn.'
+  'Render a card in the chat from the Helix component catalog: metrics, tables, progress, comparisons, statuses, pickers, checklists, forms whose buttons send messages back. Call it with a complete json-render spec. The card carries data and controls, not prose: the explanation goes in your reply before the call. The card is the response, so end the turn on it. The user sees the card; they do not see this call\u2019s arguments. Only the main agent can render, and only one card per turn.'
 
 /**
  * `show_ui`: the model draws with the catalog Helix ships, and Helix renders
@@ -58,7 +58,7 @@ export function apply(ctx: any, config: GenUiPluginConfig = {}): void {
         },
       },
       render: (_args: unknown, value: any) => [
-        { type: 'text', text: `Shown to the user as a card (${String(value?.elements ?? 0)} elements). Do not repeat the card\u2019s content in prose.` },
+        { type: 'text', text: `Shown to the user as a card (${String(value?.elements ?? 0)} elements). Do not repeat the card\u2019s content in prose. The card is your response: end the turn on it, with no text after.` },
       ],
     },
     async execute(args: { spec?: unknown; title?: string }, exec: any) {

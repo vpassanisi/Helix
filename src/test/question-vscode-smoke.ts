@@ -172,7 +172,7 @@ export async function run(): Promise<void> {
     }
     await until(() => bodies.length === 2)
     assert.ok(bodies[1].messages.some((message: any) => message.role === 'tool' && message.content.includes('All projects')))
-    await until(async () => await evaluate('Array.from(document.querySelectorAll("[data-question-request] p")).some((paragraph)=>paragraph.textContent?.includes("Your answer"))'))
+    await until(async () => await evaluate('Array.from(document.querySelectorAll("[data-question-request] p")).some((paragraph)=>paragraph.textContent?.startsWith("Answer"))'))
     assert.equal(controller.questions.length, 0)
     // A second call exercises custom input and draft preservation while waiting.
     await until(async () => await evaluate(`!document.querySelector('button[aria-label="Stop generation"]')`))

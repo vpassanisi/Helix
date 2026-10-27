@@ -240,6 +240,132 @@ export const genUiReleaseNoteForm: GenUiView = {
   },
 }
 
+/**
+ * Code inside a card. The JSON a CodeBlock carries is a plain string prop, so
+ * the card can hand over the very text a button then copies.
+ */
+const mcpConfigJson = `{
+  "mcpServers": {
+    "docs": {
+      "transport": "streamable-http",
+      "url": "http://localhost:3000/mcp",
+      "env": { "DOCS_TOKEN": "" }
+    }
+  }
+}`
+
+export const genUiCodeSnippet: GenUiView = {
+  callId: 'ui-code',
+  title: 'MCP config',
+  status: 'rendered',
+  spec: {
+    root: 'card',
+    elements: {
+      card: { type: 'Card', props: { title: 'Add the docs server', subtitle: 'Helix settings, MCP tab' }, children: ['intro', 'json', 'command', 'actions'] },
+      intro: { type: 'Text', props: { text: 'Paste this block, then start the server.', tone: 'muted' } },
+      json: { type: 'CodeBlock', props: { language: 'json', code: mcpConfigJson } },
+      command: { type: 'CodeBlock', props: { language: 'bash', code: 'npx -y @acme/mcp-docs --port 3000' } },
+      actions: { type: 'Stack', props: { direction: 'horizontal' }, children: ['copy', 'apply'] },
+      copy: { type: 'Button', props: { label: 'Copy the JSON', variant: 'primary' }, on: { press: { action: 'copy', params: { text: mcpConfigJson } } } },
+      apply: { type: 'Button', props: { label: 'Add it for me' }, on: { press: { action: 'prompt', params: { text: 'Add the docs MCP server to my Helix settings.' } } } },
+    },
+  },
+}
+
+const retrySnippet = `const reply = await withRetry(() => harness.send(prompt), {
+  attempts: 3,
+  backoff: 'exponential',
+})`
+
+/** The code example: a snippet to read, the diff that applies it, a patch to copy. */
+export const genUiCodeExample: GenUiView = {
+  callId: 'ui-code-example',
+  title: 'Retry helper',
+  status: 'rendered',
+  spec: {
+    root: 'card',
+    elements: {
+      card: { type: 'Card', props: { title: 'Use the retry helper', subtitle: 'src/runtime/retry.ts' }, children: ['head', 'snippet', 'sep', 'diff', 'note', 'actions'] },
+      head: { type: 'Heading', props: { text: 'Call it like this', level: 'h3' } },
+      snippet: { type: 'CodeBlock', props: { language: 'typescript', code: retrySnippet } },
+      sep: { type: 'Separator', props: { spacing: 'sm' } },
+      diff: { type: 'CodeBlock', props: { language: 'diff', code: `- await harness.send(prompt)\n+ await withRetry(() => harness.send(prompt), {\n+   attempts: 3,\n+ })` } },
+      note: { type: 'Text', props: { text: 'The helper is in runtime already. Long lines scroll sideways.' } },
+      actions: { type: 'Stack', props: { direction: 'horizontal' }, children: ['copy', 'patch'] },
+      copy: { type: 'Button', props: { label: 'Copy the snippet', variant: 'primary' }, on: { press: { action: 'copy', params: { text: retrySnippet } } } },
+      patch: { type: 'Button', props: { label: 'Apply the patch' }, on: { press: { action: 'prompt', params: { text: 'Apply this patch and run the runtime tests.' } } } },
+    },
+  },
+}
+
+const capturedRequestJson = `{
+  "model": "deepseek-v4-flash",
+  "messages": [{ "role": "user", "content": "Why is the composer slow?" }],
+  "reasoning_effort": "high",
+  "tools": [{ "type": "function", "function": { "name": "show_ui", "description": "Render a card", "parameters": { "type": "object", "properties": { "spec": { "type": "object" } }, "required": ["spec"] } } }]
+}`
+
+/** The JSON the agent quotes back: a captured request body, keys read at a glance. */
+export const genUiJsonPayload: GenUiView = {
+  callId: 'ui-payload',
+  title: 'Captured request',
+  status: 'rendered',
+  spec: {
+    root: 'card',
+    elements: {
+      card: { type: 'Card', props: { title: 'Provider request body', subtitle: 'session-1, 18 keys' }, children: ['keys', 'json', 'actions'] },
+      keys: { type: 'Table', props: { caption: 'Top-level keys', columns: ['Key', 'Value'], rows: [['model', 'deepseek-v4-flash'], ['reasoning_effort', 'high'], ['tools', '17']] } },
+      json: { type: 'CodeBlock', props: { language: 'json', code: capturedRequestJson } },
+      actions: { type: 'Stack', props: { direction: 'horizontal' }, children: ['copy', 'badge'] },
+      copy: { type: 'Button', props: { label: 'Copy the body', variant: 'primary' }, on: { press: { action: 'copy', params: { text: capturedRequestJson } } } },
+      badge: { type: 'Badge', props: { label: 'truncated', tone: 'warning' } },
+    },
+  },
+}
+
+/**
+ * A card a real `show_ui` call produced. Kept verbatim: seven of these fourteen
+ * code lines are wider than the sidebar, and the card has an accent tone, so
+ * this is the shape that reads as a highlighted band rather than code.
+ */
+const webhookSchemaJs = `// tenant DB (Echo), collection: webhooks
+{
+  _id: "config",          // singleton per tenant
+  version: 7,             // CAS -> 409 on conflict
+  webhooks: [
+    { id: "01J...",        // stable, referenced by deliveries
+      name: "pagerduty-p1",
+      enabled: true,
+      target: "incident",   // alert | incident
+      match: { names: [], labels: { severity: ["critical"] } },
+      url, secret, template, timeoutMs, retries,
+      createdAt, lastUpdated }
+  ]
+}`
+
+export const genUiWebhookDesign: GenUiView = {
+  callId: 'ui-webhooks',
+  title: 'Webhook config design',
+  status: 'rendered',
+  spec: {
+    root: 'card',
+    elements: {
+      card: { type: 'Card', props: { title: 'Webhook config design', subtitle: 'Recommended: singleton doc, ordered array, RPC hides the embedding', tone: 'accent' }, children: ['doc', 'split', 'layout', 'next'] },
+      doc: { type: 'CodeBlock', props: { language: 'js', code: webhookSchemaJs } },
+      split: { type: 'Separator', props: { spacing: 'md' } },
+      layout: { type: 'Table', props: { caption: 'who reads and writes what', columns: ['Piece', 'Lives in', 'Notes'], rows: [
+        ['Config doc', 'tenant DB on Echo', 'singleton, ordered array'],
+        ['Dipper', 'reader', 'hot path, cache keyed on version'],
+        ['webhook-deliveries', 'tenant DB', 'TTL, index webhookId+createdAt'],
+        ['CRUD RPCs', 'Sky rpc/webhooks', 'tenantDatabase interceptor'],
+        ['Matching', 'Tamarack rules Match', 'reuse the label model'],
+        ['Not on Stagecoach', 'standalone mongo', 'no transactions available'],
+      ] } },
+      next: { type: 'Alert', props: { tone: 'warning', title: 'Decide before schema', text: 'Per-item match plus dedupe per batch, or one dispatch per batch?' } },
+    },
+  },
+}
+
 export const genUiFailed: GenUiView = {
   callId: 'ui-failed',
   title: 'Quarterly report',

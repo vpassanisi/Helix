@@ -71,10 +71,10 @@ export class CompactionHistory {
 
 export function compactionTitle(entry: CompactionEntry): string {
   if (entry.kind === 'prune') return 'Tool results trimmed'
-  if (entry.status === 'running') return 'Compacting conversation…'
+  if (entry.status === 'running') return 'Compacting history'
   if (entry.status === 'failed') return 'Compaction failed'
   if (entry.status === 'interrupted') return 'Compaction interrupted'
-  return 'Conversation compacted'
+  return 'History compacted'
 }
 
 export function compactionDetail(entry: CompactionEntry): string {

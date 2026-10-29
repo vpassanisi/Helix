@@ -51,7 +51,7 @@
   {/if}
   {#if plan}<div class="mb-[4px] text-[10px] tracking-[.08em] uppercase text-[var(--muted-foreground)]">{value.question.header ?? 'Plan review'}</div>{/if}
   {#if plan}
-    <div class="markdown wrap-anywhere mb-[8px] p-[8px] text-[11px] leading-[1.5] [font-family:inherit]">{@html renderMarkdown(value.question.detail ?? '')}</div>
+    <div class="markdown [overflow-wrap:anywhere] mb-[8px] p-[8px] text-[11px] leading-[1.5] [font-family:inherit]">{@html renderMarkdown(value.question.detail ?? '')}</div>
   {:else}
     <p class="m-0 mb-[8px] [overflow-wrap:anywhere] font-semibold" id={`question-${value.requestId}`}>{value.question.question}</p>
   {/if}

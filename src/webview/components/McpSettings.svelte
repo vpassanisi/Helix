@@ -37,7 +37,7 @@
   }
 </script>
 
-<div class="grid gap-[15px]">
+<div class="flex-none grid gap-[15px]">
   <section class="m-0 min-w-0 p-0" aria-labelledby="mcp-settings-title">
     <h3 id="mcp-settings-title" class="mt-0 mb-[5px] text-[11px] font-[650] tracking-[.04em] text-[var(--foreground)]">MCP servers</h3>
     <div class="mt-0 mb-[12px] flex items-start justify-between gap-[10px] [@media(max-width:360px)]:flex-col">
@@ -66,13 +66,13 @@
             </legend>
 
             <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-[10px] [@media(max-width:360px)]:grid-cols-1">
-              <div class="field" role="group">
+              <div class="grid gap-1.5" role="group">
                 <label for={`mcp-name-${serverIndex}`}>Server name</label>
                 <input id={`mcp-name-${serverIndex}`} class="input" bind:value={server.serverName} placeholder="Server name" autocomplete="off" />
                 <small class="block!">Used in tool names</small>
               </div>
 
-              <div class="field" role="group">
+              <div class="grid gap-1.5" role="group">
                 <label for={`mcp-transport-${serverIndex}`}>Transport</label>
                 <select id={`mcp-transport-${serverIndex}`} class="select" bind:value={server.transport}>
                   <option value="stdio">Local process / Docker</option>
@@ -82,19 +82,19 @@
             </div>
 
             {#if server.transport === 'stdio'}
-              <div class="field" role="group">
+              <div class="grid gap-1.5" role="group">
                 <label for={`mcp-command-${serverIndex}`}>Command</label>
                 <input id={`mcp-command-${serverIndex}`} class="input" bind:value={server.command} placeholder="Executable or path" autocomplete="off" />
                 <small class="block!">DSH starts this command when the runtime starts.</small>
               </div>
 
-              <div class="field" role="group">
+              <div class="grid gap-1.5" role="group">
                 <label for={`mcp-args-${serverIndex}`}>Arguments</label>
                 <textarea id={`mcp-args-${serverIndex}`} class="textarea min-h-[76px] resize-y text-[11px]! leading-[1.45]! [font-family:var(--vscode-editor-font-family,monospace)]!" bind:value={server.argsText} rows="4"></textarea>
                 <small class="block!">One argument per line.</small>
               </div>
             {:else}
-              <div class="field" role="group">
+              <div class="grid gap-1.5" role="group">
                 <label for={`mcp-url-${serverIndex}`}>MCP URL</label>
                 <input id={`mcp-url-${serverIndex}`} class="input" type="url" bind:value={server.url} placeholder="http://localhost:3000/mcp" autocomplete="off" />
               </div>

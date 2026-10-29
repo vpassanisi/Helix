@@ -34,13 +34,9 @@
     return 'text-[var(--muted-foreground)]'
   }
 
-  function changeSummaryLabel(): string {
-    const fileLabel = `${changes.length} ${changes.length === 1 ? 'file' : 'files'}`
-    const additions = changes.reduce((total, change) => total + change.additions, 0)
-    const deletions = changes.reduce((total, change) => total + change.deletions, 0)
-    if (additions === 0 && deletions === 0) return `${fileLabel} changed`
-    return `${fileLabel} · +${additions} −${deletions}`
-  }
+  const fileLabel = $derived(`${changes.length} ${changes.length === 1 ? 'file' : 'files'}`)
+  const additions = $derived(changes.reduce((total, change) => total + change.additions, 0))
+  const deletions = $derived(changes.reduce((total, change) => total + change.deletions, 0))
 </script>
 
 <section
@@ -57,9 +53,13 @@
     <span class="inline-flex flex-none items-center gap-[5px] text-[10px] font-semibold text-[var(--foreground)]">
       <FileDiff size={13} strokeWidth={1.8} />
       <span>Changes</span>
-      <span class="inline-grid h-[16px] min-w-[16px] place-items-center rounded-full bg-[var(--secondary)] px-[4px] py-0 text-[9px] font-medium text-[var(--muted-foreground)]">{changes.length}</span>
     </span>
-    <span class="min-w-0 truncate text-[10px] text-[var(--muted-foreground)]">{changeSummaryLabel()}</span>
+    <span class="min-w-0 truncate text-[10px] text-[var(--muted-foreground)]">
+      {additions === 0 && deletions === 0 ? `${fileLabel} changed` : `${fileLabel} · `}
+      {#if additions > 0}<span class="text-[var(--tool-completed-border)]">+{additions}</span>{/if}
+      {#if additions > 0 && deletions > 0}<span aria-hidden="true"> </span>{/if}
+      {#if deletions > 0}<span class="text-[var(--tool-failed-border)]">−{deletions}</span>{/if}
+    </span>
     <ChevronDown class={`ml-auto flex-none transition-transform duration-[180ms] ease-[ease] motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} size={13} strokeWidth={1.8} />
   </button>
   <div class={`grid [transition:grid-template-rows_.2s_ease,opacity_.15s_ease] motion-reduce:transition-none ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>

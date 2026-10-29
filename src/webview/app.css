@@ -21,77 +21,14 @@
   color: var(--foreground);
 }
 
-* { box-sizing: border-box; }
-
-html, body, #app { min-width: 240px; min-height: 100%; height: 100%; margin: 0; }
+html, body, #app { min-width: 240px; min-height: 100%; height: 100%; }
 body { overflow: hidden; background: var(--background); color: var(--foreground); }
-button, input, textarea { font: inherit; }
-button { color: inherit; }
 
-.shell { display: flex; flex-direction: column; min-height: 100%; height: 100%; background: var(--background); }
-.masthead { padding: 4px 14px; border-bottom: 1px solid var(--border); }
-.title-row { position: relative; display: flex; min-height: 27px; align-items: center; justify-content: flex-start; gap: 10px; }
-.title-copy { display: flex; min-width: 0; align-items: center; gap: 9px; }
-@layer base { h1, h2, p { margin: 0; } }
-.title-copy h1 { color: var(--brand-gold); font-size: 17px; line-height: 1.05; letter-spacing: -.035em; font-weight: 650; }
-.title-actions { display: flex; align-items: center; }
-.title-actions { position: absolute; top: 50%; right: 0; gap: 4px; transform: translateY(-50%); }
-.composer-tooltip::before { width: max-content; max-width: calc(100vw - 28px); overflow: visible; white-space: normal; text-overflow: clip; font-weight: 400; text-align: start; }
-.icon-button { width: 28px; height: 27px; padding: 0; }
-.settings-dropdown { position: relative; }
-.settings-dropdown > [data-popover] { z-index: 50; min-width: 180px; padding: 4px; }
-.settings-dropdown [role='menu'] { display: grid; gap: 2px; }
-.settings-dropdown [role='menuitem'] { min-height: 29px; padding: 6px 8px; border: 0; border-radius: 4px; color: var(--foreground); background: transparent; font-size: 11px; font-weight: 400; text-align: left; cursor: pointer; }
-.settings-dropdown [role='menuitem']:hover, .settings-dropdown [role='menuitem'].active { color: var(--foreground); background: var(--accent); }
-.btn { transition: border-color .15s ease, background-color .15s ease, color .15s ease, opacity .15s ease; }
-.btn:hover:not(:disabled) { border-color: #626262; }
-.btn:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 1px solid var(--ring); outline-offset: 2px; }
-.btn:disabled { cursor: not-allowed; opacity: .42; }
-
-.chat-view { display: flex; flex: 1; min-height: 0; flex-direction: column; }
-.transcript { flex: 1; min-height: 0; overflow: auto; padding: 16px 14px 8px; scrollbar-color: #30363c transparent; }
-.message { margin: 0 0 14px; animation: enter .18s ease-out both; }
-@keyframes enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
-.message-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
-.message.user .message-body { margin-left: 33.3333%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--composer); }
-.message.assistant .message-body { padding: 0 10px; }
-.markdown { overflow-wrap: anywhere; white-space: normal; line-height: 1.45; }
-.markdown > :first-child { margin-top: 0; }
-.markdown > :last-child { margin-bottom: 0; }
-.markdown p { margin: 0 0 8px; }
-.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 14px 0 6px; color: var(--foreground); line-height: 1.25; letter-spacing: -.02em; }
-.markdown h1 { font-size: 1.25em; }
-.markdown h2 { font-size: 1.15em; }
-.markdown h3 { font-size: 1.05em; }
-.markdown h4 { font-size: 1em; }
-.markdown ul, .markdown ol { margin: 6px 0 8px; padding-left: 22px; }
-.markdown li { margin: 2px 0; }
-.markdown li > p { margin-bottom: 5px; }
-.markdown blockquote { margin: 8px 0; padding: 2px 0 2px 12px; border-left: 2px solid #555; color: var(--muted-foreground); }
-.markdown a { color: #d5d5d5; text-decoration: underline; text-decoration-color: #666; text-underline-offset: 3px; }
-.markdown a:hover { color: var(--foreground); text-decoration-color: #aaa; }
-.markdown code { padding: 2px 4px; border: 1px solid #303840; border-radius: 4px; color: #e2e2e2; background: var(--secondary); font-family: var(--vscode-editor-font-family, monospace); font-size: .92em; }
-.markdown pre { max-width: 100%; margin: 8px 0; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: #0b0b0b; }
-.markdown pre code { display: block; padding: 11px 12px; overflow-wrap: normal; border: 0; border-radius: 0; background: transparent; color: #d8d8d8; font-size: 11px; line-height: 1.5; white-space: pre; }
-.markdown table { display: block; max-width: 100%; margin: 8px 0; overflow-x: auto; border-collapse: collapse; font-size: 11px; }
-.markdown th, .markdown td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
-.markdown th { color: var(--foreground); background: var(--secondary); font-weight: 650; }
-.markdown td { color: #d0d0d0; }
-.markdown hr { margin: 16px 0; border: 0; border-top: 1px solid var(--border); }
-.markdown img { max-width: 100%; }
-.message.reasoning { padding: 0 10px; color: var(--muted-foreground); font-size: 11px; }
-.message.activity { padding-left: 10px; border-left: 1px solid var(--border); color: var(--muted-foreground); font-size: 11px; }
-.message.activity.waiting-for-response { display: flex; min-height: 18px; align-items: center; gap: 7px; }
-.message.tool { padding: 0 10px; color: var(--muted-foreground); font-size: 11px; }
-
-/* A run command keeps the line the user typed, with its `/name` in composer gold. */
-.message-command-token { color: var(--brand-gold); }
-/* A plan mode switch, marked by a rule whose label sits in the middle and whose line reaches both edges. */
-.message.divider { margin: 4px 0 18px; }
-.mode-rule { display: flex; align-items: center; gap: 9px; padding: 0 10px; color: color-mix(in srgb, var(--brand-gold) 82%, var(--muted-foreground)); font-size: 9px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; white-space: nowrap; }
-.mode-rule::before, .mode-rule::after { content: ''; flex: 1 1 0; min-width: 12px; height: 1px; }
-.mode-rule::before { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--brand-gold) 42%, var(--border))); }
-.mode-rule::after { background: linear-gradient(90deg, color-mix(in srgb, var(--brand-gold) 42%, var(--border)), transparent); }
+/* A shared focus ring for form controls that do not opt into `btn`. */
+input:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 2px;
+}
 
 @theme {
   --animate-composer-shimmer: composer-shimmer 3.6s ease-in-out infinite alternate;
@@ -100,64 +37,67 @@ button { color: inherit; }
     to { background-position: 0% 0; }
   }
   --animate-changes-panel-in: changes-panel-in .18s ease-out both;
-  --animate-thinking-edge: thinking-edge 3.7s ease-in-out infinite alternate;
-  @keyframes thinking-edge { from { background-position: 0 100%; } to { background-position: 0 0%; } }
-  --animate-thinking-shimmer: thinking-shimmer 2.8s ease-in-out infinite alternate;
-  @keyframes thinking-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
   @keyframes changes-panel-in {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
   }
+  --animate-thinking-edge: thinking-edge 3.7s ease-in-out infinite alternate;
+  @keyframes thinking-edge { from { background-position: 0 100%; } to { background-position: 0 0%; } }
+  --animate-thinking-shimmer: thinking-shimmer 2.8s ease-in-out infinite alternate;
+  @keyframes thinking-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+  --animate-enter: enter .18s ease-out both;
+  @keyframes enter {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  --animate-command-menu-in: command-menu-in .12s ease-out;
+  @keyframes command-menu-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  --animate-compaction-rule-pulse: compaction-rule-pulse 1.6s ease-in-out infinite;
+  @keyframes compaction-rule-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 }
-.context-chip { display: flex; align-items: center; width: fit-content; max-width: 100%; gap: 8px; margin-bottom: 8px; padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted-foreground); background: var(--composer); font-size: 11px; }
-.message-context { display: flex; align-items: center; width: fit-content; max-width: 66.6667%; gap: 6px; min-width: 0; margin: 0 auto 5px 33.3333%; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted-foreground); background: var(--composer); font-size: 10px; }
-.message-context-file { min-width: 0; overflow: hidden; color: #cfcfcf; text-overflow: ellipsis; white-space: nowrap; }
-.message-context-lines { flex: 0 0 auto; color: #8f8f8f; white-space: nowrap; }
-.model-refresh { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 25px; height: 27px; padding: 0; border: 0; color: var(--muted-foreground); }
-.model-refresh:hover:not(:disabled) { color: var(--foreground); background: var(--color-muted, var(--muted)); }
 
-.settings-view { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 20px; display: flex; flex-direction: column; }
-/* A page that takes the height the shell has left, so it scrolls inside itself. */
-.settings-view > .settings-fill { flex: 1 1 auto; min-height: 0; }
-.settings-view > :not(.settings-fill) { flex: none; }
-.settings-heading { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 9px; margin: 0 -14px 18px; padding: 4px 14px; border-bottom: 1px solid var(--border); background: var(--background); }
-.settings-heading h2 { margin: 0; font-size: 16px; letter-spacing: -.025em; }
-.settings-heading p { color: var(--muted-foreground); font-size: 11px; line-height: 1.45; }
-.settings-page-content { display: grid; min-width: 0; gap: 15px; }
-.field { display: grid; gap: 6px; }
-.field label { color: var(--muted-foreground); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-.field small { display: flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 10px; line-height: 1.4; }
-.settings-status { min-height: 30px; margin-top: 14px; color: var(--muted-foreground); font-size: 10px; line-height: 1.45; }
-.settings-status.success { color: #cfcfcf; }
-.settings-status.warning { color: #d0d0d0; }
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+/* A button's shared behaviour: a soft transition, a hover border, a visible
+   focus ring, and a dimmed disabled state. */
+@utility btn {
+  transition: border-color .15s ease, background-color .15s ease, color .15s ease, opacity .15s ease;
+  &:hover:not(:disabled) { border-color: #626262; }
+  &:focus-visible { outline: 1px solid var(--ring); outline-offset: 2px; }
+  &:disabled { cursor: not-allowed; opacity: .42; }
+}
 
-/* Composer slash commands.
- * The draft is a contenteditable document: a resolved command is a span, the
- * caret is where the popup opens. Nothing mirrors the text, so there is no
- * second layer whose box metrics have to be kept in step. */
-.composer-input { position: relative; }
-.composer-prompt { min-height: 48px; max-height: 180px; padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5); overflow-y: auto; font: inherit; color: var(--foreground); white-space: pre-wrap; overflow-wrap: break-word; word-break: normal; caret-color: var(--foreground); cursor: text; outline: none; }
-.composer-prompt:empty::before { content: attr(data-placeholder); color: var(--muted-foreground); }
-.composer-prompt[contenteditable="false"] { opacity: .55; cursor: default; }
-/* Gold only, never bold: a wider glyph moves the caret the popup is anchored to. */
-.composer-command-token { color: var(--brand-gold); }
-
-/* The command popup: Basecoat's Command surface, driven by the composer. */
-.composer-command-menu { --command-menu-width: min(340px, 100%); width: var(--command-menu-width); gap: 2px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--popover); box-shadow: 0 14px 34px -14px rgb(0 0 0 / .7); animation: command-menu-in .12s ease-out; }
-@media (prefers-reduced-motion: reduce) { .composer-command-menu { animation: none; } }
-@keyframes command-menu-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-.composer-command-head { display: flex; align-items: center; gap: 5px; padding: 3px 6px 4px; color: var(--muted-foreground); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
-.composer-command-count { flex: 1; text-align: right; font-variant-numeric: tabular-nums; }
-.composer-command-list { max-height: 216px; }
-.composer-command-list[role="menu"]::before { padding: 8px 6px; color: var(--muted-foreground); font-size: 10px; }
-.composer-command-row { display: grid; grid-template-columns: auto auto minmax(0,1fr) auto; align-items: center; gap: 6px; width: 100%; padding: 5px 6px; border: 0; border-radius: 5px; background: transparent; text-align: left; font-size: 10px; }
-.composer-command-row .composer-command-name { color: var(--brand-gold); font-weight: 600; white-space: nowrap; }
-.composer-command-row .composer-command-hint { color: var(--muted-foreground); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.composer-command-row .composer-command-description { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
-.composer-command-row[aria-selected="true"] .composer-command-description { color: var(--foreground); }
-.composer-command-key { display: inline-flex; }
-.composer-command-menu [role="menuitem"][data-selected="true"] { background: var(--accent); color: var(--foreground); }
-.composer-command-menu [role="menuitem"]:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 65%, transparent); }
-.composer-command-menu [role="menuitem"]:disabled { opacity: .5; }
+/* Element-level styling for markdown rendered from model output. Kept as one
+   utility (rather than per-element arbitrary-variant classes) so the whole
+   subtree is always bundled: on-demand detection is reliable for a plain
+   class name, and a missing token would silently fall back to browser
+   margins. */
+@utility markdown {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.45;
+  > :first-child { margin-top: 0; }
+  > :last-child { margin-bottom: 0; }
+  p { margin: 0 0 8px; }
+  h1, h2, h3, h4 { margin: 14px 0 6px; color: var(--foreground); line-height: 1.25; letter-spacing: -.02em; }
+  h1 { font-size: 1.25em; }
+  h2 { font-size: 1.15em; }
+  h3 { font-size: 1.05em; }
+  h4 { font-size: 1em; }
+  ul, ol { margin: 6px 0 8px; padding-left: 22px; }
+  li { margin: 2px 0; }
+  li > p { margin-bottom: 5px; }
+  blockquote { margin: 8px 0; padding: 2px 0 2px 12px; border-left: 2px solid #555; color: var(--muted-foreground); }
+  a { color: #d5d5d5; text-decoration: underline; text-decoration-color: #666; text-underline-offset: 3px; }
+  a:hover { color: var(--foreground); text-decoration-color: #aaa; }
+  code { padding: 2px 4px; border: 1px solid #303840; border-radius: 4px; color: #e2e2e2; background: var(--secondary); font-family: var(--vscode-editor-font-family, monospace); font-size: .92em; }
+  pre { max-width: 100%; margin: 8px 0; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); background: #0b0b0b; }
+  pre code { display: block; padding: 11px 12px; overflow-wrap: normal; border: 0; border-radius: 0; background: transparent; color: #d8d8d8; font-size: 11px; line-height: 1.5; white-space: pre; }
+  table { display: block; max-width: 100%; margin: 8px 0; overflow-x: auto; border-collapse: collapse; font-size: 11px; }
+  th, td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { color: var(--foreground); background: var(--secondary); font-weight: 650; }
+  td { color: #d0d0d0; }
+  hr { margin: 16px 0; border: 0; border-top: 1px solid var(--border); }
+  img { max-width: 100%; }
+}

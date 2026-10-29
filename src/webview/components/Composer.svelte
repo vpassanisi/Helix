@@ -58,7 +58,7 @@
   export function focus(): void { promptInput?.focus() }
 </script>
 
-<div class="px-[14px] pt-0 pb-[14px]">
+<div class="composer-root px-[14px] pt-0 pb-[14px]">
   {#if skillPickerEnabled}
     <SkillsDrawer {skills} suggestions={skillSuggestions} overrides={skillOverrides} disabled={submissionPending} error={skillError} onoverride={(value) => { skillOverrides = value }} />
   {/if}
@@ -101,7 +101,7 @@
       {/if}
       <ComposerModelPicker {models} {model} {reasoningEffort} {modelChanging} {modelOptionLabel} {onModelSelect} {onReasoningEffortSelect} />
       <span id="send-context-description" class="sr-only">{contextLabel}</span>
-      <span class="composer-tooltip inline-grid flex-none place-items-center rounded-[calc(var(--radius-md)+2px)] p-[2px] [background:conic-gradient(from_315deg,#d7d7d7_var(--context-progress),#292e33_0)]" style={`--context-progress: ${contextProgress}%`} data-tooltip={contextLabel} data-side="top" data-align="end">
+      <span class="inline-grid flex-none place-items-center rounded-[calc(var(--radius-md)+2px)] p-[2px] [background:conic-gradient(from_315deg,#d7d7d7_var(--context-progress),#292e33_0)] before:w-max before:max-w-[calc(100vw-28px)] before:overflow-visible before:whitespace-normal before:[text-overflow:clip] before:font-normal before:text-start" style={`--context-progress: ${contextProgress}%`} data-tooltip={contextLabel} data-side="top" data-align="end">
         <button class="btn inline-flex items-center justify-center border border-[#171b1f] bg-[var(--primary)] font-[650]! text-[var(--primary-foreground)]! disabled:bg-[color-mix(in_srgb,var(--primary)_42%,#292e33)] disabled:text-[color-mix(in_srgb,var(--primary-foreground)_42%,#292e33)]! disabled:opacity-100!" data-size="icon-sm" type="button" aria-label={isGenerating || waitingForAnswer ? 'Stop generation' : 'Send message'} aria-describedby="send-context-description" onclick={onSubmit} disabled={!isGenerating && !waitingForAnswer && !prompt.trim()}>
           {#if isGenerating || waitingForAnswer}<Square size={13} strokeWidth={1.8} />{:else}<ArrowUp size={14} strokeWidth={1.8} />{/if}
         </button>

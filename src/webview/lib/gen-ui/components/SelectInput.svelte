@@ -13,7 +13,7 @@
   const selected = $derived(getBoundProp<string>(() => props.value, () => bindings?.value))
 </script>
 
-<div class="field">
+<div class="grid gap-1.5">
   {#if props.label}
     <label>
       <span>{props.label}</span>

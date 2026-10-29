@@ -3,7 +3,7 @@
   let { info }: { info?: ExtensionInfo } = $props()
 </script>
 
-<div class="card min-w-0 shadow-none" data-size="sm">
+<div class="card flex-none min-w-0 shadow-none" data-size="sm">
   <header>
     <h3 class="text-[var(--brand-gold)] text-[18px] font-[650] tracking-[-0.03em]">{info?.name ?? 'Helix'}</h3>
     <p class="max-w-[38ch] text-[var(--muted-foreground)] text-[11px] leading-[1.6]">A coding assistant for VS Code, powered by DeepSeek Harness. Works with hosted and local models.</p>

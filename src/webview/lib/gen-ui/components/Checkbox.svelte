@@ -12,7 +12,7 @@
   const checked = $derived(getBoundProp<boolean>(() => props.checked, () => bindings?.checked))
 </script>
 
-<div class="field" data-orientation="horizontal">
+<div class="grid gap-1.5" data-orientation="horizontal">
   <label>
     <input
       type="checkbox"
@@ -24,10 +24,9 @@
 </div>
 
 <style>
-  /* app.css styles `.field label` as an uppercase caption, which suits a
-     text field's label and reads as shouting for a choice. The selector carries
-     `.field` so it outranks that rule rather than racing it on source order. */
-  .field label {
+  /* A checkbox label is a choice, not a caption: keep it sentence-cased and
+     on one line with the control. */
+  label {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -37,7 +36,7 @@
     text-transform: none;
   }
 
-  .field input[type='checkbox'] {
+  input[type='checkbox'] {
     flex: none;
     width: 13px;
     height: 13px;

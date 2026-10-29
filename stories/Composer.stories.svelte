@@ -4,7 +4,9 @@
   import type { ComponentProps } from 'svelte'
   import Composer from '../src/webview/components/Composer.svelte'
   import Preview from './previews/ComposerPreview.svelte'
-  import { models, modelOptionLabel, changes, attachments, skills, suggestions } from './fixtures.js'
+  import { models, modelOptionLabel, changes, attachments, skills, suggestions, historyMessages } from './fixtures.js'
+  import type { ChatMessage } from '../src/webview/types.js'
+  type Args = ComponentProps<typeof Composer> & { messages?: ChatMessage[] }
   const { Story } = defineMeta({
     title: 'Chat/Composer', component: Composer, render: template,
     args: {
@@ -18,11 +20,12 @@
   })
 </script>
 
-{#snippet template(args: ComponentProps<typeof Composer>)}
+{#snippet template(args: Args)}
   <Preview {args} />
 {/snippet}
 
 <Story name="Ready" />
+<Story name="With history" args={{ messages: historyMessages, prompt: '' }} />
 <Story name="Empty" args={{ prompt: '' }} />
 <Story name="Generating" args={{ isGenerating: true, prompt: '' }} />
 <Story name="Waiting for answer" args={{ isGenerating: true, waitingForAnswer: true }} />

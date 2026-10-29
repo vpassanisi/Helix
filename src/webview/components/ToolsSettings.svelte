@@ -43,7 +43,7 @@
   }
 </script>
 
-<form class="grid gap-[15px]" onsubmit={(event) => { event.preventDefault(); if (dirty && !saving) onSave() }}>
+<form class="flex-none grid gap-[15px]" onsubmit={(event) => { event.preventDefault(); if (dirty && !saving) onSave() }}>
   <p class="m-0 max-w-[46ch] text-[var(--muted-foreground)] text-[11px] leading-[1.55]">
     Tools are the capabilities the assistant can call during a turn. Switch one off to leave it out of the runtime, which keeps it out of every request and off the model&rsquo;s token bill.
   </p>

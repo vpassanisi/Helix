@@ -29,12 +29,14 @@
         title="New session"
         aria-label="New session"
         onclick={onNewSession}
-        class="btn icon-button"
+        class="btn h-[27px] w-[28px] p-0"
         data-variant="ghost"
         data-size="icon" >
         <Plus size={15} strokeWidth={1.8} />
       </button>
-      <div class="dropdown-menu settings-dropdown">
+      <div
+        class="dropdown-menu [&>[data-popover]]:z-50 [&>[data-popover]]:min-w-[180px] [&>[data-popover]]:p-1 [&_[role='menu']]:grid [&_[role='menu']]:gap-0.5 [&_[role='menuitem']]:min-h-[29px] [&_[role='menuitem']]:cursor-pointer [&_[role='menuitem']]:rounded [&_[role='menuitem']]:border-0 [&_[role='menuitem']]:bg-transparent [&_[role='menuitem']]:px-2 [&_[role='menuitem']]:py-1.5 [&_[role='menuitem']]:text-left [&_[role='menuitem']]:text-[11px] [&_[role='menuitem']]:font-normal [&_[role='menuitem']]:text-[var(--foreground)] [&_[role='menuitem']:hover]:bg-[var(--accent)] [&_[role='menuitem']:hover]:text-[var(--foreground)] [&_[role='menuitem'].active]:bg-[var(--accent)] [&_[role='menuitem'].active]:text-[var(--foreground)]"
+      >
         <button
           type="button"
           id="settings-menu-trigger"
@@ -43,20 +45,20 @@
           aria-haspopup="menu"
           aria-controls="settings-menu-list"
           aria-expanded="false"
-          class="btn icon-button"
+          class="btn h-[27px] w-[28px] p-0"
           data-variant="ghost"
           data-size="icon">
           <Settings2 size={15} strokeWidth={1.8} />
         </button>
         <div id="settings-menu-popover" data-popover data-side="bottom" data-align="end" aria-hidden="true">
           <div role="menu" id="settings-menu-list" aria-labelledby="settings-menu-trigger" aria-label="Settings pages">
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('connection')}>Connection Settings</button>
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('models')}>Models</button>
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('tools')}>Tools</button>
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('mcp')}>MCP Servers</button>
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('preview')}>Request Previewer</button>
+            <button type="button" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('connection')}>Connection Settings</button>
+            <button type="button" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('models')}>Models</button>
+            <button type="button" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('tools')}>Tools</button>
+            <button type="button" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('mcp')}>MCP Servers</button>
+            <button type="button" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('preview')}>Request Previewer</button>
             <hr />
-            <button type="button" class="settings-menu-item" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('about')}>About Helix</button>
+            <button type="button" role="menuitem" tabindex="-1" onclick={() => onOpenSettings('about')}>About Helix</button>
           </div>
         </div>
       </div>

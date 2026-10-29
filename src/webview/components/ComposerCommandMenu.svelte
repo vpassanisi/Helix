@@ -23,7 +23,7 @@
 <!-- The mousedown is a focus guard, not an interaction: the rows are the buttons. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
-  class="command composer-command-menu absolute z-40"
+  class="command absolute z-40 [--command-menu-width:min(340px,100%)] w-[var(--command-menu-width)] gap-0.5 p-1 border border-[var(--border)] rounded-lg bg-[var(--popover)] shadow-[0_14px_34px_-14px_rgb(0_0_0/0.7)] animate-command-menu-in motion-reduce:animate-none [&_[role='menuitem'][data-selected='true']]:bg-[var(--accent)] [&_[role='menuitem'][data-selected='true']]:text-[var(--foreground)] [&_[role='menuitem']:hover:not(:disabled)]:bg-[color-mix(in_srgb,var(--accent)_65%,transparent)] [&_[role='menuitem']:disabled]:opacity-50"
   id="composer-command-menu"
   role="group"
   aria-label="Composer commands"
@@ -34,20 +34,20 @@
     event.preventDefault()
   }}
 >
-  <header class="composer-command-head">
+  <header class="flex items-center gap-[5px] px-[6px] pt-[3px] pb-[4px] text-[var(--muted-foreground)] text-[9px] tracking-[.08em] uppercase">
     <Terminal size={12} strokeWidth={1.8} aria-hidden="true" />
     <span>Commands</span>
-    <span class="composer-command-count">{items.length}</span>
+    <span class="flex-1 text-right tabular-nums">{items.length}</span>
   </header>
   <div
-    class="composer-command-list"
+    class="max-h-[216px] before:px-[6px] before:py-2 before:text-[var(--muted-foreground)] before:text-[10px]"
     role="menu"
     aria-label="Available commands"
     data-empty={message}
   >
     {#each items as command, index (command.name)}
       <button
-        class="composer-command-row"
+        class="grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-1.5 border-0 rounded-[5px] bg-transparent px-[6px] py-[5px] text-left text-[10px]"
         id={rowId(command)}
         type="button"
         role="menuitem"
@@ -59,10 +59,10 @@
         onmouseenter={() => onhover(index)}
         onfocus={() => onhover(index)}
       >
-        <span class="composer-command-name">/{command.name}</span>
-        {#if command.hint}<span class="composer-command-hint">{command.hint}</span>{/if}
-        <span class="composer-command-description">{command.description}</span>
-        {#if index === active}<span class="composer-command-key" data-shortcut><kbd class="kbd">Tab</kbd></span>{/if}
+        <span class="font-semibold whitespace-nowrap text-[var(--brand-gold)]">/{command.name}</span>
+        {#if command.hint}<span class="whitespace-nowrap tabular-nums text-[var(--muted-foreground)]">{command.hint}</span>{/if}
+        <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--muted-foreground)] [[data-selected]_&]:text-[var(--foreground)]">{command.description}</span>
+        {#if index === active}<span class="inline-flex" data-shortcut><kbd class="kbd">Tab</kbd></span>{/if}
       </button>
     {/each}
   </div>

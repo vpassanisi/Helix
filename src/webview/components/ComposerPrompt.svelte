@@ -28,6 +28,18 @@
     placeholder = 'Ask about your code...', onSubmit,
   }: Props = $props()
 
+  /** The contenteditable draft box; a disabled draft reads dim and inert. */
+  const promptClass = $derived(
+    [
+      'min-h-12 max-h-[180px] overflow-y-auto font-inherit text-[var(--foreground)]',
+      'p-[calc(var(--spacing)*2)] px-[calc(var(--spacing)*2.5)]',
+      'whitespace-pre-wrap [overflow-wrap:break-word] [word-break:normal]',
+      'caret-[var(--foreground)] cursor-text outline-none',
+      'empty:before:content-[attr(data-placeholder)] empty:before:text-[var(--muted-foreground)]',
+      disabled ? 'opacity-[.55] cursor-default' : '',
+    ].filter(Boolean).join(' '),
+  )
+
   /** The positioned box the command popup opens against. */
   let fieldElement = $state<HTMLDivElement>()
   let editorElement = $state<HTMLDivElement>()
@@ -164,7 +176,7 @@
   }
 </script>
 
-<div class="composer-input" bind:this={fieldElement}>
+<div class="relative" bind:this={fieldElement}>
   {#if commands.open}
     <ComposerCommandMenu
       items={commands.matches}
@@ -177,7 +189,7 @@
     />
   {/if}
   <div
-    class="composer-prompt"
+    class={promptClass}
     bind:this={editorElement}
     role="textbox"
     aria-multiline="true"

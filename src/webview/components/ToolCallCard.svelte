@@ -79,7 +79,7 @@
     {#if tool.status !== 'preparing'}
       <div>
         <div class="mb-[5px] text-[10px] tracking-[.08em] text-[#8f8f8f] uppercase">Arguments</div>
-        <pre class="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap text-[10px] leading-[1.5] wrap-anywhere text-[#d0d0d0] [font-family:var(--vscode-editor-font-family,monospace)]">{formatToolArguments(tool.arguments)}</pre>
+        <pre class="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap text-[10px] leading-[1.5] [overflow-wrap:anywhere] text-[#d0d0d0] [font-family:var(--vscode-editor-font-family,monospace)]">{formatToolArguments(tool.arguments)}</pre>
       </div>
     {:else}
       <div>Generating tool request…</div>
@@ -87,19 +87,19 @@
     {#if tool.result}
       <div>
         <div class="mb-[5px] text-[10px] tracking-[.08em] text-[#8f8f8f] uppercase">Result</div>
-        <div class="markdown m-0 max-h-[220px] overflow-auto whitespace-pre-wrap! text-[11px] leading-[1.5]! wrap-anywhere text-[#d0d0d0] [font-family:inherit]">{@html renderMarkdown(tool.result)}</div>
+        <div class="markdown m-0 max-h-[220px] overflow-auto whitespace-pre-wrap! text-[11px] leading-[1.5]! [overflow-wrap:anywhere] text-[#d0d0d0] [font-family:inherit]">{@html renderMarkdown(tool.result)}</div>
       </div>
     {/if}
     {#if tool.meta}
       <div>
         <div class="mb-[5px] text-[10px] tracking-[.08em] text-[#8f8f8f] uppercase">Metadata</div>
-        <pre class="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap text-[10px] leading-[1.5] wrap-anywhere text-[#d0d0d0] [font-family:var(--vscode-editor-font-family,monospace)]">{tool.meta}</pre>
+        <pre class="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap text-[10px] leading-[1.5] [overflow-wrap:anywhere] text-[#d0d0d0] [font-family:var(--vscode-editor-font-family,monospace)]">{tool.meta}</pre>
       </div>
     {/if}
     {#if tool.error}
       <div>
         <div class="mb-[5px] text-[10px] tracking-[.08em] text-[#8f8f8f] uppercase">Error</div>
-        <div class="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap text-[10px] leading-[1.5] wrap-anywhere text-[#d4d4d4] [font-family:var(--vscode-editor-font-family,monospace)]">{tool.error}</div>
+        <div class="m-0 max-h-[220px] overflow-auto whitespace-pre-wrap text-[10px] leading-[1.5] [overflow-wrap:anywhere] text-[#d4d4d4] [font-family:var(--vscode-editor-font-family,monospace)]">{tool.error}</div>
       </div>
     {/if}
   </div>

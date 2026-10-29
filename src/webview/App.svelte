@@ -282,7 +282,7 @@
 
 </script>
 
-<main class="shell">
+<main class="flex h-full min-h-full flex-col bg-[var(--background)]">
   <Masthead
     onNewSession={startNewSession}
     onOpenSettings={openSettings}
@@ -356,7 +356,7 @@
       {/if}
     </SettingsView>
   {:else}
-    <section class="chat-view">
+    <section class="flex flex-1 min-h-0 flex-col">
       <Transcript
         {transcript}
         activeSessionId={session.activeSessionId}

@@ -22,7 +22,7 @@
   let { transcript, activeSessionId, isGenerating, waitingForFirstResponse, codeChanges, changesOpen = $bindable(false), onanswer, onapprove, onui }: Props = $props()
 </script>
 
-<div class="transcript" bind:this={transcript.transcriptElement} onscroll={(event) => transcript.onScroll(event)} aria-live="polite">
+<div class="flex-1 min-h-0 overflow-auto px-3.5 pt-4 pb-2 [scrollbar-color:#30363c_transparent]" bind:this={transcript.transcriptElement} onscroll={(event) => transcript.onScroll(event)} aria-live="polite">
   {#each transcript.messages as message (message.id)}
     <MessageRow
       {message}
@@ -34,8 +34,8 @@
     />
   {/each}
   {#if waitingForFirstResponse}
-    <article class="message activity waiting-for-response" role="status">
-      <LoaderCircle class="spin" size={13} strokeWidth={1.8} aria-hidden="true" />
+    <article class="mb-3.5 animate-enter flex min-h-[18px] items-center gap-[7px] border-l border-[var(--border)] pl-2.5 text-[11px] text-[var(--muted-foreground)]" role="status">
+      <LoaderCircle class="animate-spin motion-reduce:animate-none" size={13} strokeWidth={1.8} aria-hidden="true" />
       <span>Waiting for the model…</span>
     </article>
   {/if}

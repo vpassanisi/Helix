@@ -2,7 +2,7 @@
   "name": "helix-vscode",
   "displayName": "Helix",
   "description": "A VS Code sidebar Webview UI for Helix.",
-  "version": "0.0.158",
+  "version": "0.0.182",
   "publisher": "local",
   "license": "MIT",
   "repository": {

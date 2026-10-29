@@ -11,6 +11,10 @@
   let { label }: Props = $props()
 </script>
 
-<div class="mode-rule" role="separator" aria-label={label}>
-  <span class="mode-rule-label">{label}</span>
+<div
+  class="flex items-center gap-[9px] px-2.5 text-[9px] font-semibold tracking-[.14em] whitespace-nowrap uppercase text-[color-mix(in_srgb,var(--brand-gold)_82%,var(--muted-foreground))] before:content-[''] before:flex-1 before:min-w-3 before:h-px before:bg-[linear-gradient(90deg,transparent,color-mix(in_srgb,var(--brand-gold)_42%,var(--border)))] after:content-[''] after:flex-1 after:min-w-3 after:h-px after:bg-[linear-gradient(90deg,color-mix(in_srgb,var(--brand-gold)_42%,var(--border)),transparent)]"
+  role="separator"
+  aria-label={label}
+>
+  <span>{label}</span>
 </div>

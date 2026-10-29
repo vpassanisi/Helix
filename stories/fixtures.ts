@@ -203,6 +203,27 @@ export const genUiTestSuite: GenUiView = {
   },
 }
 
+/**
+ * A long session for the composer story: enough turns, tools, cards and
+ * compaction that the transcript scrolls above the composer. Ids start at
+ * 100 so they never collide with the single-message fixtures above.
+ */
+export const historyMessages: ChatMessage[] = [
+  { id: 100, role: 'user', label: 'You', text: 'The model picker drops below the bottom edge of the sidebar on short windows. Can you make it flip up instead?' },
+  { id: 101, role: 'reasoning', label: 'Thinking', text: 'The picker is anchored with `top-full mt-1`, so it can only open downward. I need to measure the free space below the trigger on open and flip the anchor to `bottom-full mb-1` when there is less room than the menu needs.' },
+  { id: 102, role: 'assistant', label: 'Helix', text: 'Reproduced it. The menu is absolutely positioned below the trigger, so on a 400px-tall sidebar it clips:\n\n```svelte\n<div class="absolute top-full mt-1 w-56">\n```' },
+  { id: 103, role: 'tool', label: 'Tool', text: '', tool: { ...tool, callId: 'history-read', name: 'read_file', arguments: '{"path":"src/webview/components/ComposerModelPicker.svelte"}', result: 'The trigger is a button in the composer footer; the menu mounts under it on open.' } },
+  { id: 104, role: 'assistant', label: 'Helix', text: 'Two changes in `ComposerModelPicker.svelte`:\n\n1. Measure the free space below the trigger when the menu opens.\n2. Flip the anchor class when that space is shorter than the menu.\n\n```svelte\n{#if open && flipUp}\n  <div class="absolute bottom-full mb-1 w-56">\n    {#each models as model}\n      <button class="w-full text-left" onclick={() => select(model.id)}>\n        {model.displayName}\n      </button>\n    {/each}\n  </div>\n{/if}' },
+  { id: 105, role: 'user', label: 'You', text: 'Nice. While you are in there — the model list footer only shows the reasoning effort. Add the context window next to it.' },
+  { id: 106, role: 'reasoning', label: 'Thinking', text: 'The footer already renders per-model metadata; the context window is on the model entry, so I just format it as `128k` and join it with the effort.' },
+  { id: 107, role: 'assistant', label: 'Helix', text: 'Done. The footer now reads `128k context · High`:\n\n```svelte\n<span class="text-xs opacity-60">{formatContext(model.contextWindow)} context{effortLabel(model)}</span>' },
+  { id: 108, role: 'ui', label: 'Card', text: '', ui: genUiTestSuite },
+  { id: 109, role: 'activity', label: 'Subagent', text: 'Verified the flip in the 360×520 canvas: menu opens upward, no clipping' },
+  { id: 110, role: 'compaction', label: 'Context', text: '', compaction: { key: 'history-summary', sessionId: 'preview', kind: 'summary', status: 'completed', historyItems: 24, shadowedTokens: 9400 } },
+  { id: 111, role: 'changes', label: 'Changes', text: '', changes, panelOpen: true },
+  { id: 112, role: 'assistant', label: 'Helix', text: 'All green. The picker flips up on short windows, the footer shows the context window, and the picker tests pass. Two files touched, 38 lines added.' },
+]
+
 export const genUiAlerts: GenUiView = {
   callId: 'ui-alerts',
   title: 'Deploy check',

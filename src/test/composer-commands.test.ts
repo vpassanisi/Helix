@@ -44,12 +44,12 @@ test('a command line resolves with the Host name grammar', () => {
 test('the transcript line paints the command token gold and escapes the arguments', () => {
   assert.equal(
     commandLineHtml('plan', 'build a parser'),
-    '<span class="message-command-token">/plan</span> build a parser',
+    '<span class="text-[var(--brand-gold)]">/plan</span> build a parser',
   )
-  assert.equal(commandLineHtml('compact', ''), '<span class="message-command-token">/compact</span>')
+  assert.equal(commandLineHtml('compact', ''), '<span class="text-[var(--brand-gold)]">/compact</span>')
   assert.equal(
     commandLineHtml('feedback', 'a <script> & "quote"'),
-    '<span class="message-command-token">/feedback</span> a &lt;script&gt; &amp; &quot;quote&quot;',
+    '<span class="text-[var(--brand-gold)]">/feedback</span> a &lt;script&gt; &amp; &quot;quote&quot;',
     'the arguments are text, never markup',
   )
 })

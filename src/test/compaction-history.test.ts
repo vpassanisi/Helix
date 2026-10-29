@@ -13,7 +13,7 @@ test('one history entry survives start, summary, and confirmed completion', () =
   const end = history.record('root', 'compaction/end', { compactionId: 'a', turn: 10 })!
   assert.equal(end.key, start.key)
   assert.equal(end.status, 'completed')
-  assert.equal(compactionTitle(end), 'Conversation compacted')
+  assert.equal(compactionTitle(end), 'History compacted')
   assert.equal(compactionDetail(end), '3 history entries · 96,890 tokens of earlier context summarized.')
   assert.deepEqual(history.interrupt(), [], 'later idle status leaves the completed marker intact')
 })

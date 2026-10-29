@@ -45,5 +45,5 @@
     <span class={active ? activeLabelClasses : ''}>{label}</span>
     <ChevronDown class="flex-none opacity-0 [transition:opacity_.18s_ease,transform_.15s_ease] group-hover/thinking:opacity-100 group-focus-visible/thinking:opacity-100 group-open/thinking:rotate-180" size={13} strokeWidth={1.8} />
   </summary>
-  <div class="message-body mt-[7px] max-h-[260px] overflow-auto" use:followStream>{text}</div>
+  <div class="whitespace-pre-wrap [overflow-wrap:anywhere] leading-[1.5] mt-[7px] max-h-[260px] overflow-auto" use:followStream>{text}</div>
 </details>

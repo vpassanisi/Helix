@@ -117,7 +117,7 @@
   }
 </script>
 
-<div class="grid gap-[15px]" bind:this={root}>
+<div class="flex-none grid gap-[15px]" bind:this={root}>
   <section class="m-0 min-w-0 p-0" aria-labelledby="model-settings-title">
     <div class="mb-[10px]">
       <h3 id="model-settings-title" class="m-0 text-[11px] font-[650] tracking-[.04em] text-[var(--foreground)]">Models</h3>
@@ -193,26 +193,26 @@
               </button>
             </legend>
             <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,.85fr)] gap-[9px] [@media(max-width:360px)]:grid-cols-1">
-              <div class="field col-span-full min-w-0 [@media(max-width:360px)]:col-auto" role="group">
+              <div class="grid gap-1.5 col-span-full min-w-0 [@media(max-width:360px)]:col-auto" role="group">
                 <label class="text-[9px]!" for={`model-id-${draft.key}`}>Model ID</label>
                 <input id={`model-id-${draft.key}`} class={cardInputClass} bind:value={draft.id} autocomplete="off" disabled={editsDisabled} />
               </div>
-              <div class="field min-w-0" role="group">
+              <div class="grid gap-1.5 min-w-0" role="group">
                 <label class="text-[9px]!" for={`model-label-${draft.key}`}>Display name</label>
                 <input id={`model-label-${draft.key}`} class={cardInputClass} bind:value={draft.displayName} placeholder="Optional" autocomplete="off" disabled={editsDisabled} />
               </div>
-              <div class="field min-w-0" role="group">
+              <div class="grid gap-1.5 min-w-0" role="group">
                 <label class="text-[9px]!" for={`model-context-${draft.key}`}>Context window</label>
                 <input id={`model-context-${draft.key}`} class={cardInputClass} type="number" min="1" step="1" bind:value={draft.contextWindow} placeholder="Unknown" disabled={editsDisabled} />
               </div>
-              <div class="field col-span-full min-w-0">
+              <div class="grid gap-1.5 col-span-full min-w-0">
                 <div class="flex items-center justify-start gap-[8px]">
                   <label class="text-[9px]!" for={`model-vision-${draft.key}`}>Vision</label>
                   <input id={`model-vision-${draft.key}`} class="input h-[14px] w-[24px] min-w-0 flex-none p-0 text-[10px]!" type="checkbox" role="switch" data-size="sm" bind:checked={draft.acceptsImages} aria-describedby={`model-vision-help-${draft.key}`} disabled={editsDisabled} />
                 </div>
                 <small class="text-[9px]! leading-[1.35]!" id={`model-vision-help-${draft.key}`}>Allow image input if the endpoint supports it.</small>
               </div>
-              <div class="field min-w-0 content-start" role="group">
+              <div class="grid gap-1.5 min-w-0 content-start" role="group">
                 <label class={reasoningLabelClass} for={`model-reasoning-format-trigger-${draft.key}`}>Reasoning format</label>
                 <div
                   id={`model-reasoning-format-${draft.key}`}
@@ -245,7 +245,7 @@
                 </div>
               </div>
               {#if isBinaryReasoningFormat(draft.reasoningFormat)}
-                <div class="field min-w-0" role="group">
+                <div class="grid gap-1.5 min-w-0" role="group">
                   <label class="text-[9px]!" for={`model-binary-thinking-trigger-${draft.key}`}>Thinking mode</label>
                   <div
                     id={`model-binary-thinking-${draft.key}`}
@@ -269,7 +269,7 @@
                   <small>This format has a binary control, so the composer has no effort selector.</small>
                 </div>
               {:else}
-                <div class="field min-w-0 content-start" role="group">
+                <div class="grid gap-1.5 min-w-0 content-start" role="group">
                   <label class={reasoningLabelClass} id={`model-reasoning-level-label-${draft.key}`} for={`model-reasoning-level-trigger-${draft.key}`}>Reasoning levels</label>
                   <div
                     id={`model-reasoning-level-picker-${draft.key}`}
@@ -283,7 +283,7 @@
                       <fieldset class="m-0 grid max-h-[240px] min-w-0 gap-[2px] overflow-auto border-0 p-0">
                         <legend class="mb-[4px] text-[9px] font-semibold text-[var(--muted-foreground)]">Choose supported levels</legend>
                         {#each modelReasoningEffortChoices(draft) as effort, index (`${draft.key}-${effort}`)}
-                          <div class="field flex! min-w-0 cursor-pointer items-center gap-[8px] rounded-[4px] px-[6px] py-[5px] hover:bg-[var(--accent)]" data-orientation="horizontal">
+                          <div class="grid gap-1.5 flex! min-w-0 cursor-pointer items-center gap-[8px] rounded-[4px] px-[6px] py-[5px] hover:bg-[var(--accent)]" data-orientation="horizontal">
                             <input id={`model-reasoning-level-${draft.key}-${index}`} class="input m-0 h-[14px] w-[14px] min-w-0 flex-none px-[7px] py-0 text-[10px]!" type="checkbox" checked={draft.reasoningEfforts.includes(effort)} onchange={(event) => handleModelReasoningEffortChange(draft.key, effort, event)} disabled={editsDisabled} />
                             <label class="cursor-pointer text-[10px]! tracking-normal! text-[var(--foreground)]! normal-case!" for={`model-reasoning-level-${draft.key}-${index}`}>{effort}{#if isLegacyModelEffort(effort)} <span class="text-[9px] text-[var(--muted-foreground)]">(saved ID)</span>{/if}</label>
                           </div>
@@ -294,20 +294,20 @@
                 </div>
               {/if}
               {#if draft.reasoningFormat === 'chat-template'}
-                <div class="field col-span-full min-w-0" role="group">
+                <div class="grid gap-1.5 col-span-full min-w-0" role="group">
                   <label class="text-[9px]!" for={`model-chat-template-kwargs-${draft.key}`}>chatTemplateKwargs (JSON)</label>
                   <textarea id={`model-chat-template-kwargs-${draft.key}`} class={templateInputClass} rows="4" bind:value={draft.chatTemplateKwargsText} placeholder={'{\n  "enable_thinking": { "$var": "thinking.enabled", "omitWhenOff": true }\n}'} disabled={editsDisabled}></textarea>
                   <small class="text-[9px]!">Values may be strings, numbers, booleans, null, or DSH variables: thinking.enabled, thinking.effort, thinking.budget.</small>
                 </div>
               {/if}
               {#if draft.reasoningFormat === 'baseten'}
-                <div class="field col-span-full min-w-0" role="group">
+                <div class="grid gap-1.5 col-span-full min-w-0" role="group">
                   <label class="text-[9px]!" for={`model-chat-template-args-${draft.key}`}>chatTemplateArgs (JSON)</label>
                   <textarea id={`model-chat-template-args-${draft.key}`} class={templateInputClass} rows="4" bind:value={draft.chatTemplateArgsText} placeholder={'{\n  "reasoning_effort": { "$var": "thinking.effort" }\n}'} disabled={editsDisabled}></textarea>
                   <small class="text-[9px]!">Values may be strings, numbers, booleans, null, or DSH variables: thinking.enabled, thinking.effort, thinking.budget.</small>
                 </div>
               {/if}
-              <div class="field col-span-full min-w-0" role="group">
+              <div class="grid gap-1.5 col-span-full min-w-0" role="group">
                 <label class="text-[9px]!" for={`model-instructions-${draft.key}`}>Model instructions</label>
                 <textarea id={`model-instructions-${draft.key}`} class={templateInputClass} rows="5" bind:value={draft.systemInstructions} aria-describedby={`model-instructions-help-${draft.key}`} placeholder={'Instructions this model needs and others do not, for example: prefer the grep tool over reading whole files.'} disabled={editsDisabled}></textarea>
                 <small class="text-[9px]! leading-[1.35]!" id={`model-instructions-help-${draft.key}`}>Sent with every request on this model, in every workspace. For one folder and every model, use AGENTS.md.</small>

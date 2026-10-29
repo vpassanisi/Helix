@@ -16,13 +16,13 @@
   const statusClass = `${statusLayoutClass} text-[var(--muted-foreground)]`
   const valueCardClass = 'grid min-w-0 gap-[3px] rounded-[var(--radius)] border border-[var(--border)] bg-[var(--card)] px-[9px] py-[7px]'
   const detailLabelClass = 'text-[9px] text-[var(--muted-foreground)]'
-  const detailValueClass = 'text-[10px] font-semibold wrap-anywhere text-[var(--foreground)]'
+  const detailValueClass = 'text-[10px] font-semibold [overflow-wrap:anywhere] text-[var(--foreground)]'
   const sectionHeadingClass = 'm-0 flex items-center gap-[6px] text-[10px] font-[650] text-[var(--foreground)]'
-  const payloadClass = 'm-0 min-w-0 whitespace-pre-wrap text-[9px] leading-[1.5] wrap-anywhere text-[var(--foreground)] [font-family:var(--vscode-editor-font-family,monospace)]'
-  const payloadHeadingClass = 'm-0 text-[8px] font-[650] wrap-anywhere text-[var(--muted-foreground)]'
+  const payloadClass = 'm-0 min-w-0 whitespace-pre-wrap text-[9px] leading-[1.5] [overflow-wrap:anywhere] text-[var(--foreground)] [font-family:var(--vscode-editor-font-family,monospace)]'
+  const payloadHeadingClass = 'm-0 text-[8px] font-[650] [overflow-wrap:anywhere] text-[var(--muted-foreground)]'
 </script>
 
-<div class="settings-fill grid min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-[13px]">
+<div class="[flex:1_1_auto] min-h-0 grid min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-[13px]">
   {#if state === 'loading'}
     <p class={statusClass} role="status">
       <LoaderCircle class="animate-spin motion-reduce:animate-none" size={12} strokeWidth={1.8} /> Starting an isolated DSH session and assembling the request…
@@ -34,7 +34,7 @@
     <p class={statusClass} role="status">Preview cancelled.</p>
   {:else if preview}
     {@const previewView = createRequestPreviewView(preview)}
-    <div class="field m-0 items-center justify-between rounded-[var(--radius)] border border-[var(--border)] px-[9px] py-[7px]" role="group" data-orientation="horizontal">
+    <div class="grid gap-1.5 m-0 items-center justify-between rounded-[var(--radius)] border border-[var(--border)] px-[9px] py-[7px]" role="group" data-orientation="horizontal">
       <section class="grid gap-[3px]">
         <label class="text-[10px] font-semibold" for="request-preview-raw-json">Show raw JSON</label>
         <p class="text-[9px] leading-[1.4] text-[var(--muted-foreground)]">Switch between the readable breakdown and the captured request.</p>

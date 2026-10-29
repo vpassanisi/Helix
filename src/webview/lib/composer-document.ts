@@ -12,7 +12,7 @@ export type ComposerRun =
   | { kind: 'text'; text: string }
   | { kind: 'command'; text: string; command: ComposerCommand }
 
-const COMMAND_CLASS = 'composer-command-token'
+const COMMAND_CLASS = 'text-[var(--brand-gold)]'
 const BLOCK = /^(DIV|P|LI|BLOCKQUOTE|H[1-6]|PRE)$/
 
 /** The composer draft as runs: a leading token naming a known command is one run. */

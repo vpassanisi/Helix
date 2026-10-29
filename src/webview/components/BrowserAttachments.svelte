@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X } from '@lucide/svelte'
+  import { MousePointer2, X } from '@lucide/svelte'
   import type { BrowserElementContext } from '../../shared/browser-context.js'
   let { attachments, disabled, onremove }: {
     attachments: BrowserElementContext[]
@@ -8,13 +8,12 @@
   } = $props()
 </script>
 
-<div class="flex flex-wrap gap-[6px] mb-2" aria-label="Browser element attachments">
+<div class="flex flex-wrap gap-[6px] mb-[8px]" aria-label="Browser element attachments">
   {#each attachments as attachment (attachment.id)}
-    <span class="context-chip min-w-0 mb-0 text-[10px]" aria-label={`Browser element ${attachment.label}`}>
-      <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[#cfcfcf]">{attachment.label}</span>
-      <span class="flex flex-none" data-tooltip="Remove browser element">
-        <button class="btn w-[18px] h-[18px] p-0" data-variant="ghost" data-size="icon-xs" type="button" aria-label={`Remove ${attachment.label}`} {disabled} onclick={() => onremove(attachment.id)}><X size={12} /></button>
-      </span>
+    <span class="flex w-fit max-w-full items-center gap-[8px] rounded-[var(--radius)] border border-[var(--border)] bg-[var(--composer)] px-[6px] py-[4px] text-[11px] text-[var(--muted-foreground)]" aria-label={`Browser element ${attachment.label}`}>
+      <MousePointer2 size={14} strokeWidth={1.7} />
+      <span class="min-w-0 flex-[0_1_auto] truncate text-[var(--foreground)]">{attachment.label}</span>
+      <button class="btn h-[24px] w-[24px] p-0" data-variant="ghost" data-size="icon" type="button" aria-label={`Remove ${attachment.label}`} title={`Remove ${attachment.label}`} {disabled} onclick={() => onremove(attachment.id)}><X size={14} strokeWidth={1.8} /></button>
     </span>
   {/each}
 </div>

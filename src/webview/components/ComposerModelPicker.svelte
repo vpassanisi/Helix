@@ -35,7 +35,7 @@
   <div id="composer-model-selector" class="popover flex-none">
     <button
       id="composer-model-trigger"
-      class="btn composer-tooltip h-[27px] w-[28px] border-0 bg-transparent p-0 text-[var(--muted-foreground)] hover:enabled:bg-[var(--color-muted,var(--muted))] hover:enabled:text-[var(--foreground)]"
+      class="btn h-[27px] w-[28px] border-0 bg-transparent p-0 text-[var(--muted-foreground)] hover:enabled:bg-[var(--color-muted,var(--muted))] hover:enabled:text-[var(--foreground)] before:w-max before:max-w-[calc(100vw-28px)] before:overflow-visible before:whitespace-normal before:[text-overflow:clip] before:font-normal before:text-start"
       data-variant="ghost"
       data-size="icon-sm"
       type="button"
@@ -75,7 +75,7 @@
                 aria-pressed={reasoningEffort === effort}
                 onclick={() => onReasoningEffortSelect(effort)}
               >
-                <span class="min-w-0 wrap-anywhere">{effort}</span>
+                <span class="min-w-0 [overflow-wrap:anywhere]">{effort}</span>
                 {#if reasoningEffort === effort}<Check class="flex-none" size={12} strokeWidth={2} aria-hidden="true" />{/if}
               </button>
             {/each}
@@ -97,7 +97,7 @@
                 disabled={modelChanging}
                 onclick={() => onModelSelect(option.id)}
               >
-                <span class="min-w-0 wrap-anywhere">{modelOptionLabel(option)}</span>
+                <span class="min-w-0 [overflow-wrap:anywhere]">{modelOptionLabel(option)}</span>
                 {#if model === option.id}<Check class="flex-none" size={12} strokeWidth={2} aria-hidden="true" />{/if}
               </button>
             {/each}

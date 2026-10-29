@@ -61,7 +61,7 @@
     {#if view.status !== 'dismissed'}
       <div class="gen-ui-card__tools">
         <button
-          class="icon-button gen-ui-card__button"
+          class="h-[27px] w-[28px] p-0 gen-ui-card__button"
           type="button"
           title="Copy the card's spec"
           aria-label="Copy the card's spec"
@@ -70,7 +70,7 @@
           <Copy size={12} strokeWidth={1.7} />
         </button>
         <button
-          class="icon-button gen-ui-card__button"
+          class="h-[27px] w-[28px] p-0 gen-ui-card__button"
           type="button"
           title="Dismiss this card"
           aria-label="Dismiss this card"

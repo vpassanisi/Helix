@@ -15,19 +15,19 @@
   })
 </script>
 
-<fieldset class="flex min-w-0 flex-col gap-3 border-t border-[var(--border)] pt-4">
+<fieldset class="flex flex-none min-w-0 flex-col gap-3 border-t border-[var(--border)] pt-4">
   <legend class="pt-3 mb-[10px] text-[12px]">Skill selection</legend>
-  <div class="field flex items-center justify-between gap-3" data-orientation="horizontal">
+  <div class="grid gap-1.5 flex items-center justify-between gap-3" data-orientation="horizontal">
     <label class="text-[11px]" for="decisions-enabled">Enable automatic skill selection</label>
     <input id="decisions-enabled" class="input" role="switch" type="checkbox" bind:checked={decisions.enabled} />
   </div>
   {#if decisions.enabled}
-    <div class="field flex items-center justify-between gap-3" data-orientation="horizontal">
+    <div class="grid gap-1.5 flex items-center justify-between gap-3" data-orientation="horizontal">
       <label class="text-[11px]" for="decisions-main">Use main connection for decisions</label>
       <input id="decisions-main" class="input" role="switch" type="checkbox" bind:checked={decisions.useMainConnection} />
     </div>
     <small class="text-[10px] leading-[1.45] text-[var(--muted-foreground)]">{decisions.useMainConnection ? 'The main API URL supports decisions and uses the same saved key.' : 'Decisions use an independent URL and API key.'}</small>
-    <div class="field">
+    <div class="grid gap-1.5">
       <label class="text-[11px]" for="decisions-format-trigger">Decisions API format</label>
       <div class="select" onchange={(event) => { const value = (event.target as HTMLElement).closest('.select')?.querySelector('input')?.value; if (value === 'typesafe' || value === 'openai') decisions.format = value }}>
         <button id="decisions-format-trigger" class="btn" data-variant="outline" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="decisions-format-list"><span>{decisions.format === 'typesafe' ? 'TypeSafe / Jev' : 'OpenAI Decisions'}</span><ChevronDown size={13} /></button>
@@ -41,8 +41,8 @@
       </div>
     </div>
     {#if !decisions.useMainConnection}
-      <div class="field"><label class="text-[11px]" for="decisions-url">Decisions API base URL</label><input id="decisions-url" class="input" type="url" bind:value={decisions.baseUrl} placeholder="http://localhost:8080/v1" /></div>
-      <div class="field">
+      <div class="grid gap-1.5"><label class="text-[11px]" for="decisions-url">Decisions API base URL</label><input id="decisions-url" class="input" type="url" bind:value={decisions.baseUrl} placeholder="http://localhost:8080/v1" /></div>
+      <div class="grid gap-1.5">
         <label class="text-[11px]" for="decisions-key">Decisions API key</label>
         <div class="flex items-center gap-[6px]">
           <input id="decisions-key" class="input min-w-0 flex-1" type="password" bind:value={apiKey} oninput={() => { if (apiKey) clearKey = false }} autocomplete="off" placeholder={keyConfigured ? 'Saved key — enter to replace' : 'Optional for local servers'} />
@@ -52,7 +52,7 @@
       </div>
     {/if}
     <small class="text-[10px] leading-[1.45] text-[var(--muted-foreground)] [overflow-wrap:anywhere]">POST {endpoint()}</small>
-    <div class="field"><label class="text-[11px]" for="decisions-model">Decisions model ID</label><input id="decisions-model" class="input" type="text" bind:value={decisions.model} placeholder="Your decisions model ID" required /></div>
+    <div class="grid gap-1.5"><label class="text-[11px]" for="decisions-model">Decisions model ID</label><input id="decisions-model" class="input" type="text" bind:value={decisions.model} placeholder="Your decisions model ID" required /></div>
   {/if}
   <small class="text-[10px] leading-[1.45] text-[var(--muted-foreground)]">Manual skill choices remain available when automatic selection is off.</small>
 </fieldset>

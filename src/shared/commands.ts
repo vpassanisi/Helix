@@ -93,7 +93,7 @@ export function commandLine(name: string, args: string): string {
  */
 export function commandLineHtml(name: string, args: string): string {
   const token = escapeHtml(commandLine(name, ''))
-  return `<span class="message-command-token">${token}</span>${escapeHtml(args ? ` ${args}` : '')}`
+  return `<span class="text-[var(--brand-gold)]">${token}</span>${escapeHtml(args ? ` ${args}` : '')}`
 }
 
 /**

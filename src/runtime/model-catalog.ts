@@ -1,4 +1,5 @@
 import { isRecord, stringValue } from '../shared/value-utils.js'
+import { isReasoningEffortPreset, REASONING_EFFORT_PRESETS } from './reasoning-efforts.js'
 
 export interface DiscoveredModel {
   id: string
@@ -25,16 +26,6 @@ export const DSH_REASONING_FORMATS = [
 ] as const
 export type DshReasoningFormat = typeof DSH_REASONING_FORMATS[number]
 export type ReasoningFormat = 'auto' | DshReasoningFormat
-
-export const REASONING_EFFORT_PRESETS = {
-  'low-medium-high': ['low', 'medium', 'high'],
-  'low-medium-high-xhigh': ['low', 'medium', 'high', 'xhigh'],
-  'low-medium-high-max': ['low', 'medium', 'high', 'max'],
-  'low-medium-high-xhigh-max': ['low', 'medium', 'high', 'xhigh', 'max'],
-  'minimal-low-medium-high-xhigh-max': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
-  'all-levels': ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
-} as const satisfies Record<string, readonly DshReasoningLevel[]>
-export type ReasoningEffortPreset = keyof typeof REASONING_EFFORT_PRESETS
 
 export type BinaryThinkingMode = 'on' | 'off'
 export type ChatTemplateValue = string | number | boolean | null | {
@@ -85,8 +76,6 @@ export interface ActiveModelSelection {
   model: string
   contextWindow: number
 }
-
-const MODEL_CATALOG_VERSION = 1
 
 export function parseModelCatalog(value: unknown): DiscoveredModel[] {
   if (!isRecord(value) || !Array.isArray(value.data)) return []
@@ -208,93 +197,12 @@ export function normalizeSavedModels(value: unknown): SavedModel[] {
   })
 }
 
-export function resolveSavedModelReasoningEffort(
-  models: SavedModel[],
-  modelId: string,
-  selection: string | null,
-  lastUsed?: string,
-): string | undefined {
-  const model = models.find((entry) => entry.id === modelId)
-  if (model !== undefined && isBinaryReasoningFormat(model.reasoningFormat)) {
-    const mode = model.binaryThinkingMode ?? 'on'
-    if (mode === 'off') return 'off'
-    return model.reasoningEfforts?.find((effort) => isDshReasoningLevel(effort) && effort !== 'off') ?? 'low'
-  }
-  if (selection === null) return preferredReasoningEffort(model, lastUsed)
-  if (model === undefined || !model.reasoningEfforts?.includes(selection)) {
-    throw new Error(`Reasoning effort "${selection}" is not configured for model "${modelId}".`)
-  }
-  return selection
-}
-
-export function preferredReasoningEffort(model: SavedModel | undefined, lastUsed?: string): string | undefined {
-  if (model === undefined || isBinaryReasoningFormat(model.reasoningFormat)) return undefined
-  const efforts = model.reasoningEfforts ?? []
-  if (lastUsed !== undefined && efforts.includes(lastUsed)) return lastUsed
-  return [...DSH_REASONING_LEVELS].reverse().find((level) => efforts.includes(level)) ?? efforts.at(-1)
-}
-
-export function reconcileReasoningEffortHistory(
-  history: Record<string, string>,
-  nextModels: readonly ModelDraft[],
-): Record<string, string> {
-  const entries: Array<[string, string]> = []
-  for (const model of nextModels) {
-    if (isBinaryReasoningFormat(model.reasoningFormat)) continue
-    const previous = history[model.sourceId ?? model.id]
-    if (previous !== undefined && model.reasoningEfforts?.includes(previous)) entries.push([model.id, previous])
-  }
-  return Object.fromEntries(entries)
-}
-
-export function seedReasoningEffortHistory(
-  history: Record<string, string>,
-  legacyDefaults: Record<string, string>,
-): Record<string, string> {
-  return Object.fromEntries([
-    ...Object.entries(history),
-    ...Object.entries(legacyDefaults).filter(([id]) => !Object.hasOwn(history, id)),
-  ])
-}
-
-export function isReasoningEffortPreset(value: unknown): value is ReasoningEffortPreset {
-  return typeof value === 'string' && Object.hasOwn(REASONING_EFFORT_PRESETS, value)
-}
-
 export function isReasoningFormat(value: unknown): value is ReasoningFormat {
   return value === 'auto' || (typeof value === 'string' && (DSH_REASONING_FORMATS as readonly string[]).includes(value))
 }
 
 export function isBinaryReasoningFormat(value: ReasoningFormat | undefined): boolean {
   return value === 'qwen' || value === 'qwen-chat-template'
-}
-
-export function selectableReasoningEfforts(model: SavedModel | undefined): string[] {
-  if (model === undefined || isBinaryReasoningFormat(model.reasoningFormat)) return []
-  return [...(model.reasoningEfforts ?? [])]
-}
-
-export function updateReasoningEffortSelection(
-  selected: readonly string[],
-  effort: string,
-  checked: boolean,
-): string[] | undefined {
-  const isKnownLevel = isDshReasoningLevel(effort)
-  if (!isKnownLevel && !selected.includes(effort)) return undefined
-
-  const next = new Set(selected)
-  if (checked) next.add(effort)
-  else next.delete(effort)
-
-  const hasGradedEffort = [...next].some((value) => isDshReasoningLevel(value) && value !== 'off')
-  if (checked && effort === 'off' && !hasGradedEffort) return undefined
-  if (!hasGradedEffort) next.delete('off')
-
-  const reasoningEfforts = [
-    ...DSH_REASONING_LEVELS.filter((level) => next.has(level)),
-    ...selected.filter((value) => !isDshReasoningLevel(value) && next.has(value)),
-  ]
-  return reasoningEfforts
 }
 
 export function piAiRuntimeModelProfiles(models: SavedModel[]): PiAiModelRuntimeProfile[] {
@@ -387,54 +295,6 @@ export function normalizeModelDrafts(value: unknown): ModelDraft[] {
   }, [])
 }
 
-export function parseSavedModelCatalog(value: unknown): SavedModel[] {
-  if (!isRecord(value) || value.version !== MODEL_CATALOG_VERSION) {
-    throw new Error(`The models catalog must use version ${MODEL_CATALOG_VERSION}.`)
-  }
-  return normalizeSavedModels(value.models)
-}
-
-export function parseSavedModelCatalogJson(value: string): SavedModel[] {
-  return parseSavedModelCatalogJsonWithLegacy(value).models
-}
-
-export function parseSavedModelCatalogJsonWithLegacy(value: string): {
-  models: SavedModel[]
-  legacyDefaults: Record<string, string>
-  needsMigration: boolean
-} {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(value)
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    throw new Error(`The models file contains invalid JSON. ${reason}`)
-  }
-  const models = parseSavedModelCatalog(parsed)
-  const entries = (parsed as { models: unknown[] }).models
-  const legacyEntries: Array<[string, string]> = []
-  let needsMigration = false
-  for (const [index, model] of models.entries()) {
-    const entry = entries[index] as Record<string, unknown>
-    if (typeof entry.defaultReasoningEffort === 'string') {
-      needsMigration = true
-      if (!isBinaryReasoningFormat(model.reasoningFormat)) {
-        legacyEntries.push([model.id, entry.defaultReasoningEffort.trim()])
-      }
-    }
-    if (entry.binaryThinkingMode === 'provider-default' ||
-      (isBinaryReasoningFormat(model.reasoningFormat) && entry.binaryThinkingMode === undefined)) {
-      needsMigration = true
-    }
-  }
-  return { models, legacyDefaults: Object.fromEntries(legacyEntries), needsMigration }
-}
-
-export function serializeSavedModelCatalog(models: unknown): string {
-  const normalized = normalizeSavedModels(models)
-  return `${JSON.stringify({ version: MODEL_CATALOG_VERSION, models: normalized }, null, 2)}\n`
-}
-
 export function activeSelectionAfterCatalogSave(
   previousModels: SavedModel[],
   nextModels: ModelDraft[],
@@ -496,3 +356,22 @@ function positiveInteger(value: unknown): number | undefined {
       : Number.NaN
   return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : undefined
 }
+
+// The reasoning-effort logic and the catalog file format moved to their own
+// files; this path keeps re-exporting them so existing importers are unaffected.
+export {
+  isReasoningEffortPreset,
+  preferredReasoningEffort,
+  reconcileReasoningEffortHistory,
+  resolveSavedModelReasoningEffort,
+  seedReasoningEffortHistory,
+  selectableReasoningEfforts,
+  updateReasoningEffortSelection,
+  type ReasoningEffortPreset,
+} from './reasoning-efforts.js'
+export {
+  parseSavedModelCatalog,
+  parseSavedModelCatalogJson,
+  parseSavedModelCatalogJsonWithLegacy,
+  serializeSavedModelCatalog,
+} from './model-catalog-file.js'

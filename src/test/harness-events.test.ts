@@ -4,7 +4,6 @@ import {
   assistantTextBlocks,
   contextUsageTotal,
   numericValue,
-  pendingToolKey,
   stringifyPayload,
   toolCallId,
   toolResultCallId,
@@ -52,11 +51,6 @@ test('builds step keys against the event session, falling back to the active ses
   assert.equal(toolStepKey('session-a', { turn: 2, step: 1 }, 'session-root'), 'session-a:2:1')
   assert.equal(toolStepKey(undefined, { turn: 2, step: 1 }, 'session-root'), 'session-root:2:1')
   assert.equal(toolStepKey('session-a', { turn: 2 }, 'session-root'), undefined)
-})
-
-test('keeps the pending key undefined when nothing links the call to a result', () => {
-  assert.equal(pendingToolKey(link({ data: { turn: 1, step: 2 }, callsByStep: { 'session-a:1:2': 'call-step' } })), 'call-step')
-  assert.equal(pendingToolKey(link({ data: { turn: 9, step: 9 }, callsByStep: {} })), undefined)
 })
 
 test('uses the call id, then the response key, then the caller fallback', () => {

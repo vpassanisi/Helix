@@ -1,6 +1,6 @@
 import type { SkillTurnSelection } from '../shared/skills.js'
 import { randomUUID } from 'node:crypto'
-import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
+import type { ChangeTracker } from '../runtime/change-tracker.js'
 import { ControlBridgeError, type ControlEvent } from '../runtime/control-bridge.js'
 import type { HarnessRuntime } from '../runtime/harness-runtime.js'
 import { buildPromptContent, type EditorContext } from '../runtime/prompt-context.js'
@@ -41,7 +41,7 @@ interface SessionCompletionWait {
 export interface SessionControllerOptions {
   runtime: HarnessRuntime
   sidebar: SidebarProvider
-  changeTracker: WorkspaceChangeTracker
+  changeTracker: ChangeTracker
   getRuntimeState: () => RuntimeState
   getRuntimeOptions: () => Promise<RuntimeOptions>
   getEditorContext: (includeSelection: boolean) => EditorContext | undefined

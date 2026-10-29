@@ -33,9 +33,7 @@ export class SessionState {
 
   hostChangesStarted = false
   toolCallsByStep: Record<string, string> = {}
-  pendingCodeChanges: Record<string, CodeChange> = {}
   pendingApprovalRequests: Record<string, Extract<IncomingMessage, { type: 'approvalRequest' }> & { approval: ApprovalView }> = {}
-  toolDerivedPaths = new Set<string>()
   readonly streamedStepTracker = new StreamedStepTracker()
   readonly liveToolCallTracker = new LiveToolCallTracker()
 
@@ -64,8 +62,6 @@ export class SessionState {
   /** A new session: drop everything the previous one was carrying. */
   resetForSession(): void {
     this.toolCallsByStep = {}
-    this.pendingCodeChanges = {}
-    this.toolDerivedPaths = new Set()
     this.pendingApprovalRequests = {}
     this.codeChanges = []
     this.changesOpen = false

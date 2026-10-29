@@ -10,7 +10,7 @@ import { SessionController } from '../host/session-controller.js'
 import { HarnessRuntime } from '../runtime/harness-runtime.js'
 import type { SidebarMessage, SidebarOutgoingMessage, SidebarProvider } from '../sidebar/sidebar-provider.js'
 import type { RoutedNotification, RuntimeOptions } from '../runtime/types.js'
-import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
+import type { ChangeTracker } from '../runtime/change-tracker.js'
 
 const CHILD_PROMPT = 'HELIX_SUBAGENT_CHILD_TASK_7291'
 
@@ -87,7 +87,7 @@ export async function run(): Promise<void> {
   const controller = new SessionController({
     runtime,
     sidebar,
-    changeTracker: { start: () => undefined, finish: () => undefined } as unknown as WorkspaceChangeTracker,
+    changeTracker: { start: () => undefined, finish: () => undefined } as unknown as ChangeTracker,
     getRuntimeState: () => runtime.currentState,
     getRuntimeOptions: async () => options,
     getEditorContext: () => undefined,

@@ -1,6 +1,4 @@
-import { mergeHostChanges, recordToolChange, toolChange } from '../../shared/code-changes.js'
 import {
-  pendingToolKey,
   stringifyPayload,
   toolCallId,
   toolResultCallId,
@@ -8,8 +6,9 @@ import {
   toolResultText,
   toolStepKey,
 } from '../../shared/harness-events.js'
-import { isRecord, parsePayload, stringValue } from '../../shared/value-utils.js'
+import { isRecord, stringValue } from '../../shared/value-utils.js'
 import { GEN_UI_TOOL_NAME, parseGenUiCall } from '../../shared/gen-ui.js'
+import { REPORT_PROGRESS_TOOL_NAME, parseReportProgressCall } from '../../shared/report-progress.js'
 import type { PendingUserQuestion } from '../../shared/user-question.js'
 import type { ChatTranscript } from './chat-transcript.svelte.js'
 import type { ComposerModelState } from './composer-model.svelte.js'
@@ -52,8 +51,15 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
   const sessionId = () => state.activeSessionId
   const owns = (messageSessionId: string | undefined): boolean => messageSessionId === state.activeSessionId
 
+  /**
+   * Progress notes are text rows, not tool rows, so their tool result has no
+   * row to land on. These ids keep the result from opening one.
+   */
+  const progressCallIds = new Set<string>()
+
   function resetTranscript(): void {
     transcript.reset()
+    progressCallIds.clear()
     state.streamedStepTracker.reset()
     state.liveToolCallTracker.clear()
     state.resetForSession()
@@ -152,10 +158,10 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
     if (message.active && !state.hostChangesStarted) {
       state.hostChangesStarted = true
       state.codeChanges = []
-      state.pendingCodeChanges = {}
-      state.toolDerivedPaths = new Set()
     }
-    if (message.changes.length > 0) state.codeChanges = mergeHostChanges(state.codeChanges, message.changes)
+    // The host posts the complete git diff for the turn, so the latest frame
+    // replaces the previous one rather than merging with it.
+    state.codeChanges = message.changes
     if (!message.active) {
       state.hostChangesStarted = false
       void transcript.scrollToBottom()
@@ -215,14 +221,21 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       return
     }
 
-    const toolArguments = parsePayload(data.arguments)
-    const plannedChange = toolName === undefined || toolArguments === undefined
-      ? undefined
-      : toolChange(toolName, toolArguments)
-    const pendingKey = stringValue(data.callId) ?? stepKey
-    if (plannedChange !== undefined && pendingKey !== undefined) {
-      state.pendingCodeChanges[pendingKey] = plannedChange
+    // A progress note is the agent's own sentence in the transcript, read as
+    // assistant text rather than inspected as a tool call. The same reasoning
+    // about the streaming row and the conversation on screen applies.
+    if (toolName === REPORT_PROGRESS_TOOL_NAME) {
+      progressCallIds.add(callId)
+      transcript.removePreparingToolCalls([callId])
+      if (!rootSession) return
+      const call = parseReportProgressCall(data.arguments)
+      if (call.ok) {
+        transcript.appendMessage('assistant', 'Helix', call.text)
+        void transcript.scrollToBottom()
+      }
+      return
     }
+
     const approval = Object.values(state.pendingApprovalRequests).find((entry) => entry.toolCallId === callId)?.approval
     transcript.upsertToolCall({
       callId,
@@ -242,6 +255,9 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       : toolResultIsError(resultContent) ? 'Tool reported an error.' : undefined
     const meta = data.meta === undefined ? undefined : stringifyPayload(data.meta)
     const callId = toolResultCallId(link, `tool-result-${transcript.allocateId()}`)
+    // The note is already in the transcript as text, so its result is nothing
+    // the user needs a row for.
+    if (progressCallIds.delete(callId)) return
     // A card owns its content already, so its result is only a status: the
     // plugin's rejection text lands on the card the user can see, not in a
     // tool row that would bury it.
@@ -253,17 +269,6 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       return
     }
     if (sessionIdValue !== undefined) state.liveToolCallTracker.finishCall(sessionIdValue, callId)
-    const pendingKey = pendingToolKey(link)
-    const plannedChange = pendingKey === undefined ? undefined : state.pendingCodeChanges[pendingKey]
-    if (pendingKey !== undefined) delete state.pendingCodeChanges[pendingKey]
-    if (plannedChange !== undefined && !error) {
-      state.codeChanges = recordToolChange(state.codeChanges, state.toolDerivedPaths, {
-        ...plannedChange,
-        kind: plannedChange.kind === 'modified' && /created file/i.test(toolResultText(resultContent))
-          ? 'created'
-          : plannedChange.kind,
-      })
-    }
     transcript.updateToolResult(callId, toolResultText(resultContent), error || undefined, meta)
   }
 

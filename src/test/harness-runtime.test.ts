@@ -5,6 +5,7 @@ import type { HarnessClient, HarnessClientOptions } from '@deepseek-ai/dsh-sdk-c
 import type { ControlBroker, ControlBridgeOptions } from '../runtime/control-bridge.js'
 import type { ControlRequestMethod } from '../runtime/control-protocol.js'
 import { HarnessRuntime } from '../runtime/harness-runtime.js'
+import { REPORT_PROGRESS_TOOL_BUNDLE_ID } from '../shared/tool-bundles.js'
 import { RequestPreviewCancelledError, RequestPreviewController, type RequestPreviewRuntime } from '../host/request-preview-controller.js'
 import type { RuntimeOptions } from '../runtime/types.js'
 
@@ -48,7 +49,7 @@ function fakeBridge(connected: boolean, calls: string[], capabilities: readonly 
   }
 }
 
-function fakeClient(calls: string[], promptError?: Error, workingDirectoryError?: Error): HarnessClient {
+function fakeClient(calls: string[], promptError?: Error, workingDirectoryError?: Error, resumeError?: Error): HarnessClient {
   return {
     start: () => { calls.push('client.start') },
     initialize: async () => { calls.push('client.initialize') },
@@ -56,6 +57,10 @@ function fakeClient(calls: string[], promptError?: Error, workingDirectoryError?
       calls.push('client.prompt')
       if (promptError !== undefined) throw promptError
       return 'turn-1'
+    },
+    resumeSession: async (sessionId: string) => {
+      calls.push(`client.resume:${sessionId}`)
+      if (resumeError !== undefined) throw resumeError
     },
     getWorkingDirectory: async (sessionId: string) => {
       calls.push(`client.working-directory:${sessionId}`)
@@ -158,6 +163,48 @@ test('a dead transport found while warming is reaped once', async () => {
   await runtime.dispose()
 })
 
+test('a restart resumes routed sessions so a minted id does not read as new', async () => {
+  const calls: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) => fakeClient(calls),
+  })
+
+  const route = runtime.registerSession('root-session', () => undefined)
+  await runtime.start(runtimeOptions())
+  await runtime.ensureSession('root-session')
+  await runtime.restart(runtimeOptions())
+  route.dispose()
+  await runtime.dispose()
+
+  const mint = calls.indexOf('client.working-directory:root-session')
+  const firstResume = calls.indexOf('client.resume:root-session')
+  const secondInitialize = calls.lastIndexOf('client.initialize')
+  const lastResume = calls.lastIndexOf('client.resume:root-session')
+  assert.notEqual(firstResume, -1, 'the first start resumes routed ids before going ready')
+  assert.ok(firstResume < mint, 'the first resume precedes the id being minted, so it is a no-op')
+  assert.ok(lastResume > secondInitialize, 'the restart resumes the minted id after reinitializing')
+  assert.equal(calls.filter((call) => call === 'client.resume:root-session').length, 2)
+})
+
+test('a restart tolerates routed ids that were never persisted', async () => {
+  const calls: string[] = []
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, calls),
+    createClient: (_options: HarnessClientOptions) =>
+    fakeClient(calls, undefined, undefined, new Error('session "root-session" not found')),
+  })
+
+  const route = runtime.registerSession('root-session', () => undefined)
+  await runtime.start(runtimeOptions())
+  await runtime.restart(runtimeOptions())
+  route.dispose()
+  await runtime.dispose()
+
+  assert.equal(calls.filter((call) => call === 'client.resume:root-session').length, 2)
+  assert.equal(runtime.currentState, 'stopped')
+})
+
 test('stages reasoning effort on the running session without restarting DSH', async () => {
   const calls: string[] = []
   const runtime = new HarnessRuntime({
@@ -230,6 +277,26 @@ test('writes an isolated DSH sessions root into the runtime patch', async () => 
   const patch = await readFile(patchPath, 'utf8')
   assert.match(patch, /- id: sessions\n  config:\n    root: "\/tmp\/preview-session-store"/)
   assert.match(patch, /id: helix-question-tool\n\s+name: "file:.*dsh-question-tool-plugin\.js"/)
+  assert.match(patch, /id: helix-report-progress-tool\n\s+name: "file:.*dsh-report-progress-plugin\.js"\n\s+config:\n\s+enabled: true/)
+  await runtime.dispose()
+})
+
+test('a progress switch off arrives as plugin config, not as a runtime disable row', async () => {
+  let clientOptions: HarnessClientOptions | undefined
+  const runtime = new HarnessRuntime({
+    createControlBridge: (_options: ControlBridgeOptions) => fakeBridge(true, []),
+    createClient: (options: HarnessClientOptions) => {
+      clientOptions = options
+      return fakeClient([])
+    },
+  })
+
+  await runtime.start({ ...runtimeOptions(), disabledToolBundles: [REPORT_PROGRESS_TOOL_BUNDLE_ID] })
+  const patchPath = clientOptions?.patches?.[0]
+  assert.ok(patchPath)
+  const patch = await readFile(patchPath, 'utf8')
+  assert.match(patch, /id: helix-report-progress-tool\n\s+name: "file:.*dsh-report-progress-plugin\.js"\n\s+config:\n\s+enabled: false/)
+  assert.equal(patch.includes('- id: "helix-report-progress"'), false)
   await runtime.dispose()
 })
 

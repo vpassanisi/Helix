@@ -3,7 +3,7 @@ import test from 'node:test'
 import { SessionController } from '../host/session-controller.js'
 import type { HarnessRuntime } from '../runtime/harness-runtime.js'
 import type { RoutedNotification } from '../runtime/types.js'
-import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
+import type { ChangeTracker } from '../runtime/change-tracker.js'
 import type { SidebarProvider, SidebarOutgoingMessage } from '../sidebar/sidebar-provider.js'
 
 function controllerWithPrompt(prompt: () => Promise<void>, waitForSession: () => Promise<void> = async () => undefined, modelInstructions = 'Prefer grep over reading whole files.') {
@@ -25,7 +25,7 @@ function controllerWithPrompt(prompt: () => Promise<void>, waitForSession: () =>
     cancelTurn: async () => undefined,
   } as unknown as HarnessRuntime
   const sidebar = { post: (message: SidebarOutgoingMessage) => { messages.push(message) } } as SidebarProvider
-  const changeTracker = { start: () => undefined, finish: () => undefined } as unknown as WorkspaceChangeTracker
+  const changeTracker = { start: () => undefined, finish: () => undefined } as unknown as ChangeTracker
   const controller = new SessionController({
     runtime,
     sidebar,

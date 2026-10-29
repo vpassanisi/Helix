@@ -20,6 +20,12 @@ The goal is to provide a Codex style workflow with first class support for local
 
 To build an installable VSIX, run `npm run package`. The package command stages the production dependency tree, including the bundled DSH runtime, before creating the VSIX. Install the generated `local.helix-vscode-0.0.39.vsix` file in VS Code. The script starts npm as `node npm-cli.js`, taken from `npm_execpath`, so Windows needs no `npm.cmd` shell spawn; `HELIX_VSCE_BIN` may point at a local vsce executable, not a `.cmd` shim.
 
+## Testing
+
+`npm test` compiles the extension host and runs the Node test suite (`node:test`, files in `src/test/*.test.ts`). It never launches a browser or a VS Code instance.
+
+The end-to-end smoke suites in `src/test/*-vscode-smoke.ts` need the Extension Development Host: press `F5` to launch it, then run **Helix: Run Smoke Tests** from the command palette. Each suite reports to the **Helix Smoke Tests** output channel, and the per-suite results are written to `helix-smoke-results.json` in the system temp directory.
+
 ## Fast UI iteration
 
 After launching the Extension Development Host with `F5`, run `npm run watch:webview` in a separate terminal. While the extension is running, edits to `src/webview` rebuild the bundle and refresh the sidebar automatically. The watcher is enabled only in Extension Development Host mode.
@@ -86,6 +92,12 @@ The extension disables DSH's built-in Web Search and Web Fetch tools. Use an MCP
 ## Agent questions
 
 The main agent can call `ask_user_question` to pause its turn and show a question card in the conversation. Each question has two or three choices, exactly one recommendation, and a custom-response input. Submit an answer to continue the same turn, or use Stop to cancel. Pending questions return when the sidebar reopens; restarting the runtime cancels them.
+
+## Progress updates
+
+The main agent can call `report_progress` with one short sentence about what it just did or what it is doing next, then keep working in the same turn. The sentence enters the conversation as ordinary assistant text rather than as a tool card. A note over 600 characters comes back to the model as a tool error, and a subagent's call is refused: a child run has no conversation of yours to write into.
+
+The tool is listed in the Tools page as **Progress updates**. Switching it off takes the tool out of the runtime, which applies on the next runtime start.
 
 ## Interactive UI cards
 

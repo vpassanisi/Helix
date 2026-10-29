@@ -9,7 +9,7 @@ import * as vscode from 'vscode'
 import { HarnessRuntime } from '../runtime/harness-runtime.js'
 import { SessionController } from '../host/session-controller.js'
 import { SidebarProvider, type SidebarState, type SidebarOutgoingMessage } from '../sidebar/sidebar-provider.js'
-import type { WorkspaceChangeTracker } from '../runtime/change-tracker.js'
+import type { ChangeTracker } from '../runtime/change-tracker.js'
 
 export class Inspector {
   private nextId = 1
@@ -96,7 +96,7 @@ export async function run(): Promise<void> {
       if (message.type === 'cancelTurn') await controller!.cancelTurn()
     })
     controller = new SessionController({ runtime, sidebar,
-      changeTracker: { start: () => undefined, finish: () => undefined } as unknown as WorkspaceChangeTracker,
+      changeTracker: { start: () => undefined, finish: () => undefined } as unknown as ChangeTracker,
       getRuntimeState: () => runtime.currentState, getRuntimeOptions: async () => { throw new Error('Already started') },
       getEditorContext: () => undefined, getMaxSelectionCharacters: () => 32_000, getSelectedModelId: () => 'test/question-model',
       resolveReasoningEffort: async () => undefined, getModelInstructions: async () => undefined, rememberReasoningEffort: async () => undefined,

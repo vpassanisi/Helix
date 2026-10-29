@@ -77,10 +77,6 @@ export function toolResultCallId(link: ToolCallLink, fallback: string): string {
     ?? fallback
 }
 
-export function pendingToolKey(link: ToolCallLink): string | undefined {
-  return directCallId(link.data, link.message) ?? stepCallId(link)
-}
-
 function stepCallId(link: ToolCallLink): string | undefined {
   const key = toolStepKey(link.sessionId, link.data, link.activeSessionId)
   return key === undefined ? undefined : link.callsByStep[key]

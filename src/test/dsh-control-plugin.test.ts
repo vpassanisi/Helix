@@ -14,20 +14,42 @@ import {
   parseControlLine,
 } from '../runtime/control-protocol.js'
 
-test('adapts control requests and approval decisions to DSH agent services', async () => {
+type FakeAgent = {
+  id: string
+  status: 'idle' | 'running'
+  session: { header: { parentSession?: string }; append: (...args: unknown[]) => void }
+  cancel: (...args: unknown[]) => void
+  steer: (message: unknown) => void
+  inject: (message: unknown) => void
+}
+
+interface PluginHandlers {
+  approval: ((request: any, next: () => Promise<string>) => Promise<string>) | undefined
+  assistantStream: ((payload: any) => void) | undefined
+  agentRequest: ((payload: any, next: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>) | undefined
+  systemPromptAssemble: ((assembly: any, context: any, next: () => Promise<any>) => Promise<any>) | undefined
+  llmStream: ((options: any, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>) | undefined
+}
+
+interface PluginFixture {
+  bridge: LocalControlBridge
+  rootAgent: FakeAgent
+  childAgent: FakeAgent
+  sessionAppends: unknown[][]
+  cancelCalls: unknown[][]
+  steerCalls: unknown[]
+  injectCalls: unknown[]
+  policyCalls: unknown[][]
+  handlers: PluginHandlers
+  dispose: () => Promise<void>
+}
+
+async function controlPluginFixture(): Promise<PluginFixture> {
   const sessionAppends: unknown[][] = []
   const cancelCalls: unknown[][] = []
   const steerCalls: unknown[] = []
   const injectCalls: unknown[] = []
   const policyCalls: unknown[][] = []
-  type FakeAgent = {
-    id: string
-    status: 'idle' | 'running'
-    session: { header: { parentSession?: string }; append: (...args: unknown[]) => void }
-    cancel: (...args: unknown[]) => void
-    steer: (message: unknown) => void
-    inject: (message: unknown) => void
-  }
   const rootAgent: FakeAgent = {
     id: 'root-session',
     status: 'running',
@@ -48,11 +70,13 @@ test('adapts control requests and approval decisions to DSH agent services', asy
     [rootAgent.id, rootAgent],
     [childAgent.id, childAgent],
   ])
-  let approvalHandler: ((request: any, next: () => Promise<string>) => Promise<string>) | undefined
-  let assistantStreamHandler: ((payload: any) => void) | undefined
-  let agentRequestHandler: ((payload: any, next: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>) | undefined
-  let systemPromptAssembleHandler: ((assembly: any, context: any, next: () => Promise<any>) => Promise<any>) | undefined
-  let llmStreamHandler: ((options: any, next: () => AsyncIterable<unknown>) => AsyncIterable<unknown>) | undefined
+  const handlers: PluginHandlers = {
+    approval: undefined,
+    assistantStream: undefined,
+    agentRequest: undefined,
+    systemPromptAssemble: undefined,
+    llmStream: undefined,
+  }
   let disposePlugin: (() => void) | undefined
   const approvalService = { setPolicy: (agent: unknown, policy: unknown) => policyCalls.push([agent, policy]) }
 
@@ -68,66 +92,115 @@ test('adapts control requests and approval decisions to DSH agent services', asy
   process.env.HELIX_CONTROL_ENDPOINT = endpoint
   process.env.HELIX_CONTROL_TOKEN = token
 
-  try {
-    helixControlPlugin({
-      get: (name: string) => name === 'agents'
-        ? { get: (id: string) => agents.get(id) }
-        : name === 'approval' ? approvalService : undefined,
-      on: (name: string, handler: typeof approvalHandler) => {
-        if (name === 'approval/request') approvalHandler = handler
-        if (name === 'agent/assistant-stream') assistantStreamHandler = handler as unknown as (payload: any) => void
-        if (name === 'agent/request') agentRequestHandler = handler as unknown as typeof agentRequestHandler
-        if (name === 'system-prompt/assemble') systemPromptAssembleHandler = handler as unknown as typeof systemPromptAssembleHandler
-        if (name === 'llm/stream') llmStreamHandler = handler as unknown as typeof llmStreamHandler
-      },
-      effect: (factory: () => () => void) => { disposePlugin = factory() },
-    })
-    assert.equal(await bridge.waitForConnection(), true)
+  helixControlPlugin({
+    get: (name: string) => name === 'agents'
+      ? { get: (id: string) => agents.get(id) }
+      : name === 'approval' ? approvalService : undefined,
+    on: (name: string, handler: (...args: any[]) => void) => {
+      if (name === 'approval/request') handlers.approval = handler as PluginHandlers['approval']
+      if (name === 'agent/assistant-stream') handlers.assistantStream = handler as PluginHandlers['assistantStream']
+      if (name === 'agent/request') handlers.agentRequest = handler as PluginHandlers['agentRequest']
+      if (name === 'system-prompt/assemble') handlers.systemPromptAssemble = handler as PluginHandlers['systemPromptAssemble']
+      if (name === 'llm/stream') handlers.llmStream = handler as PluginHandlers['llmStream']
+    },
+    effect: (factory: () => () => void) => { disposePlugin = factory() },
+  })
+  assert.equal(await bridge.waitForConnection(), true)
+  // The bridge acks the handshake before the plugin transport has received
+  // the ack, so let the receive land: handlers called before that drop events.
+  await new Promise((resolve) => setTimeout(resolve, 50))
 
-    await bridge.cancel('root-session')
-    assert.equal(cancelCalls.length, 1)
-    assert.deepEqual(cancelCalls[0], [{ kind: 'user' }, { keepInbox: false }])
+  return {
+    bridge,
+    rootAgent,
+    childAgent,
+    sessionAppends,
+    cancelCalls,
+    steerCalls,
+    injectCalls,
+    policyCalls,
+    handlers,
+    dispose: async () => {
+      disposePlugin?.()
+      if (originalEndpoint === undefined) delete process.env.HELIX_CONTROL_ENDPOINT
+      else process.env.HELIX_CONTROL_ENDPOINT = originalEndpoint
+      if (originalToken === undefined) delete process.env.HELIX_CONTROL_TOKEN
+      else process.env.HELIX_CONTROL_TOKEN = originalToken
+      await bridge.close()
+    },
+  }
+}
+
+test('routes cancel, steer, and inject to the Agent the session belongs to', async () => {
+  const f = await controlPluginFixture()
+  try {
+    await f.bridge.cancel('root-session')
+    assert.equal(f.cancelCalls.length, 1)
+    assert.deepEqual(f.cancelCalls[0], [{ kind: 'user' }, { keepInbox: false }])
     await assert.rejects(
-      bridge.cancel('missing-session'),
+      f.bridge.cancel('missing-session'),
       (error: { code?: string }) => error.code === 'SESSION_NOT_FOUND',
     )
 
-    await bridge.steer('child-session', 'continue', 'root-session')
-    await bridge.inject('child-session', 'use the selected file', 'root-session')
-    await bridge.setApprovalPolicy('root-session', 'never')
-    await bridge.setSandboxMode('child-session', 'workspace-write', 'root-session')
-    await bridge.setReasoningEffort('root-session', 'high')
-    await bridge.setReasoningEffort('future-session', 'medium')
-    assert.equal(steerCalls.length, 1)
-    assert.equal(injectCalls.length, 1)
-    assert.deepEqual(policyCalls, [[rootAgent, 'never']])
-    assert.deepEqual(sessionAppends, [['sandbox/mode', { mode: 'workspace-write' }]])
-    assert.equal(bridge.capabilities.includes('session.setReasoningEffort'), true)
-    assert.ok(agentRequestHandler)
+    await f.bridge.steer('child-session', 'continue', 'root-session')
+    await f.bridge.inject('child-session', 'use the selected file', 'root-session')
+    assert.equal(f.steerCalls.length, 1)
+    assert.equal(f.injectCalls.length, 1)
+    await assert.rejects(
+      f.bridge.steer('child-session', 'blocked', 'unrelated-session'),
+      /not owned/,
+    )
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('applies approval policy and sandbox mode to the owning Agent', async () => {
+  const f = await controlPluginFixture()
+  try {
+    await f.bridge.setApprovalPolicy('root-session', 'never')
+    await f.bridge.setSandboxMode('child-session', 'workspace-write', 'root-session')
+    assert.deepEqual(f.policyCalls, [[f.rootAgent, 'never']])
+    assert.deepEqual(f.sessionAppends, [['sandbox/mode', { mode: 'workspace-write' }]])
+  } finally {
+    await f.dispose()
+  }
+})
+
+test('stages reasoning effort per session and overrides the outgoing request', async () => {
+  const f = await controlPluginFixture()
+  try {
+    assert.ok(f.handlers.agentRequest)
+    assert.equal(f.bridge.capabilities.includes('session.setReasoningEffort'), true)
     const baseRequestConfig = { provider: 'test-provider', model: 'test-model', reasoningEffort: 'low' }
-    assert.deepEqual(await agentRequestHandler({ agent: rootAgent }, async () => baseRequestConfig), {
+    await f.bridge.setReasoningEffort('root-session', 'high')
+    await f.bridge.setReasoningEffort('future-session', 'medium')
+    assert.deepEqual(await f.handlers.agentRequest!({ agent: f.rootAgent }, async () => baseRequestConfig), {
       provider: 'test-provider',
       model: 'test-model',
       reasoningEffort: 'high',
     })
-    assert.deepEqual(await agentRequestHandler({ agent: childAgent }, async () => baseRequestConfig), baseRequestConfig)
-    await bridge.setReasoningEffort('root-session', null)
-    const defaultRequestConfig = await agentRequestHandler({ agent: rootAgent }, async () => baseRequestConfig)
-    assert.equal('reasoningEffort' in defaultRequestConfig, false)
-    const futureRequestConfig = await agentRequestHandler({ agent: { id: 'future-session' } }, async () => baseRequestConfig)
+    assert.deepEqual(await f.handlers.agentRequest!({ agent: f.childAgent }, async () => baseRequestConfig), baseRequestConfig)
+    const futureRequestConfig = await f.handlers.agentRequest!({ agent: { id: 'future-session' } }, async () => baseRequestConfig)
     assert.equal(futureRequestConfig.reasoningEffort, 'medium')
+    await f.bridge.setReasoningEffort('root-session', null)
+    const defaultRequestConfig = await f.handlers.agentRequest!({ agent: f.rootAgent }, async () => baseRequestConfig)
+    assert.equal('reasoningEffort' in defaultRequestConfig, false)
     await assert.rejects(
-      bridge.setReasoningEffort('root-session', ''),
+      f.bridge.setReasoningEffort('root-session', ''),
       (error: { code?: string }) => error.code === 'INVALID_ARGUMENT',
     )
-    await assert.rejects(
-      bridge.steer('child-session', 'blocked', 'unrelated-session'),
-      /not owned/,
-    )
+  } finally {
+    await f.dispose()
+  }
+})
 
-    assert.ok(llmStreamHandler)
-    assert.ok(systemPromptAssembleHandler)
-    await bridge.armRequestPreview('root-session', 'preview-capture-1')
+test('captures the first matching preview request with its rendered sections', async () => {
+  const f = await controlPluginFixture()
+  try {
+    assert.ok(f.handlers.llmStream)
+    assert.ok(f.handlers.systemPromptAssemble)
+    await f.bridge.armRequestPreview('root-session', 'preview-capture-1')
     const previewAssembly = {
       sections: [
         { name: 'harness:identity', order: 0, text: 'Harness at {{workspace}}' },
@@ -137,8 +210,8 @@ test('adapts control requests and approval decisions to DSH agent services', asy
       tools: [],
       variables: { workspace: '/workspace/project', skill: 'release-check' },
     }
-    await systemPromptAssembleHandler?.(previewAssembly, { agent: { id: 'unrelated-session' } }, async () => previewAssembly)
-    await systemPromptAssembleHandler?.(previewAssembly, { agent: rootAgent, scope: rootAgent }, async () => previewAssembly)
+    await f.handlers.systemPromptAssemble!(previewAssembly, { agent: { id: 'unrelated-session' } }, async () => previewAssembly)
+    await f.handlers.systemPromptAssemble!(previewAssembly, { agent: f.rootAgent, scope: f.rootAgent }, async () => previewAssembly)
     let adapterCalls = 0
     const nextStream = (): AsyncIterable<unknown> => (async function* () {
       adapterCalls += 1
@@ -149,13 +222,13 @@ test('adapts control requests and approval decisions to DSH agent services', asy
       for await (const chunk of stream) chunks.push(chunk)
       return chunks
     }
-    await drainStream(llmStreamHandler?.({ sessionId: 'unrelated-session', provider: 'wrong', model: 'wrong', messages: [] }, nextStream) ?? nextStream())
-    await drainStream(llmStreamHandler?.({ sessionId: 'root-session', purpose: 'session-title', provider: 'test', model: 'title', messages: [] }, nextStream) ?? nextStream())
+    await drainStream(f.handlers.llmStream!({ sessionId: 'unrelated-session', provider: 'wrong', model: 'wrong', messages: [] }, nextStream) ?? nextStream())
+    await drainStream(f.handlers.llmStream!({ sessionId: 'root-session', purpose: 'session-title', provider: 'test', model: 'title', messages: [] }, nextStream) ?? nextStream())
     assert.equal(adapterCalls, 2)
 
     const previewEvent = new Promise<{ sessionId: string; params: Record<string, unknown> }>((resolve) => {
       let disposable: { dispose(): void } | undefined
-      disposable = bridge.onEvent((event) => {
+      disposable = f.bridge.onEvent((event) => {
         if (event.method !== 'request.previewCaptured' || event.params.captureId !== 'preview-capture-1') return
         disposable?.dispose()
         resolve(event)
@@ -175,7 +248,7 @@ test('adapts control requests and approval decisions to DSH agent services', asy
       stop: ['stop-here'],
       signal: new AbortController().signal,
     }
-    const capturedChunks = await drainStream(llmStreamHandler?.(capturedOptions, nextStream) ?? nextStream())
+    const capturedChunks = await drainStream(f.handlers.llmStream!(capturedOptions, nextStream) ?? nextStream())
     const event = await previewEvent
     assert.deepEqual(event.sessionId, 'root-session')
     assert.deepEqual(event.params.request, {
@@ -199,13 +272,20 @@ test('adapts control requests and approval decisions to DSH agent services', asy
     })
     assert.deepEqual(capturedChunks, [{ type: 'finish', reason: { kind: 'stop' } }])
     assert.equal(adapterCalls, 2, 'the matching preview request must short-circuit before the adapter')
-    await drainStream(llmStreamHandler?.(capturedOptions, nextStream) ?? nextStream())
+    await drainStream(f.handlers.llmStream!(capturedOptions, nextStream) ?? nextStream())
     assert.equal(adapterCalls, 3, 'only the first matching generation request is captured')
+  } finally {
+    await f.dispose()
+  }
+})
 
-    assert.ok(assistantStreamHandler)
+test('forwards assistant stream frames to the Host as session events', async () => {
+  const f = await controlPluginFixture()
+  try {
+    assert.ok(f.handlers.assistantStream)
     const nextStreamEvent = (): Promise<unknown> => new Promise((resolve) => {
       let disposable: { dispose(): void } | undefined
-      disposable = bridge.onEvent((event) => {
+      disposable = f.bridge.onEvent((event) => {
         if (event.method !== 'assistant.stream') return
         disposable?.dispose()
         resolve(event)
@@ -219,8 +299,8 @@ test('adapts control requests and approval decisions to DSH agent services', asy
       step: 2,
     }
     const startEventPromise = nextStreamEvent()
-    assistantStreamHandler?.({
-      agent: rootAgent,
+    f.handlers.assistantStream!({
+      agent: f.rootAgent,
       frame: startFrame,
     })
     const startEvent = await startEventPromise as {
@@ -243,8 +323,8 @@ test('adapts control requests and approval decisions to DSH agent services', asy
       chunk: { type: 'reasoning-delta', index: 0, text: 'thinking now' },
     }
     const chunkEventPromise = nextStreamEvent()
-    assistantStreamHandler?.({
-      agent: rootAgent,
+    f.handlers.assistantStream!({
+      agent: f.rootAgent,
       frame: chunkFrame,
     })
     const chunkEvent = await chunkEventPromise as {
@@ -257,39 +337,37 @@ test('adapts control requests and approval decisions to DSH agent services', asy
     assert.equal(chunkEvent.sessionId, 'root-session')
     assert.equal(chunkEvent.method, 'assistant.stream')
     assert.deepEqual(chunkEvent.params, { frame: chunkFrame })
+  } finally {
+    await f.dispose()
+  }
+})
 
-    assert.ok(approvalHandler)
-    let toolExecuted = false
+test('answers approval requests and rejects a duplicate resolution', async () => {
+  const f = await controlPluginFixture()
+  try {
+    assert.ok(f.handlers.approval)
     let approvalRequestResolve: ((requestId: string) => void) | undefined
     const approvalEvent = new Promise<string>((resolve) => { approvalRequestResolve = resolve })
-    const eventDisposable = bridge.onEvent((event) => {
+    const eventDisposable = f.bridge.onEvent((event) => {
       if (event.method === 'approval.request') approvalRequestResolve?.(String(event.params.approvalId))
     })
-    const approvalPromise = approvalHandler({
-      agent: rootAgent,
+    const approvalPromise = f.handlers.approval!({
+      agent: f.rootAgent,
       toolName: 'fs.write',
       callId: 'call-1',
       reason: 'write a file',
       signal: new AbortController().signal,
     }, async () => 'unavailable')
-    assert.equal(toolExecuted, false)
     const approvalId = await approvalEvent
-    await bridge.resolveApproval('root-session', approvalId, 'allowed-once')
+    await f.bridge.resolveApproval('root-session', approvalId, 'allowed-once')
     eventDisposable.dispose()
     assert.equal(await approvalPromise, 'allowed-once')
     await assert.rejects(
-      bridge.resolveApproval('root-session', approvalId, 'allowed-once'),
+      f.bridge.resolveApproval('root-session', approvalId, 'allowed-once'),
       (error: { code?: string }) => error.code === 'APPROVAL_NOT_PENDING',
     )
-    toolExecuted = true
-    assert.equal(toolExecuted, true)
   } finally {
-    disposePlugin?.()
-    if (originalEndpoint === undefined) delete process.env.HELIX_CONTROL_ENDPOINT
-    else process.env.HELIX_CONTROL_ENDPOINT = originalEndpoint
-    if (originalToken === undefined) delete process.env.HELIX_CONTROL_TOKEN
-    else process.env.HELIX_CONTROL_TOKEN = originalToken
-    await bridge.close()
+    await f.dispose()
   }
 })
 

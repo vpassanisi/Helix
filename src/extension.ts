@@ -1,7 +1,8 @@
 import { SkillController } from './host/skill-controller.js'
 import { CommandController } from './host/command-controller.js'
 import * as vscode from 'vscode'
-import { WorkspaceChangeTracker } from './runtime/change-tracker.js'
+import type { ChangeTracker } from './runtime/change-tracker.js'
+import { GitChangeTracker } from './runtime/git-change-tracker.js'
 import { captureEditorContext, editorContextMetadata } from './runtime/editor-context.js'
 import { HarnessRuntime } from './runtime/harness-runtime.js'
 import type { RuntimeState } from './runtime/types.js'
@@ -10,6 +11,8 @@ import { SessionController } from './host/session-controller.js'
 import { SettingsController } from './host/settings-controller.js'
 import { RequestPreviewCancelledError, RequestPreviewController } from './host/request-preview-controller.js'
 import { BrowserContextController } from './host/browser-context-controller.js'
+import { performUiAction } from './host/ui-action.js'
+import { appendCapturedProviderRequest, armProviderRequestCapture } from './host/provider-request-capture.js'
 import { validateGenUiAction, type GenUiAction } from './shared/gen-ui.js'
 
 type SidebarHandler = (message: SidebarMessage) => Promise<void>
@@ -18,7 +21,7 @@ class ExtensionApp {
   readonly sidebar: SidebarProvider
   private readonly runtime: HarnessRuntime
   private readonly subscriptions: vscode.Disposable[] = []
-  private readonly changeTracker: WorkspaceChangeTracker
+  private readonly changeTracker: ChangeTracker
   private readonly settings: SettingsController
   private readonly skills: SkillController
   private readonly commands: CommandController
@@ -49,7 +52,7 @@ class ExtensionApp {
       (message) => this.handleMessage(message),
       context.extensionMode === vscode.ExtensionMode.Development,
     )
-    this.changeTracker = new WorkspaceChangeTracker(
+    this.changeTracker = new GitChangeTracker(
       vscode.workspace.workspaceFolders?.[0]?.uri,
       (update) => this.sidebar.post({ type: 'codeChanges', ...update }),
     )
@@ -59,7 +62,7 @@ class ExtensionApp {
       onHandlerError: (error) => this.postError(error),
       onControlEvent: (event) => {
         if (event.method === 'provider.requestCaptured') {
-          this.handleProviderRequestCaptured(event.params)
+          appendCapturedProviderRequest(this.outputChannel, event.params)
           return
         }
         if (event.method === 'skills.changed') { this.skills?.invalidate(); this.sidebar.post({ type: 'skillsInvalidated' }); void this.loadSkills(); return }
@@ -250,22 +253,11 @@ class ExtensionApp {
       this.postError(error)
       return
     }
-    if (action.kind === 'openLink') {
-      if (!await vscode.env.openExternal(vscode.Uri.parse(action.url))) {
-        this.postError(new Error(`VS Code did not open ${action.url}`))
-      }
-      return
-    }
-    if (action.kind === 'openPath') {
-      try {
-        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(action.path))
-        await vscode.window.showTextDocument(document, { preview: true })
-      } catch {
-        this.postError(new Error(`${action.label ?? action.path} could not be opened. It may have been deleted, or it may live in a folder VS Code is not showing.`))
-      }
-      return
-    }
-    await this.session.handleUiAction(message.sessionId, action)
+    await performUiAction(
+      action,
+      (sessionAction) => this.session.handleUiAction(message.sessionId, sessionAction),
+      (error) => this.postError(error),
+    )
   }
 
   refreshSelection(): void {
@@ -412,31 +404,7 @@ class ExtensionApp {
       void vscode.window.showErrorMessage('Start a chat before arming provider request capture.')
       return
     }
-    try {
-      this.outputChannel.clear()
-      this.outputChannel.appendLine('Waiting for the next OpenAI Chat Completions request. Send one message in Helix.')
-      this.outputChannel.appendLine('The capture includes prompt and workspace context. Authorization headers are not captured.')
-      this.outputChannel.show(true)
-      await this.runtime.captureNextProviderRequest(this.session.currentSessionId)
-    } catch (error) {
-      this.outputChannel.appendLine(`Could not arm capture: ${error instanceof Error ? error.message : String(error)}`)
-      this.outputChannel.show(true)
-    }
-  }
-
-  private handleProviderRequestCaptured(params: Record<string, unknown>): void {
-    const url = typeof params.url === 'string' ? params.url : '(unknown URL)'
-    this.outputChannel.appendLine(`Captured provider request: POST ${url}`)
-    if (typeof params.body !== 'string') {
-      this.outputChannel.appendLine('The request body was not available as text.')
-      return
-    }
-    try {
-      this.outputChannel.appendLine(JSON.stringify(JSON.parse(params.body), null, 2))
-    } catch {
-      this.outputChannel.appendLine(params.body)
-    }
-    this.outputChannel.show(true)
+    await armProviderRequestCapture(this.runtime, this.session.currentSessionId, this.outputChannel)
   }
 
   private getSidebarState(): SidebarState {
@@ -486,6 +454,19 @@ export function activate(context: vscode.ExtensionContext): void {
       await app.toggleBrowserPicker()
     }),
     vscode.commands.registerCommand('dsh.captureNextProviderRequest', () => app.captureNextProviderRequest()),
+    vscode.commands.registerCommand('dsh.runSmokeTests', async () => {
+      // Development-only: the smoke suites import test scaffolding, so load
+      // them on demand instead of at activation.
+      const { runSmokeTests } = await import('./test/smoke-runner.js')
+      const channel = vscode.window.createOutputChannel('Helix Smoke Tests')
+      context.subscriptions.push(channel)
+      try {
+        await runSmokeTests(channel)
+      } catch (error) {
+        channel.appendLine(`[smoke] runner failed: ${String(error)}`)
+        vscode.window.showErrorMessage(`Helix smoke runner failed: ${String(error)}`)
+      }
+    }),
     vscode.commands.registerCommand('dsh.askSelection', async () => {
       await vscode.commands.executeCommand('dsh.openSidebar')
       app.refreshSelection()

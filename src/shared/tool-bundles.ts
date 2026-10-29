@@ -18,11 +18,12 @@ export interface ToolBundleOption {
   locked?: 'disabled'
 }
 
-/** Helix's own tool bundle, mounted by a Helix plugin, so it toggles by config. */
+/** Helix's own tool bundles, mounted by Helix plugins, so they toggle by config. */
 export const GEN_UI_TOOL_BUNDLE_ID = 'helix-gen-ui'
+export const REPORT_PROGRESS_TOOL_BUNDLE_ID = 'helix-report-progress'
 
 /** Bundles whose switch is plugin config, not a runtime disable row. */
-const CONFIG_TOGGLED_BUNDLE_IDS = new Set<string>([GEN_UI_TOOL_BUNDLE_ID])
+const CONFIG_TOGGLED_BUNDLE_IDS = new Set<string>([GEN_UI_TOOL_BUNDLE_ID, REPORT_PROGRESS_TOOL_BUNDLE_ID])
 
 export const TOOL_BUNDLE_OPTIONS: readonly ToolBundleOption[] = [
   { id: 'tool-fs', label: 'File tools', group: 'files', tools: ['read', 'write', 'edit', 'read_image'], hint: 'Read, write, and edit files in the workspace.' },
@@ -43,6 +44,7 @@ export const TOOL_BUNDLE_OPTIONS: readonly ToolBundleOption[] = [
   { id: 'mcp-resources', label: 'MCP resources', group: 'context', tools: ['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource'], hint: 'Read resources published by the MCP servers.' },
   { id: 'user-questions', label: 'Ask the user', group: 'context', tools: ['ask_user_question'], hint: 'Ask a question and wait for the answer. Helix shows these in the chat.' },
   { id: GEN_UI_TOOL_BUNDLE_ID, label: 'Generative UI cards', group: 'context', tools: ['show_ui'], hint: 'Render tables, dashboards, pickers, and forms as interactive cards in the chat.' },
+  { id: REPORT_PROGRESS_TOOL_BUNDLE_ID, label: 'Progress updates', group: 'context', tools: ['report_progress'], hint: 'Let the assistant put a short note in the chat while it keeps working.' },
   { id: 'tool-web', label: 'Web search and fetch', group: 'web', tools: ['web_search', 'web_fetch'], hint: 'Helix disables every web bundle for this runtime.', locked: 'disabled' },
 ]
 

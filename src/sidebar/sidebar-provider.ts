@@ -1,149 +1,12 @@
-import { isDecisionSettings, isSkillDraft, isSkillOverrides, type DecisionSettings, type SkillCatalog, type SkillDraft, type SkillOverrides, type SkillSuggestions } from '../shared/skills.js'
-import { readFileSync } from 'node:fs'
 import * as vscode from 'vscode'
-import type { CodeChange } from '../runtime/change-tracker.js'
-import type { EditorContext } from '../runtime/prompt-context.js'
-import type { RuntimeState, SandboxMode } from '../runtime/types.js'
-import { isReasoningFormat, type DiscoveredModel, type ModelDraft, type SavedModel } from '../runtime/model-catalog.js'
-import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import { isRecord } from '../shared/value-utils.js'
-import { isCommandName, type CommandCatalog } from '../shared/commands.js'
-import type { BrowserContextState } from '../shared/browser-context.js'
-import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
-import type { GenUiAction } from '../shared/gen-ui.js'
-import type { ExtensionInfo } from '../shared/extension-info.js'
-import { isOtelTracingSettings, type OtelTracingSettings } from '../shared/otel-tracing.js'
-
-export type SidebarMessage =
-  | { type: 'loadSkills'; sessionId: string }
-  | { type: 'analyzeSkills'; draft: SkillDraft }
-  | { type: 'loadCommands'; sessionId: string }
-  | { type: 'runCommand'; sessionId: string; name: string; args: string }
-  | { type: 'ready' }
-  | { type: 'openSettings' }
-  | {
-      type: 'saveSettings'
-      provider: string
-      baseUrl: string
-      apiKey?: string
-      clearApiKey: boolean
-      decisions?: DecisionSettings
-      decisionsApiKey?: string
-      clearDecisionsApiKey?: boolean
-      sandboxMode: SandboxMode
-      tracing?: OtelTracingSettings
-    }
-  | { type: 'saveMcpServers'; mcpServers: SidebarMcpServer[] }
-  | { type: 'saveTools'; disabledToolBundles: string[] }
-  | { type: 'submit'; prompt: string; includeSelection: boolean; reasoningEffort?: string | null; sessionId?: string; browserAttachmentIds?: string[]; skillDraft?: SkillDraft; skillOverrides?: SkillOverrides }
-  | { type: 'toggleBrowserPicker' }
-  | { type: 'removeBrowserAttachment'; sessionId: string; id: string }
-  | { type: 'newSession' }
-  | { type: 'cancelTurn' }
-  | { type: 'previewRequest'; prompt: string }
-  | { type: 'cancelRequestPreview' }
-  | { type: 'approvalDecision'; sessionId: string; requestId: string; outcome: 'allowed-once' | 'rejected' }
-  | { type: 'questionAnswer'; sessionId: string; requestId: string; answer: UserQuestionAnswer }
-  | { type: 'uiAction'; sessionId: string; callId: string; action: GenUiAction }
-  | { type: 'refreshModels' }
-  | { type: 'loadModelCatalog' }
-  | { type: 'saveModelCatalog'; models: ModelDraft[] }
-  | { type: 'selectModel'; model: string }
-  | { type: 'setSandboxMode'; sandboxMode: SandboxMode }
-
-export interface SidebarState {
-  extensionInfo?: ExtensionInfo
-  activeSessionId: string
-  runtimeState: RuntimeState
-  reasoningEffort?: string
-  selection?: Omit<EditorContext, 'ranges'> & {
-    ranges: Array<Omit<EditorContext['ranges'][number], 'text'>>
-  }
-  browserContext?: BrowserContextState
-  pendingQuestions?: PendingUserQuestion[]
-}
-
-export interface SidebarSettings {
-  provider: string
-  model: string
-  contextWindow: number
-  baseUrl: string
-  dshHome: string
-  apiKeyConfigured: boolean
-  skillPickerEnabled?: boolean
-  decisions?: DecisionSettings & { apiKeyConfigured: boolean }
-  sandboxMode: SandboxMode
-  tracing?: OtelTracingSettings
-  mcpServers: SidebarMcpServerSetting[]
-  /** Tool bundles left out of the runtime; applied when the next runtime starts. */
-  disabledToolBundles?: string[]
-}
-
-export type SidebarMcpTransport = 'stdio' | 'streamable-http'
-
-export interface SidebarMcpEnvironment {
-  name: string
-  value?: string
-  configured?: boolean
-}
-
-export interface SidebarMcpServer {
-  serverName: string
-  transport: SidebarMcpTransport
-  command: string
-  args: string[]
-  url: string
-  env: SidebarMcpEnvironment[]
-}
-
-export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env'> {
-  env: Array<{ name: string; configured: boolean }>
-}
-
-export type SidebarModel = SavedModel
-export type SidebarDiscoveredModel = DiscoveredModel
-export type SidebarCodeChange = CodeChange
-
-export type SidebarOutgoingMessage =
-  | { type: 'skillsInvalidated' }
-  | { type: 'skillCatalog'; sessionId: string; catalog: SkillCatalog; error?: string }
-  | { type: 'skillSuggestions'; suggestions: SkillSuggestions }
-  | { type: 'commandCatalog'; sessionId: string; catalog: CommandCatalog; error?: string }
-  | { type: 'commandResult'; sessionId: string; name: string; kind: 'success' | 'error'; text?: string }
-  | { type: 'submitFailed'; sessionId: string; message: string }
-  | { type: 'questionRequest'; request: PendingUserQuestion }
-  | { type: 'questionResolved'; sessionId: string; requestId: string; status: 'answered' | 'cancelled' | 'unavailable'; answer?: UserQuestionAnswer }
-  | { type: 'questionAnswerFailed'; sessionId: string; requestId: string; message: string }
-  | { type: 'browserContext'; state: BrowserContextState }
-  | { type: 'browserSubmitFailed'; sessionId: string; message: string }
-  | { type: 'state'; state: SidebarState; resetTranscript?: boolean }
-  | { type: 'settings'; settings: SidebarSettings }
-  | { type: 'settingsSaved'; settings: SidebarSettings; restarting: boolean }
-  | { type: 'selection'; selection?: SidebarState['selection'] }
-  | { type: 'codeChanges'; sessionId: string; changes: SidebarCodeChange[]; active: boolean }
-  | { type: 'notification'; sessionId: string; notification: unknown }
-  | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
-  | { type: 'error'; message: string }
-  | { type: 'accepted'; sessionId: string; modelId: string; reasoningEffort?: string }
-  | { type: 'discoveredModels'; models: SidebarDiscoveredModel[]; error?: string }
-  | { type: 'modelCatalog'; models: SidebarModel[]; reasoningHistory: Record<string, string>; error?: string }
-  | { type: 'modelCatalogSaved'; models: SidebarModel[]; reasoningHistory: Record<string, string>; runtimeRestarting: boolean }
-  | { type: 'requestPreviewState'; state: 'loading' | 'success' | 'error' | 'cancelled'; preview?: RequestPreviewResult; message?: string }
-  | {
-      type: 'approvalRequest'
-      sessionId: string
-      agentSessionId: string
-      requestId: string
-      toolCallId?: string
-      toolName: string
-      reason?: string
-    }
-  | {
-      type: 'approvalResolved'
-      sessionId: string
-      requestId: string
-      outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
-    }
+import { getHtml } from './sidebar-html.js'
+import {
+  isSidebarMessage,
+  type SidebarMessage,
+  type SidebarOutgoingMessage,
+  type SidebarState,
+} from './sidebar-protocol.js'
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined
@@ -232,184 +95,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 }
 
-function isSidebarMessage(value: unknown): value is SidebarMessage {
-  if (!isRecord(value) || !('type' in value)) return false
-  const type = value.type
-  if (type === 'loadSkills') return typeof value.sessionId === 'string'
-  if (type === 'loadCommands') return typeof value.sessionId === 'string'
-  if (type === 'runCommand') {
-    return typeof value.sessionId === 'string' && typeof value.name === 'string' && isCommandName(value.name) &&
-      typeof value.args === 'string'
-  }
-  if (type === 'analyzeSkills') return isSkillDraft(value.draft)
-  if (type === 'saveSettings') {
-    return 'provider' in value && typeof value.provider === 'string' &&
-      'baseUrl' in value && typeof value.baseUrl === 'string' &&
-      'clearApiKey' in value && typeof value.clearApiKey === 'boolean' &&
-      'sandboxMode' in value && isSandboxMode(value.sandboxMode) &&
-      (value.tracing === undefined || isOtelTracingSettings(value.tracing)) &&
-      (!('apiKey' in value) || typeof value.apiKey === 'string') &&
-      (value.decisions === undefined || isDecisionSettings(value.decisions)) &&
-      (value.decisionsApiKey === undefined || typeof value.decisionsApiKey === 'string') &&
-      (value.clearDecisionsApiKey === undefined || typeof value.clearDecisionsApiKey === 'boolean')
-  }
-  if (type === 'saveMcpServers') {
-    return 'mcpServers' in value && Array.isArray(value.mcpServers) && value.mcpServers.every(isSidebarMcpServer)
-  }
-  if (type === 'saveTools') {
-    return 'disabledToolBundles' in value && Array.isArray(value.disabledToolBundles) && value.disabledToolBundles.every((id) => typeof id === 'string')
-  }
-  if (type === 'submit') {
-    return 'prompt' in value && typeof value.prompt === 'string' &&
-      'includeSelection' in value && typeof value.includeSelection === 'boolean' &&
-      (value.skillDraft === undefined || (isSkillDraft(value.skillDraft) && value.skillDraft.prompt === value.prompt && value.skillDraft.sessionId === value.sessionId)) &&
-      (value.skillOverrides === undefined || isSkillOverrides(value.skillOverrides)) &&
-      (!('reasoningEffort' in value) || value.reasoningEffort === null || typeof value.reasoningEffort === 'string')
-      && (!('sessionId' in value) || typeof value.sessionId === 'string')
-      && (!('browserAttachmentIds' in value) || (Array.isArray(value.browserAttachmentIds) && value.browserAttachmentIds.every((id) => typeof id === 'string') && typeof value.sessionId === 'string'))
-  }
-  if (type === 'selectModel') {
-    return 'model' in value && typeof value.model === 'string'
-  }
-  if (type === 'saveModelCatalog') {
-    return 'models' in value && Array.isArray(value.models) && value.models.every(isModelDraft)
-  }
-  if (type === 'setSandboxMode') {
-    return 'sandboxMode' in value && isSandboxMode(value.sandboxMode)
-  }
-
-  if (type === 'approvalDecision') {
-    return 'sessionId' in value && typeof value.sessionId === 'string' &&
-      'requestId' in value && typeof value.requestId === 'string' &&
-      (value.outcome === 'allowed-once' || value.outcome === 'rejected')
-  }
-
-  if (type === 'questionAnswer') {
-    return typeof value.sessionId === 'string' && typeof value.requestId === 'string' && isRecord(value.answer) &&
-      typeof value.answer.id === 'string' && Array.isArray(value.answer.selected) &&
-      value.answer.selected.every((label) => typeof label === 'string') &&
-      (value.answer.custom === undefined || typeof value.answer.custom === 'string')
-  }
-
-  // Only the envelope is checked here. What the action may actually do is the
-  // Host's decision, made against the folders that are open right now.
-  if (type === 'uiAction') {
-    return typeof value.sessionId === 'string' && typeof value.callId === 'string' && isUiActionShape(value.action)
-  }
-
-  if (type === 'previewRequest') return 'prompt' in value && typeof value.prompt === 'string'
-  if (type === 'removeBrowserAttachment') return typeof value.sessionId === 'string' && typeof value.id === 'string'
-
-  return type === 'ready' ||
-    type === 'toggleBrowserPicker' ||
-    type === 'openSettings' ||
-    type === 'loadModelCatalog' ||
-    type === 'newSession' ||
-    type === 'cancelTurn' ||
-    type === 'cancelRequestPreview' ||
-    type === 'refreshModels'
-}
-
-/**
- * The shape of a card's intent, checked on the wire. Whether the intent is
- * allowed — a URL scheme, a path inside the folders that are open — is the
- * Host's decision, made against what is true right now.
- */
-function isUiActionShape(value: unknown): value is GenUiAction {
-  if (!isRecord(value)) return false
-  if (value.kind === 'dismiss') return true
-  if (value.kind === 'prompt' || value.kind === 'inject' || value.kind === 'copy') return typeof value.text === 'string'
-  if (value.kind === 'openPath') return typeof value.path === 'string' && (value.label === undefined || typeof value.label === 'string')
-  if (value.kind === 'openLink') return typeof value.url === 'string' && (value.label === undefined || typeof value.label === 'string')
-  return false
-}
-
-function isModelDraft(value: unknown): value is ModelDraft {
-  if (!isRecord(value) || typeof value.id !== 'string') return false
-  if ('displayName' in value && value.displayName !== undefined && typeof value.displayName !== 'string') return false
-  if ('sourceId' in value && value.sourceId !== undefined && typeof value.sourceId !== 'string') return false
-  if ('contextWindow' in value && value.contextWindow !== undefined &&
-    (typeof value.contextWindow !== 'number' || !Number.isSafeInteger(value.contextWindow) || value.contextWindow <= 0)) return false
-  if ('acceptsImages' in value && value.acceptsImages !== undefined && typeof value.acceptsImages !== 'boolean') return false
-  if ('reasoningEfforts' in value && value.reasoningEfforts !== undefined &&
-    (!Array.isArray(value.reasoningEfforts) || !value.reasoningEfforts.every((effort) => typeof effort === 'string'))) return false
-  if ('reasoningFormat' in value && value.reasoningFormat !== undefined && !isReasoningFormat(value.reasoningFormat)) return false
-  if ('binaryThinkingMode' in value && value.binaryThinkingMode !== undefined &&
-    value.binaryThinkingMode !== 'on' && value.binaryThinkingMode !== 'off') return false
-  if ('chatTemplateKwargs' in value && value.chatTemplateKwargs !== undefined && !isRecord(value.chatTemplateKwargs)) return false
-  if ('chatTemplateArgs' in value && value.chatTemplateArgs !== undefined && !isRecord(value.chatTemplateArgs)) return false
-  return true
-}
-
-function isSidebarMcpServer(value: unknown): value is SidebarMcpServer {
-  if (!isRecord(value) || typeof value.serverName !== 'string' ||
-    (value.transport !== 'stdio' && value.transport !== 'streamable-http') ||
-    typeof value.command !== 'string' || typeof value.url !== 'string' ||
-    !Array.isArray(value.args) || !value.args.every((argument) => typeof argument === 'string') ||
-    !Array.isArray(value.env)) return false
-
-  return value.env.every((entry) => isRecord(entry) && typeof entry.name === 'string' &&
-    (!('value' in entry) || typeof entry.value === 'string') &&
-    (!('configured' in entry) || typeof entry.configured === 'boolean'))
-}
-
-function isSandboxMode(value: unknown): value is SandboxMode {
-  return value === 'read-only' || value === 'workspace-write' || value === 'danger-full-access'
-}
-
-function getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-  const nonce = createNonce()
-  const csp = [
-    "default-src 'none'",
-    `style-src ${webview.cspSource} 'unsafe-inline'`,
-    `script-src 'nonce-${nonce}'`,
-    `img-src ${webview.cspSource} data:`,
-    `font-src ${webview.cspSource} data:`,
-  ].join('; ')
-  const htmlPath = vscode.Uri.joinPath(extensionUri, 'out', 'webview', 'index.html').fsPath
-
-  try {
-    let html = readFileSync(htmlPath, 'utf8')
-    const assetsRoot = vscode.Uri.joinPath(extensionUri, 'out', 'webview', 'assets')
-
-    html = html.replace(/(src|href)="\.\/assets\/([^"]+)"/g, (_match, attribute: string, asset: string) => {
-      const assetUri = webview.asWebviewUri(vscode.Uri.joinPath(assetsRoot, asset))
-      return `${attribute}="${assetUri}"`
-    })
-    html = html.replace('<head>', `<head>\n<meta http-equiv="Content-Security-Policy" content="${csp}" />`)
-    html = html.replace(/<script(\s|>)/g, `<script nonce="${nonce}"$1`)
-    return html
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <style>body { color: var(--vscode-foreground); background: var(--vscode-sideBar-background); font-family: var(--vscode-font-family); padding: 16px; } code { color: var(--vscode-errorForeground); }</style>
-</head>
-<body>
-  <strong>Helix UI is not built.</strong>
-  <p>Run <code>npm run compile</code>, then reload the Extension Development Host.</p>
-  <small>${escapeHtml(message)}</small>
-</body>
-</html>`
-  }
-}
-
-function createNonce(): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  let value = ''
-  for (let index = 0; index < 32; index += 1) value += alphabet.charAt(Math.floor(Math.random() * alphabet.length))
-  return value
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    "'": '&#39;',
-    '"': '&quot;',
-  })[character] ?? character)
-}
+// The wire protocol (message types and their validators) and the webview
+// bootstrap page moved to their own files; this path keeps re-exporting them
+// so existing importers are unaffected.
+export {
+  type SidebarCodeChange,
+  type SidebarDiscoveredModel,
+  type SidebarMcpEnvironment,
+  type SidebarMcpServer,
+  type SidebarMcpServerSetting,
+  type SidebarMcpTransport,
+  type SidebarMessage,
+  type SidebarModel,
+  type SidebarSettings,
+  type SidebarState,
+  type SidebarOutgoingMessage,
+  isModelDraft,
+  isSandboxMode,
+  isSidebarMcpServer,
+  isSidebarMessage,
+  isUiActionShape,
+} from './sidebar-protocol.js'

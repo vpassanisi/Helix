@@ -65,3 +65,18 @@ test('emits an empty args array for a command without arguments', () => {
     '        args: []',
   ])
 })
+
+test('a disabled MCP server is inserted as a disabled entry', () => {
+  const lines = mcpPatchLines([
+    { serverName: 'on', transport: 'stdio', command: 'mcp-on', args: [], env: {} },
+    { serverName: 'off', transport: 'stdio', command: 'mcp-off', args: [], env: {}, enabled: false },
+  ])
+
+  assert.deepEqual(lines.slice(lines.indexOf('    - id: "mcp-off"'), lines.indexOf('    - id: "mcp-off"') + 4), [
+    '    - id: "mcp-off"',
+    "      name: '@deepseek-ai/dsh-mcp-client'",
+    '      disabled: true',
+    '      config:',
+  ])
+  assert.equal(lines.filter((line) => line === '      disabled: true').length, 1, 'an enabled server writes no disabled row')
+})

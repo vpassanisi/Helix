@@ -25,14 +25,131 @@ export const modelDrafts: ModelEditorDraft[] = models.map((model, index) => ({
 export { modelOptionLabel } from '../src/webview/lib/model-mappers.js'
 
 export const mcpServers: McpServerDraft[] = [
-  { serverName: 'local-tools', transport: 'stdio', command: 'docker', argsText: 'run\n-i\n--rm\nexample/mcp-server', url: '', env: [{ name: 'API_TOKEN', value: '', configured: true }] },
-  { serverName: 'docs', transport: 'streamable-http', command: '', argsText: '', url: 'http://localhost:3000/mcp', env: [] },
+  { serverName: 'local-tools', transport: 'stdio', command: 'docker', argsText: 'run\n-i\n--rm\nexample/mcp-server', url: '', env: [{ name: 'API_TOKEN', value: '', configured: true }], enabled: true },
+  { serverName: 'docs', transport: 'streamable-http', command: '', argsText: '', url: 'http://localhost:3000/mcp', env: [], enabled: false },
 ]
 
 export const tool: ToolCallView = {
-  callId: 'preview-tool', name: 'read_file', arguments: '{"path":"src/webview/App.svelte"}', status: 'completed',
-  result: 'Read **App.svelte** successfully.\n\n```svelte\n<ChangesPanel changes={codeChanges} />\n```',
-  meta: 'File size: 12 KB',
+  callId: 'preview-tool', name: 'bash',
+  arguments: '{"description":"List files in current directory","command":"ls"}',
+  description: 'List files in current directory',
+  status: 'completed',
+  result: 'App.svelte\nChangesPanel.svelte\nComposer.svelte',
+  meta: 'Finished in 0.3s',
+}
+
+/** A bash call with the shapes that only bash produces: a command long enough to wrap
+ * in the Arguments pane, multi-line stdout long enough to scroll in the Result pane,
+ * and a description long enough to be cut by CSS truncation in the summary. */
+export const bashTool: ToolCallView = {
+  callId: 'preview-bash', name: 'bash',
+  arguments: '{"description":"Rebuild the webview bundle and list the largest output chunks","command":"npm run build:webview 2>&1 | tail -20","workdir":"/Users/dev/Documents/Code/DSH VScode extension","run_in_background":false}',
+  description: 'Rebuild the webview bundle and list the largest output chunks',
+  status: 'completed',
+  result: 'vite v7.1.5 building client environment for production...\ntransforming...\nsrc/webview/main.ts\nsrc/webview/components/ToolCallCard.svelte\nsrc/webview/components/ThinkingCard.svelte\n✓ 214 modules transformed.\nrendering chunks...\ncomputing gzip size...\nout/webview/main.js   412.65 kB │ gzip: 118.42 kB\nout/webview/markdown.js  96.18 kB │ gzip:  27.30 kB\n✓ built in 3.41s\n[status: completed, exit code: 0]',
+  meta: 'Finished in 4.2s',
+}
+
+/** What the presenter bridge yields for a read: the tool's own title, its
+ * category for the icon, and the file it read, which the card can open. */
+export const readTool: ToolCallView = {
+  callId: 'preview-read', name: 'read',
+  arguments: '{"file_path":"/Users/dev/helix/src/webview/App.svelte","offset":30,"limit":31}',
+  status: 'completed',
+  result: '30:   selectionAttached = true\n31:   const router = createMessageRouter(deps)',
+  presentation: {
+    card: 'generic',
+    title: 'Read /Users/dev/helix/src/webview/App.svelte (30 - 60)',
+    kind: 'read',
+    locations: [{ path: '/Users/dev/helix/src/webview/App.svelte', line: 30 }],
+  },
+}
+
+/** The same call with no presenter behind it, which is how an MCP tool card
+ * reads today: the name, the status, and the raw arguments. */
+export const readToolUnpresented: ToolCallView = {
+  callId: 'preview-read-bare', name: 'read',
+  arguments: '{"file_path":"src/webview/App.svelte","offset":30,"limit":31}',
+  status: 'running',
+}
+
+/** bash declares a terminal card whose title is the command and whose summary
+ * above it is the model's own description, so the card prefers the description. */
+export const bashTerminalTool: ToolCallView = {
+  callId: 'preview-bash-terminal', name: 'bash',
+  arguments: '{"description":"Watch the webview bundle rebuild on every save","command":"npm run watch:webview"}',
+  description: 'Watch the webview bundle rebuild on every save',
+  status: 'running',
+  presentation: {
+    card: 'terminal',
+    title: 'npm run watch:webview',
+    description: 'Watch the webview bundle rebuild on every save',
+    kind: 'execute',
+    cwd: '/Users/dev/helix',
+  },
+}
+
+/** The file and search tools, with the views their presenters declare. Each
+ * `presentation` is what the bridge sends after projecting the presenter's
+ * return value: title, category, and the file the call touches. */
+export const writeTool: ToolCallView = {
+  callId: 'preview-write', name: 'write',
+  arguments: '{"file_path":"/Users/dev/helix/src/webview/components/EmptyState.svelte","content":"<script lang=\\"ts\\">\\n  let { prompt }: { prompt: string } = $props()\\n</script>\\n\\n<p>No prompt yet: {prompt}</p>\\n"}',
+  status: 'completed',
+  result: 'Created file /Users/dev/helix/src/webview/components/EmptyState.svelte',
+  meta: 'Finished in 0.1s',
+  presentation: {
+    card: 'diff',
+    title: 'Write /Users/dev/helix/src/webview/components/EmptyState.svelte',
+    kind: 'edit',
+    locations: [{ path: '/Users/dev/helix/src/webview/components/EmptyState.svelte' }],
+  },
+}
+
+export const editTool: ToolCallView = {
+  callId: 'preview-edit', name: 'edit',
+  arguments: '{"file_path":"/Users/dev/helix/src/webview/components/ToolCallCard.svelte","old_string":"  import { Wrench } from \'@lucide/svelte\'","new_string":"  import { FileCode2, Pencil, Search, Wrench } from \'@lucide/svelte\'"}',
+  status: 'completed',
+  result: 'Edited /Users/dev/helix/src/webview/components/ToolCallCard.svelte: 1 replacement',
+  meta: 'Finished in 0.2s',
+  presentation: {
+    card: 'diff',
+    title: 'Edit /Users/dev/helix/src/webview/components/ToolCallCard.svelte',
+    kind: 'edit',
+    locations: [{ path: '/Users/dev/helix/src/webview/components/ToolCallCard.svelte' }],
+  },
+}
+
+export const readImageTool: ToolCallView = {
+  callId: 'preview-read-image', name: 'read_image',
+  arguments: '{"file_path":"/Users/dev/helix/media/dsh.svg"}',
+  status: 'completed',
+  result: 'Image dsh.svg returned as an attachment (256x256).',
+  meta: 'Finished in 0.1s',
+  presentation: {
+    card: 'generic',
+    title: 'Read image /Users/dev/helix/media/dsh.svg',
+    kind: 'read',
+    locations: [{ path: '/Users/dev/helix/media/dsh.svg' }],
+  },
+}
+
+export const globTool: ToolCallView = {
+  callId: 'preview-glob', name: 'glob',
+  arguments: '{"pattern":"**/*.svelte","path":"src/webview/components"}',
+  status: 'completed',
+  result: 'App.svelte\nComposer.svelte\nMessageRow.svelte\nToolCallCard.svelte\nTranscript.svelte',
+  meta: 'Finished in 0.1s',
+  presentation: { card: 'generic', title: 'Glob **/*.svelte in src/webview/components', kind: 'search' },
+}
+
+export const grepTool: ToolCallView = {
+  callId: 'preview-grep', name: 'grep',
+  arguments: '{"pattern":"presentCall","path":"src","include":"*.ts"}',
+  status: 'completed',
+  result: 'src/runtime/dsh-tool-presentation-bridge.ts\n  52: const tool = typeof tools?.get === \'function\' ? tools.get(name, scope) : undefined\n  53: if (typeof tool?.presentCall !== \'function\') return undefined',
+  meta: 'Finished in 0.3s',
+  presentation: { card: 'generic', title: 'Grep presentCall in src (*.ts)', kind: 'search' },
 }
 
 export const requestPreview: RequestPreviewResult = {

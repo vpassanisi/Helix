@@ -1,7 +1,5 @@
 # Helix for VS Code
 
-For individual component previews, run `npm run storybook` and open `http://127.0.0.1:6006`. See [the preview guide](stories/README.md) for sample states and controls.
-
 I built this VS Code extension because I could not find a harness that gave me enough control over what gets sent to the model. That control is especially important when working with smaller local models.
 
 I also could not find an app or extension that supported the workflow I wanted. Codex and Claude Code extensions are good, but their support for local models is limited and seems to be getting worse over time.
@@ -86,6 +84,8 @@ mcp/duckduckgo
 Save the settings and the extension restarts DSH. DSH launches the Docker command over stdio; Docker Desktop must be running, but the container does not need to be started separately. The server's tools are exposed to the model as `mcp__duckduckgo__<tool>`.
 
 Environment variable values entered for stdio servers are stored in VS Code SecretStorage. The generated DSH patch contains only references to process environment variables, never the secret values. MCP servers run at the DSH runtime level and are available to all sessions in that runtime.
+
+Every server card carries a switch. A switched-off server keeps its saved command, URL, and stored secrets, and the generated patch marks its entry `disabled: true`. The server does not start, and switching it back on needs no re-entry. The switch applies on save, when the extension restarts DSH.
 
 The extension disables DSH's built-in Web Search and Web Fetch tools. Use an MCP server such as DuckDuckGo for web access instead, so the model does not call the built-in DeepSeek web route with the connection API key.
 

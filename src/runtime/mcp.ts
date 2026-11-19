@@ -9,6 +9,12 @@ export interface PersistedMcpServer {
   args: string[]
   url?: string
   envKeys: string[]
+  /**
+   * `false` keeps the saved server in settings but leaves its entry switched
+   * off in the runtime. The key is absent for an enabled server, so settings
+   * written before this option existed need no migration.
+   */
+  enabled?: boolean
 }
 
 export interface RuntimeMcpServer {
@@ -18,6 +24,8 @@ export interface RuntimeMcpServer {
   args: string[]
   url?: string
   env: Record<string, string>
+  /** Only `false` is meaningful: the entry runs when the key is absent. */
+  enabled?: boolean
 }
 
 export function mcpServerId(serverName: string): string {
@@ -52,11 +60,18 @@ function mcpServerPatchLines(server: RuntimeMcpServer): string[] {
   const lines = [
     `    - id: ${yamlString(mcpServerId(server.serverName))}`,
     "      name: '@deepseek-ai/dsh-mcp-client'",
+  ]
+
+  // A loader entry honours `disabled`, so a saved server can stay configured
+  // while the runtime leaves it out. An enabled server writes no row at all.
+  if (server.enabled === false) lines.push('      disabled: true')
+
+  lines.push(
     '      config:',
     `        serverName: ${yamlString(server.serverName)}`,
     `        transport: ${yamlString(server.transport)}`,
     '        failOnStartupError: false',
-  ]
+  )
 
   if (server.transport === 'stdio') {
     lines.push(`        command: ${yamlString(server.command ?? '')}`)

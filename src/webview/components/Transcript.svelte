@@ -17,9 +17,11 @@
     onanswer: (message: ChatMessage, answer: UserQuestionAnswer) => void
     onapprove: (message: ChatMessage, outcome: 'allowed-once' | 'rejected') => void
     onui: (message: ChatMessage, action: GenUiAction) => void
+    /** Opens the file a tool presenter located on one of its calls. */
+    onopenfile: (message: ChatMessage, path: string, line?: number) => void
   }
 
-  let { transcript, activeSessionId, isGenerating, waitingForFirstResponse, codeChanges, changesOpen = $bindable(false), onanswer, onapprove, onui }: Props = $props()
+  let { transcript, activeSessionId, isGenerating, waitingForFirstResponse, codeChanges, changesOpen = $bindable(false), onanswer, onapprove, onui, onopenfile }: Props = $props()
 </script>
 
 <div class="flex-1 min-h-0 overflow-auto px-3.5 pt-4 pb-2 [scrollbar-color:#30363c_transparent]" bind:this={transcript.transcriptElement} onscroll={(event) => transcript.onScroll(event)} aria-live="polite">
@@ -31,6 +33,7 @@
       onanswer={(answer) => onanswer(message, answer)}
       onapprove={(outcome) => onapprove(message, outcome)}
       onui={(action) => onui(message, action)}
+      onopenfile={(path, line) => onopenfile(message, path, line)}
     />
   {/each}
   {#if waitingForFirstResponse}

@@ -14,3 +14,4 @@
 <Story name="Completed" />
 <Story name="Active" args={{ active: true }} />
 <Story name="Long reasoning" args={{ text: `${text}\n\n${text}\n\n${text}` }} />
+<Story name="Long first line" args={{ text: 'The request touches the session controller, the runtime transport and the webview, so I am tracing every path in order before I make the change that keeps the UI in sync.' }} />

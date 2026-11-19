@@ -13,6 +13,16 @@
    * under the idle label's #b6b6b6 so the sweep reads as movement, not a static grey. */
   const activeLabelClasses = 'text-transparent [background-image:linear-gradient(110deg,#8a8a8a_30%,#dedede_48%,#8a8a8a_66%)] [background-size:250%_100%] bg-clip-text animate-thinking-shimmer motion-reduce:animate-none motion-reduce:bg-none motion-reduce:text-[#8a8a8a]'
 
+  /** The summary shows the opening of the reasoning, the way a tool card shows its
+   * description. `previewMaxChars` keeps a long first sentence out of the DOM; the
+   * `truncate` class does the visible cut at the panel width, so the cap only has to
+   * be generous enough not to cut before the ellipsis would. */
+  const previewMaxChars = 120
+  const previewLine = $derived(text.split('\n').find((line) => line.trim())?.trim() ?? '')
+  const preview = $derived(
+    previewLine.length > previewMaxChars ? `${previewLine.slice(0, previewMaxChars).trimEnd()}…` : previewLine,
+  )
+
   function isNearBottom(element: HTMLElement): boolean {
     return element.scrollHeight - element.clientHeight - element.scrollTop <= 24
   }
@@ -41,9 +51,14 @@
 </script>
 
 <details class={`group/thinking relative border-l border-[var(--thinking-border)] pl-[10px] ${active ? activeEdgeClasses : ''}`} aria-busy={active}>
-  <summary class="flex cursor-pointer list-none select-none items-center gap-[4px] text-[#b6b6b6] [&::-webkit-details-marker]:hidden">
-    <span class={active ? activeLabelClasses : ''}>{label}</span>
-    <ChevronDown class="flex-none opacity-0 [transition:opacity_.18s_ease,transform_.15s_ease] group-hover/thinking:opacity-100 group-focus-visible/thinking:opacity-100 group-open/thinking:rotate-180" size={13} strokeWidth={1.8} />
+  <summary class="flex flex-col items-start cursor-pointer list-none select-none text-[#b6b6b6] [&::-webkit-details-marker]:hidden">
+    <div class="flex items-center gap-[4px]">
+      <span class={active ? activeLabelClasses : ''}>{label}</span>
+      <ChevronDown class="flex-none opacity-0 [transition:opacity_.18s_ease,transform_.15s_ease] group-hover/thinking:opacity-100 group-focus-visible/thinking:opacity-100 group-open/thinking:rotate-180" size={13} strokeWidth={1.8} />
+    </div>
+    {#if preview}
+      <div class="mt-[2px] w-full min-w-0 truncate text-[10px] leading-[1.35] text-[var(--muted-foreground)] group-open/thinking:hidden" title={previewLine}>{preview}</div>
+    {/if}
   </summary>
   <div class="whitespace-pre-wrap [overflow-wrap:anywhere] leading-[1.5] mt-[7px] max-h-[260px] overflow-auto" use:followStream>{text}</div>
 </details>

@@ -30,6 +30,16 @@ input:focus-visible, textarea:focus-visible, summary:focus-visible {
   outline-offset: 2px;
 }
 
+/* Basecoat builds a switch from a fixed-pixel track (24x14 small, 32x18.4 default)
+   and a knob measured in `--spacing`, which is `.25rem`. This webview runs a 13px
+   root font, so the knob shrinks to 9.75px while the track stays 24px. The checked
+   travel is `translate: calc(100% - 2px)` of the knob, so the knob stops 4.5px short
+   of the right edge. Pin `--spacing` on the switch: knob 12px, travel 10px, flush
+   inside the track at every root font size. */
+:is(.field > input[type='checkbox'][role='switch'], .input[type='checkbox'][role='switch']) {
+  --spacing: 4px;
+}
+
 @theme {
   --animate-composer-shimmer: composer-shimmer 3.6s ease-in-out infinite alternate;
   @keyframes composer-shimmer {

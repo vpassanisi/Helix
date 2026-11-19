@@ -10,8 +10,8 @@
 </script>
 
 <!-- A mode-rule-style marker: the line reaches both edges and fades out, breaking for the
-     status label; the detail sits on its own line below. While compaction is running the line pulses,
-     and a failed marker keeps a small alert icon. -->
+     status label; the detail sits on its own line below once the run settles. While compaction is
+     running only the pulsing line and title show, and a failed marker keeps a small alert icon. -->
 <div
   class="grid gap-[3px] px-2.5 text-[var(--compaction-color,var(--thinking-border))]"
   style={`--compaction-color: ${compactionColor}`}
@@ -29,5 +29,7 @@
     <span>{compactionTitle(entry)}</span>
     {#if subagent}<span class="font-normal text-[var(--muted-foreground)]">Subagent</span>{/if}
   </div>
-  <span class="text-[10px] font-normal tracking-0 leading-[1.5] text-center text-[var(--muted-foreground)] [overflow-wrap:anywhere]">{compactionDetail(entry)}</span>
+  {#if entry.status !== 'running'}
+    <span class="text-[10px] font-normal tracking-0 leading-[1.5] text-center text-[var(--muted-foreground)] [overflow-wrap:anywhere]">{compactionDetail(entry)}</span>
+  {/if}
 </div>

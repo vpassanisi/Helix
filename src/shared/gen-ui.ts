@@ -1,6 +1,7 @@
 import type { Spec } from '@json-render/core'
 import { GEN_UI_LIMITS, validateGenUiSpec } from './gen-ui-catalog.js'
 import { isRecord } from './value-utils.js'
+import { isAbsolutePath } from './path-guards.js'
 
 export type { Spec as GenUiSpec } from '@json-render/core'
 export { GEN_UI_LIMITS, GEN_UI_TOOL_NAME, genUiPromptText, HELIX_GEN_UI_EXAMPLE_SPEC, validateGenUiSpec } from './gen-ui-catalog.js'
@@ -104,10 +105,6 @@ function boundedText(value: unknown, limit: number, name: string): string {
   if (!text) throw new Error(`${name} must not be empty.`)
   if (text.length > limit) throw new Error(`${name} is longer than ${limit} characters.`)
   return text
-}
-
-function isAbsolutePath(path: string): boolean {
-  return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) || /^\\\\[^\\]+\\[^\\]+/.test(path)
 }
 
 /**

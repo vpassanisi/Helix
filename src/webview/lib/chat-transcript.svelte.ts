@@ -4,7 +4,7 @@ import { CompactionHistory, type CompactionEntry } from '../../shared/compaction
 import { assistantTextBlocks } from '../../shared/harness-events.js'
 import type { UserQuestionView } from '../../shared/user-question.js'
 import type { GenUiView } from '../../shared/gen-ui.js'
-import type { ApprovalView, ChatMessage, ChatRole, CodeChange, SelectionMetadata, ToolCallView } from '../types.js'
+import type { ApprovalView, ChatMessage, ChatRole, CodeChange, SelectionMetadata, ToolCallView, ToolPresentation } from '../types.js'
 
 export type StreamRole = 'assistant' | 'reasoning'
 
@@ -197,6 +197,23 @@ export class ChatTranscript {
     }
     this.messages = next
     void this.scrollToBottom()
+  }
+
+  /**
+   * Puts a tool's own card words on the row that call id owns.
+   *
+   * The answer says whether a row took it: the view and the row arrive on two
+   * different channels, and the caller keeps the view when nothing has taken it.
+   */
+  attachPresentation(callId: string, presentation: ToolPresentation): boolean {
+    const index = this.messages.findIndex((entry) => entry.tool?.callId === callId)
+    if (index === -1) return false
+    const tool = this.messages[index].tool
+    if (!tool) return false
+    const next = [...this.messages]
+    next[index] = { ...next[index], tool: { ...tool, presentation } }
+    this.messages = next
+    return true
   }
 
   removePreparingToolCalls(callIds: string[]): void {

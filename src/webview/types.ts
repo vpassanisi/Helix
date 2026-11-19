@@ -9,8 +9,10 @@ import type { OtelTracingSettings } from '../shared/otel-tracing.js'
 import type { CompactionEntry } from '../shared/compaction-history.js'
 import type { CommandCatalog } from '../shared/commands.js'
 import type { CodeChange, CodeChangeKind } from '../shared/code-changes.js'
+import type { ToolPresentation } from '../shared/tool-presentation.js'
 export type { RequestPreviewResult } from '../runtime/control-protocol.js'
 export type { CodeChange, CodeChangeKind }
+export type { ToolPresentation, ToolPresentationCard, ToolPresentationKind } from '../shared/tool-presentation.js'
 
 export type RuntimeState = 'stopped' | 'starting' | 'ready' | 'error'
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
@@ -27,6 +29,10 @@ export interface ToolCallView {
   callId: string
   name: string
   arguments: string
+  /** One line the model gave about what the call is for, when the tool takes a description argument. */
+  description?: string
+  /** The tool's own card words, projected from its presenter in the runtime. Absent when the tool declares none. */
+  presentation?: ToolPresentation
   result?: string
   meta?: string
   error?: string
@@ -96,10 +102,14 @@ export interface SidebarMcpServer {
   args: string[]
   url: string
   env: SidebarMcpEnvironment[]
+  /** Absent means enabled. */
+  enabled?: boolean
 }
 
-export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env'> {
+export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env' | 'enabled'> {
   env: Array<{ name: string; configured: boolean }>
+  /** False keeps the saved server configured but leaves its runtime entry switched off. */
+  enabled: boolean
 }
 
 export interface McpEnvironmentDraft {
@@ -115,6 +125,8 @@ export interface McpServerDraft {
   argsText: string
   url: string
   env: McpEnvironmentDraft[]
+  /** The state of the card switch. */
+  enabled: boolean
 }
 
 export interface SidebarModel {
@@ -207,6 +219,7 @@ export type IncomingMessage =
   | { type: 'codeChanges'; sessionId: string; changes: CodeChange[]; active: boolean }
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
+  | { type: 'toolPresentation'; sessionId: string; callId: string; view: ToolPresentation }
   | { type: 'error'; message: string }
   | { type: 'accepted'; sessionId: string; modelId: string; reasoningEffort?: string }
   | { type: 'discoveredModels'; models: SidebarDiscoveredModel[]; error?: string }

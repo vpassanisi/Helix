@@ -8,6 +8,7 @@ import { isControlApprovalResult } from '../runtime/control-protocol.js'
 import type { RoutedNotification, RuntimeOptions, RuntimeState } from '../runtime/types.js'
 import { SessionHierarchy } from '../runtime/session-hierarchy.js'
 import { stringValue } from '../shared/value-utils.js'
+import { isToolPresentation } from '../shared/tool-presentation.js'
 import type { BrowserElementContext } from '../shared/browser-context.js'
 import { validateUserQuestion, validatePlanReviewQuestion, validateQuestionAnswer, isPlanReview, type PendingUserQuestion } from '../shared/user-question.js'
 import type { GenUiAction } from '../shared/gen-ui.js'
@@ -288,6 +289,16 @@ export class SessionController {
     }
     if (event.method === 'approval.request') {
       this.handleApprovalRequest(event)
+      return
+    }
+    if (event.method === 'tool.presentation') {
+      // A tool's own card words, projected in the runtime. The Webview keys the
+      // row by call id, so a child agent's call lands on the card it opened.
+      if (!this.ownsSession(this.activeSessionId, event.sessionId)) return
+      const callId = stringValue(event.params.callId)
+      const view = event.params.view
+      if (callId === undefined || !isToolPresentation(view)) return
+      this.options.sidebar.post({ type: 'toolPresentation', sessionId: this.activeSessionId, callId, view })
       return
     }
     if (event.method !== 'approval.resolved') return

@@ -3,6 +3,8 @@ import test from 'node:test'
 import {
   DEFAULT_OTEL_TRACING_ENDPOINT,
   DEFAULT_OTEL_TRACING_SETTINGS,
+  OTEL_RESYNC_TRIGGERS,
+  isOtelResyncTrigger,
   isOtelTracingSettings,
   isValidOtelEndpointId,
   isValidOtelHeaderName,
@@ -106,4 +108,91 @@ test('endpoint ids and header names follow the protocol-safe patterns', () => {
   assert.equal(isValidOtelHeaderName(''), false)
   assert.equal(isValidOtelHeaderName('bad header'), false)
   assert.equal(isValidOtelHeaderName('h{0}'), false)
+})
+
+test('the message-ref settings carry the plugin defaults', () => {
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.inputMessagesMode, 'full', 'Helix starts in the mode that reproduces the shipped behaviour')
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.maxSpansBetweenResyncs, 16)
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.refHashLength, 12)
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.refEncoding, 'base64url')
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.messageEntryMaxBytes, 8192)
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.watermarkMaxEntries, 4096)
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.captureSystemPromptSections, true)
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.contextPointers, true)
+  assert.equal(DEFAULT_OTEL_TRACING_SETTINGS.exportGapResyncs, true)
+  assert.deepEqual(DEFAULT_OTEL_TRACING_SETTINGS.resyncOn, ['exportGap', 'unknownEvent'], 'the checkpoint defaults keep only the repairs the structural checks cannot make alone')
+})
+
+test('normalizeOtelTracingSettings falls back per message-ref field', () => {
+  const normalized = normalizeOtelTracingSettings({
+    ...DEFAULT_OTEL_TRACING_SETTINGS,
+    inputMessagesMode: 'hashes',
+    maxSpansBetweenResyncs: -1,
+    refHashLength: 7,
+    refEncoding: 'base58',
+    messageEntryMaxBytes: 32,
+    watermarkMaxEntries: 32,
+    captureSystemPromptSections: 'yes',
+    contextPointers: null,
+    exportGapResyncs: 0,
+  })
+  assert.equal(normalized.inputMessagesMode, 'full')
+  assert.equal(normalized.maxSpansBetweenResyncs, 16)
+  assert.equal(normalized.refHashLength, 12)
+  assert.equal(normalized.refEncoding, 'base64url')
+  assert.equal(normalized.messageEntryMaxBytes, 8192)
+  assert.equal(normalized.watermarkMaxEntries, 4096)
+  assert.equal(normalized.captureSystemPromptSections, true)
+  assert.equal(normalized.contextPointers, true)
+  assert.equal(normalized.exportGapResyncs, true)
+
+  const refs = normalizeOtelTracingSettings({
+    inputMessagesMode: 'refs',
+    maxSpansBetweenResyncs: 0,
+    refHashLength: 16,
+    refEncoding: 'hex',
+  })
+  assert.equal(refs.inputMessagesMode, 'refs')
+  assert.equal(refs.maxSpansBetweenResyncs, 0, 'zero is a real choice: it checkpoints only at session start')
+  assert.equal(refs.refHashLength, 16)
+  assert.equal(refs.refEncoding, 'hex')
+})
+
+test('normalization keeps known resync triggers in the canonical order', () => {
+  assert.deepEqual(normalizeOtelTracingSettings({ resyncOn: ['toolSet', 'userMessage', 'toolSet'] }).resyncOn, ['userMessage', 'toolSet'])
+  assert.deepEqual(normalizeOtelTracingSettings({ resyncOn: ['route', 'teleport'] }).resyncOn, ['route'], 'a trigger this build does not know is dropped')
+  assert.deepEqual(normalizeOtelTracingSettings({ resyncOn: [] }).resyncOn, [], 'an empty list is kept: layer-2 checkpoints are off')
+  assert.deepEqual(normalizeOtelTracingSettings({ resyncOn: 'all' }).resyncOn, ['exportGap', 'unknownEvent'], 'a value that is not an array is treated as unset, so the checkpoint defaults apply')
+  assert.equal(OTEL_RESYNC_TRIGGERS.every(isOtelResyncTrigger), true)
+  assert.equal(isOtelResyncTrigger('teleport'), false)
+})
+
+test('isOtelTracingSettings rejects damaged message-ref settings', () => {
+  const settings: OtelTracingSettings = { ...DEFAULT_OTEL_TRACING_SETTINGS, endpoints: [endpoint()] }
+  assert.equal(isOtelTracingSettings(settings), true, 'the shipped defaults validate')
+
+  assert.equal(isOtelTracingSettings({ ...settings, inputMessagesMode: 'hashes' as never }), false)
+  assert.equal(isOtelTracingSettings({ ...settings, maxSpansBetweenResyncs: 100_001 }), false)
+  assert.equal(isOtelTracingSettings({ ...settings, refHashLength: 17 }), false)
+  assert.equal(isOtelTracingSettings({ ...settings, refEncoding: 'hexupper' as never }), false)
+  assert.equal(isOtelTracingSettings({ ...settings, messageEntryMaxBytes: 63 }), false)
+  assert.equal(isOtelTracingSettings({ ...settings, watermarkMaxEntries: 63 }), false)
+  assert.equal(isOtelTracingSettings({ ...settings, resyncOn: ['route', 'teleport'] }), false)
+  assert.equal(isOtelTracingSettings({ ...settings, contextPointers: 'true' as never }), false)
+})
+
+test('persistedOtelTracingSettings keeps every message-ref setting and copies the trigger list', () => {
+  const settings: OtelTracingSettings = {
+    ...DEFAULT_OTEL_TRACING_SETTINGS,
+    inputMessagesMode: 'refs',
+    resyncOn: ['userMessage'],
+    refEncoding: 'hex',
+  }
+  const persisted = persistedOtelTracingSettings(settings)
+  assert.equal(persisted.inputMessagesMode, 'refs')
+  assert.deepEqual(persisted.resyncOn, ['userMessage'])
+  assert.equal(persisted.refEncoding, 'hex')
+
+  persisted.resyncOn.push('route')
+  assert.deepEqual(settings.resyncOn, ['userMessage'], 'the saved list is not the live list')
 })

@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte'
   import { Check, ChevronDown, LoaderCircle, Plus, Trash2 } from '@lucide/svelte'
   import DecisionSettingsPanel from './DecisionSettings.svelte'
+  import OtelMessageRefsSettings from './OtelMessageRefsSettings.svelte'
   import { DEFAULT_DECISION_SETTINGS, type DecisionSettings } from '../../shared/skills.js'
   import { DEFAULT_OTEL_TRACING_ENDPOINT, type OtelTracingSettings } from '../../shared/otel-tracing.js'
   import type { SandboxMode } from '../types.js'
@@ -282,6 +283,8 @@
           </div>
         </div>
       </fieldset>
+
+      <OtelMessageRefsSettings bind:tracing />
     </div>
   </fieldset>
 

@@ -36,6 +36,7 @@ import {
   otelEndpointSecretKey,
   syncTracingSecrets,
   validateTracingEndpoints,
+  validateTracingMessageRefs,
   validateTracingSecrets,
 } from './tracing-settings.js'
 import {
@@ -403,6 +404,7 @@ export class SettingsController {
       throw new Error('Add at least one OTLP destination before enabling trace export.')
     }
     validateTracingEndpoints(tracing)
+    validateTracingMessageRefs(tracing)
   }
 
   private async writeSettings(message: Extract<SidebarMessage, { type: 'saveSettings' }>, tracing?: OtelTracingSettings): Promise<void> {

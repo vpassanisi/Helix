@@ -6,7 +6,7 @@
 
   const { Story } = defineMeta({
     title: 'Chat/MessageRow', component: MessageRow,
-    args: { message: chatMessages[0], activeSessionId: 'preview', thinking: false, onanswer: fn(), onapprove: fn(), onui: fn() },
+    args: { message: chatMessages[0], activeSessionId: 'preview', thinking: false, onanswer: fn(), onapprove: fn(), onui: fn(), onopenfile: fn() },
   })
 </script>
 

@@ -132,6 +132,25 @@ test('user plugins and MCP servers are appended to the patch', () => {
   assert.match(text, /API_KEY: !!js process\.env\.DSH_MCP_FILES_API_KEY_[A-F0-9]{12}/)
 })
 
+test('a disabled MCP server keeps its row and switches the entry off', () => {
+  const lines = buildRuntimePatchLines(options({
+    mcpServers: [
+      { serverName: 'on', transport: 'stdio', command: '/usr/bin/mcp-on', args: [], env: {} },
+      { serverName: 'off', transport: 'stdio', command: '/usr/bin/mcp-off', args: [], env: {}, enabled: false },
+    ],
+  }))
+
+  const offIndex = lines.indexOf('    - id: "mcp-off"')
+  assert.ok(offIndex >= 0, 'the disabled server keeps its entry in the patch')
+  assert.equal(lines[offIndex + 1], "      name: '@deepseek-ai/dsh-mcp-client'")
+  assert.equal(lines[offIndex + 2], '      disabled: true', 'the loader leaves the entry, so its config and secrets survive')
+  assert.equal(lines[offIndex + 3], '      config:')
+
+  const onIndex = lines.indexOf('    - id: "mcp-on"')
+  assert.ok(onIndex >= 0)
+  assert.equal(lines[onIndex + 2], '      config:', 'an enabled server writes no disabled row')
+})
+
 test('createRuntimeEnvironment exports the control channel and credentials', () => {
   const env = createRuntimeEnvironment(options({
     dshHome: '/tmp/dsh-home',

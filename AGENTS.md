@@ -6,6 +6,8 @@ do not try and open it in chrome
 
 do a patch version bump when you finish making changes
 
+always close playwrite when you are done with it
+
 ## Code organization (read before editing)
 
 This codebase is deliberately organized by separation of concern. Large legacy files were split into focused modules (e.g. `extension.ts` → the `host/*` controllers, `dsh-control-plugin.ts` → `runtime/*` transport/approvals/preview/commands, and `gen-ui` → leaf modules). Facade files re-export the pinned public surface so tests and the webview keep importing from stable paths.

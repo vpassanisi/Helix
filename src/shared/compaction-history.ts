@@ -87,6 +87,5 @@ export function compactionDetail(entry: CompactionEntry): string {
   const metrics: string[] = []
   if (entry.historyItems !== undefined) metrics.push(`${entry.historyItems} history entries`)
   if (entry.shadowedTokens !== undefined) metrics.push(`${Math.round(entry.shadowedTokens).toLocaleString('en-US')} tokens of earlier context`)
-  if (entry.status === 'running') return 'Summarizing earlier turns to make room for the next steps.'
   return metrics.length > 0 ? `${metrics.join(' · ')} summarized.` : 'Earlier turns summarized; recent context retained.'
 }

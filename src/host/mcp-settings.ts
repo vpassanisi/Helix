@@ -38,6 +38,7 @@ export function configuredMcpServers(): PersistedMcpServer[] {
       args: value.args,
       url: typeof value.url === 'string' ? value.url : undefined,
       envKeys: value.envKeys,
+      ...(value.enabled === false ? { enabled: false } : {}),
     } satisfies PersistedMcpServer]
   })
 }
@@ -55,6 +56,7 @@ export async function runtimeMcpServers(secrets: vscode.SecretStorage): Promise<
       command: server.command,
       args: server.args,
       url: server.url,
+      enabled: server.enabled,
       env: Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== undefined)),
     }
   }))
@@ -68,6 +70,7 @@ export async function sidebarMcpServers(secrets: vscode.SecretStorage): Promise<
     command: server.command ?? '',
     args: server.args,
     url: server.url ?? '',
+    enabled: server.enabled !== false,
     env: await Promise.all(server.envKeys.map(async (name) => ({
       name,
       configured: Boolean(await secrets.get(mcpSecretKey(server.serverName, name))),
@@ -169,5 +172,6 @@ function normalizeMcpServer(server: SidebarMcpServer, index: number): PersistedM
     args,
     url: server.transport === 'streamable-http' ? url : undefined,
     envKeys,
+    ...(server.enabled === false ? { enabled: false } : {}),
   }
 }

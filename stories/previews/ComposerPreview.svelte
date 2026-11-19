@@ -56,6 +56,7 @@
         onanswer={() => {}}
         onapprove={() => {}}
         onui={() => {}}
+        onopenfile={() => {}}
       />
     </div>
   {/if}

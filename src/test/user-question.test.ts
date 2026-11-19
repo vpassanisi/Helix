@@ -120,20 +120,22 @@ test('answers travel over the authenticated plugin bridge', async () => {
   const previousToken = process.env.HELIX_CONTROL_TOKEN
   process.env.HELIX_CONTROL_ENDPOINT = bridge.endpoint
   process.env.HELIX_CONTROL_TOKEN = bridge.token
-  const handlers = new Map<string, (...args: any[]) => any>()
+  const handlers = new Map<string, Array<(...args: any[]) => any>>()
   const abort = new AbortController()
   const root = { id: 'root', cancel: () => abort.abort() }
   let dispose: (() => void) | undefined
   try {
     helixControlPlugin({ get: (name: string) => name === 'agents' ? { get: (id: string) => id === 'root' ? root : undefined, roots: () => [root] } : undefined,
-      on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler),
+      // One hook carries a chain: the question bridge and the presenter bridge
+      // both observe `tools/execute`, so the fake collects every registration.
+      on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
       effect: (factory: () => () => void) => { dispose = factory() } })
     assert.equal(await bridge.waitForConnection(), true)
     await bridge.request('capabilities.get', 'root')
     assert.ok(bridge.capabilities.includes('question.answer'))
-    const run = handlers.get('tools/execute')!({ name: 'ask_user_question', callId: 'wire-call', agent: root,
-      arguments: { questions: [question] }, signal: abort.signal }, () =>
-      handlers.get('user-questions/request')!({ questions: [question], agent: root, signal: abort.signal }, async () => { throw new Error('No answerer') }))
+    const exec = { name: 'ask_user_question', callId: 'wire-call', agent: root, arguments: { questions: [question] }, signal: abort.signal }
+    const ask = () => handlers.get('user-questions/request')![0]({ questions: [question], agent: root, signal: abort.signal }, async () => { throw new Error('No answerer') })
+    const run = (handlers.get('tools/execute') ?? []).reduceRight<() => Promise<any>>((next, handler) => () => handler(exec, next), ask)()
     await waitFor(() => events.some((event) => event.method === 'question.request'))
     const request = events.find((event) => event.method === 'question.request')!
     assert.equal(request.params.toolCallId, 'wire-call')

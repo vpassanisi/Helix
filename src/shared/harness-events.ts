@@ -70,6 +70,26 @@ export function toolCallId(data: Record<string, unknown>, fallback: string): str
   return stringValue(data.callId) ?? responseKey(data) ?? fallback
 }
 
+/**
+ * The per-call description the model supplies in the arguments when the tool
+ * declares one (e.g. bash). Tools without such an argument yield undefined.
+ */
+export function toolCallDescription(argumentsValue: unknown): string | undefined {
+  let record: Record<string, unknown> | undefined
+  if (typeof argumentsValue === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(argumentsValue)
+      record = isRecord(parsed) ? parsed : undefined
+    } catch {
+      return undefined
+    }
+  } else if (isRecord(argumentsValue)) {
+    record = argumentsValue
+  }
+  const description = record === undefined ? undefined : stringValue(record.description)
+  return description !== undefined && description.trim() !== '' ? description.trim() : undefined
+}
+
 export function toolResultCallId(link: ToolCallLink, fallback: string): string {
   return directCallId(link.data, link.message)
     ?? stepCallId(link)

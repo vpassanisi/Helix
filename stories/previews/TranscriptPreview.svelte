@@ -27,5 +27,6 @@
     onanswer={() => {}}
     onapprove={() => {}}
     onui={() => {}}
+    onopenfile={() => {}}
   />
 </div>

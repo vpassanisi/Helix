@@ -21,9 +21,11 @@
     onanswer: (answer: UserQuestionAnswer) => void
     onapprove: (outcome: 'allowed-once' | 'rejected') => void
     onui: (action: GenUiAction) => void
+    /** Opens the file a tool presenter located on this call. */
+    onopenfile: (path: string, line?: number) => void
   }
 
-  let { message, activeSessionId, thinking, onanswer, onapprove, onui }: Props = $props()
+  let { message, activeSessionId, thinking, onanswer, onapprove, onui, onopenfile }: Props = $props()
 
   /** Shared row behaviour: a bottom gap and the settle-in animation. */
   const rowBase = 'mb-3.5 animate-enter'
@@ -81,7 +83,7 @@
       {#if message.tool.question}
         <UserQuestionCard value={message.tool.question} {onanswer} />
       {:else}
-        <ToolCallCard tool={message.tool} {onapprove} />
+        <ToolCallCard tool={message.tool} {onapprove} {onopenfile} />
       {/if}
     {:else}
       {#if message.role === 'user' && message.context}

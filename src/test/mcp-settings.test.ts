@@ -131,6 +131,23 @@ test('sidebarMcpServers exposes only the configured flag', async () => {
   assert.equal('value' in (sidebar[0].env[0] as object), false, 'secret values never reach the sidebar')
 })
 
+test('the enable switch round-trips, and an absent key means enabled', async () => {
+  const values = vscode.values
+  values.clear()
+  values.set('deepseekHarness.mcpServers', [
+    { serverName: 'on', transport: 'stdio', command: '/usr/bin/mcp-on', args: [], url: '', envKeys: [] },
+    { serverName: 'off', transport: 'stdio', command: '/usr/bin/mcp-off', args: [], url: '', envKeys: [], enabled: false },
+  ])
+  const secrets = secretStore()
+
+  assert.deepEqual(configuredMcpServers().map((entry) => entry.enabled), [undefined, false], 'an enabled server writes no key')
+  assert.deepEqual((await runtimeMcpServers(secrets.api as never)).map((entry) => entry.enabled), [undefined, false])
+  assert.deepEqual((await sidebarMcpServers(secrets.api as never)).map((entry) => entry.enabled), [true, false], 'the sidebar always gets a real boolean')
+
+  const normalized = normalizeMcpServers([server({ serverName: 'switched-off', enabled: false }), server({ serverName: 'switched-on', enabled: true })])
+  assert.deepEqual(normalized.map((entry) => entry.enabled), [false, undefined], 'switching off persists, switching on clears the key')
+})
+
 test('normalizeMcpServers validates names, transports, and environment entries', () => {
   const normalized = normalizeMcpServers([
     server({ env: [{ name: ' API_KEY ', configured: true }, { name: 'TOKEN', value: 't' }] }),

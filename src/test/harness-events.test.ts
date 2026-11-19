@@ -5,6 +5,7 @@ import {
   contextUsageTotal,
   numericValue,
   stringifyPayload,
+  toolCallDescription,
   toolCallId,
   toolResultCallId,
   toolResultIsError,
@@ -57,6 +58,17 @@ test('uses the call id, then the response key, then the caller fallback', () => 
   assert.equal(toolCallId({ callId: 'call-1' }, 'tool-call-7'), 'call-1')
   assert.equal(toolCallId({ turn: 1, step: 3 }, 'tool-call-7'), '1:3')
   assert.equal(toolCallId({}, 'tool-call-7'), 'tool-call-7')
+})
+
+test('reads the per-call description from string or record arguments', () => {
+  assert.equal(toolCallDescription('{"description":"List files in current directory","command":"ls"}'), 'List files in current directory')
+  assert.equal(toolCallDescription({ description: 'Show working tree status', command: 'git status' }), 'Show working tree status')
+  assert.equal(toolCallDescription('{"command":"ls"}'), undefined)
+  assert.equal(toolCallDescription('{"description":"   "}'), undefined)
+  assert.equal(toolCallDescription('not json'), undefined)
+  assert.equal(toolCallDescription(''), undefined)
+  assert.equal(toolCallDescription({ description: 42 }), undefined)
+  assert.equal(toolCallDescription(undefined), undefined)
 })
 
 test('flattens tool result content of every shape into text', () => {

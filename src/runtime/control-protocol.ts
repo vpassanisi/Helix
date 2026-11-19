@@ -92,7 +92,7 @@ export interface ControlEventEnvelope {
   type: 'event'
   eventId: string
   sessionId: string
-  method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed' | 'commands.changed'
+  method: 'approval.request' | 'approval.resolved' | 'question.request' | 'question.resolved' | 'assistant.stream' | 'tool.presentation' | 'request.previewCaptured' | 'provider.requestCaptured' | 'skills.changed' | 'commands.changed'
   params: Record<string, unknown>
 }
 

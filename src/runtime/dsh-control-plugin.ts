@@ -11,6 +11,7 @@ import { DshQuestionBridge } from './dsh-question-bridge.js'
 import { DshSkillBridge } from './dsh-skill-bridge.js'
 import { ControlTransport } from './dsh-control-transport.js'
 import { DshApprovalBridge } from './dsh-approval-bridge.js'
+import { DshToolPresentationBridge } from './dsh-tool-presentation-bridge.js'
 import { DshPreviewCapture } from './dsh-preview-capture.js'
 import { DshCommandBridge } from './dsh-command-bridge.js'
 import {
@@ -57,6 +58,8 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
   const approvals = new DshApprovalBridge(() => transport.isConnected,
     (sessionId, method, params) => transport.sendEvent(sessionId, method, params))
   const preview = new DshPreviewCapture(
+    (sessionId, method, params) => transport.sendEvent(sessionId, method, params))
+  const toolPresentation = new DshToolPresentationBridge(ctx, () => transport.isConnected,
     (sessionId, method, params) => transport.sendEvent(sessionId, method, params))
   const commands = new DshCommandBridge(
     ctx,
@@ -256,6 +259,7 @@ export default function helixControlPlugin(ctx: any, config: { cwd?: string } = 
     ctx.on?.('commands/change', commands.globalChange)
     ctx.on?.('agent/created', commands.agentCreated, { global: true })
     ctx.on?.('tools/execute', questions.execute, { global: true })
+    ctx.on?.('tools/execute', toolPresentation.execute, { global: true })
     ctx.on?.('user-questions/request', questions.request, { global: true })
     ctx.on?.('approval/request', approvals.request, { global: true })
     ctx.on?.('agent/assistant-stream', onAssistantStream, { global: true })

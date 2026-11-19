@@ -2,7 +2,7 @@
   "name": "helix-vscode",
   "displayName": "Helix",
   "description": "A VS Code sidebar Webview UI for Helix.",
-  "version": "0.0.182",
+  "version": "0.0.209",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -160,10 +160,23 @@
             "capturePrompts": false,
             "captureResponses": false,
             "captureToolArguments": false,
-            "maxContentLength": 8192
+            "maxContentLength": 8192,
+            "inputMessagesMode": "full",
+            "maxSpansBetweenResyncs": 16,
+            "resyncOn": [
+              "exportGap",
+              "unknownEvent"
+            ],
+            "refHashLength": 12,
+            "refEncoding": "base64url",
+            "messageEntryMaxBytes": 8192,
+            "watermarkMaxEntries": 4096,
+            "captureSystemPromptSections": true,
+            "contextPointers": true,
+            "exportGapResyncs": true
           },
           "additionalProperties": false,
-          "description": "Optional OTLP trace export through the bundled DSH tracing plugin. Every trace is sent to each configured destination. Content capture is off by default.",
+          "description": "Optional OTLP trace export through the bundled DSH tracing plugin. One user turn is one trace. In the ref modes each message publishes once, at its birth span, and a checkpoint span marks the full context as an ordered ref list, so a trace rebuilds its own turn and the whole conversation context rebuilds from the conversation's pooled traces. Every trace is sent to each configured destination. Content capture is off by default, and the message content mode selects whether the context repeats on every span (full) or publishes once as content-addressed refs.",
           "properties": {
             "enabled": {
               "type": "boolean",
@@ -224,7 +237,109 @@
               "type": "integer",
               "minimum": 64,
               "maximum": 65536,
-              "default": 8192
+              "default": 8192,
+              "description": "Maximum serialized length of each captured content attribute."
+            },
+            "inputMessagesMode": {
+              "type": "string",
+              "enum": [
+                "full",
+                "refs",
+                "objects",
+                "checkpoint",
+                "omit"
+              ],
+              "default": "full",
+              "markdownDescription": "Shape of `gen_ai.input.messages`. The ref modes publish each message once and send a short content hash in its place, so a consumer rebuilds the context from the refs.",
+              "enumDescriptions": [
+                "Repeat the captured context on every span. The shipped behaviour.",
+                "Set the ordered ref list. Vendor dashboards show an empty prompt; a ref resolver rebuilds it.",
+                "Keep the same refs in schema-valid message objects: { \"role\": …, \"parts\": [], \"ref\": … }.",
+                "Set the full captured context on checkpoint spans only. Delta spans leave the attribute off.",
+                "Never set the attribute. The dsh.message_refs attributes carry the context."
+              ]
+            },
+            "maxSpansBetweenResyncs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 16,
+              "markdownDescription": "Chat spans allowed between checkpoints, counted across the conversation, not per turn. A checkpoint span carries the full ordered ref list, so one dropped span costs at most this many spans of drift and the break is detected. `0` checkpoints only at session start. Applies to the ref modes."
+            },
+            "resyncOn": {
+              "type": "array",
+              "default": [
+                "exportGap",
+                "unknownEvent"
+              ],
+              "markdownDescription": "Events that force a checkpoint. The structural checks (broken ref prefix, prompt-section root, tool root) and session start always checkpoint; this list selects the event-driven ones. The default keeps only the repairs the structural checks cannot make alone. An empty list relies on the structural checks. The full list restores a checkpoint at every turn, which re-publishes the conversation at each trace start.",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "userMessage",
+                  "promptSections",
+                  "toolSet",
+                  "route",
+                  "compaction",
+                  "feedback",
+                  "splice",
+                  "seed",
+                  "surfaceReplace",
+                  "runtimeContext",
+                  "turnRoot",
+                  "exportGap",
+                  "unknownEvent"
+                ]
+              }
+            },
+            "refHashLength": {
+              "type": "integer",
+              "minimum": 8,
+              "maximum": 16,
+              "default": 12,
+              "markdownDescription": "Hex characters kept from the SHA-256 of each published entry. 12 characters is 48 bits. A wider hash costs bytes; a collision widens the hash automatically and marks the span."
+            },
+            "refEncoding": {
+              "type": "string",
+              "enum": [
+                "base64url",
+                "hex"
+              ],
+              "default": "base64url",
+              "markdownDescription": "`base64url` packs the full ref list into 8 characters per ref on resync spans. `hex` emits the refs as a queryable string array and costs more bytes.",
+              "enumDescriptions": [
+                "Pack the full ref list; 8 characters per 48-bit ref.",
+                "Emit hex refs as a string array, queryable per ref."
+              ]
+            },
+            "messageEntryMaxBytes": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 65536,
+              "default": 8192,
+              "markdownDescription": "Per-message byte cap applied before hashing, so a ref names exactly the bytes this plugin publishes. Applies to the ref modes; `maxContentLength` caps the `full` mode attributes."
+            },
+            "watermarkMaxEntries": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 65536,
+              "default": 4096,
+              "markdownDescription": "Conversation watermark bound: the number of published entries remembered per session. The least recently named entry is evicted, and an evicted entry republishes at the next span that names it, so this is also the recovery window for payloads a backend has expired."
+            },
+            "captureSystemPromptSections": {
+              "type": "boolean",
+              "default": true,
+              "markdownDescription": "Publish one ref per system prompt section, and the section refs of a runtime context snapshot. Needs DSH 0.2.1-rc.2 or newer and `capturePrompts`; otherwise the whole prompt is one ref."
+            },
+            "contextPointers": {
+              "type": "boolean",
+              "default": true,
+              "markdownDescription": "Add the session log pointers `dsh.surface_seq_start`, `dsh.surface_seq_end`, `dsh.surface_generation`, and `dsh.event_seq`, so a consumer that can read the durable session log repairs missing entries."
+            },
+            "exportGapResyncs": {
+              "type": "boolean",
+              "default": true,
+              "markdownDescription": "Force a checkpoint after a counted export shortfall, and entries born since the last checkpoint republish on it, so a consumer realigns after dropped spans."
             }
           }
         },

@@ -1,8 +1,10 @@
 import * as vscode from 'vscode'
 import {
+  isOtelResyncTrigger,
   isValidOtelEndpointId,
   isValidOtelHeaderName,
   normalizeOtelTracingSettings,
+  usesOtelMessageRefs,
   type OtelTracingSettings,
 } from '../shared/otel-tracing.js'
 import { validateHttpUrl } from './mcp-settings.js'
@@ -115,6 +117,16 @@ export async function buildRuntimeTracingConfig(secrets: vscode.SecretStorage): 
     captureResponses: tracing.captureResponses,
     captureToolArguments: tracing.captureToolArguments,
     maxContentLength: tracing.maxContentLength,
+    inputMessagesMode: tracing.inputMessagesMode,
+    maxSpansBetweenResyncs: tracing.maxSpansBetweenResyncs,
+    resyncOn: tracing.resyncOn,
+    refHashLength: tracing.refHashLength,
+    refEncoding: tracing.refEncoding,
+    messageEntryMaxBytes: tracing.messageEntryMaxBytes,
+    watermarkMaxEntries: tracing.watermarkMaxEntries,
+    captureSystemPromptSections: tracing.captureSystemPromptSections,
+    contextPointers: tracing.contextPointers,
+    exportGapResyncs: tracing.exportGapResyncs,
   }
 }
 
@@ -159,6 +171,31 @@ export function validateTracingEndpoints(tracing: OtelTracingSettings): void {
       throw new Error(`OTLP destination ${index + 1} timeout must be between 100 and 120000 milliseconds.`)
     }
   }
+}
+
+/**
+ * Checks the message-ref settings the bundled plugin enforces at load, so a bad
+ * value fails on save in the sidebar instead of silently disabling tracing in
+ * the runtime. Range rules cover every option the plugin schema validates.
+ */
+export function validateTracingMessageRefs(tracing: OtelTracingSettings): void {
+  if (!Number.isInteger(tracing.maxContentLength) || tracing.maxContentLength < 64 || tracing.maxContentLength > 65_536) {
+    throw new Error('Max captured length must be between 64 and 65536.')
+  }
+  if (!Number.isInteger(tracing.maxSpansBetweenResyncs) || tracing.maxSpansBetweenResyncs < 0 || tracing.maxSpansBetweenResyncs > 100_000) {
+    throw new Error('Resync cadence must be between 0 and 100000 spans.')
+  }
+  if (!Number.isInteger(tracing.refHashLength) || tracing.refHashLength < 8 || tracing.refHashLength > 16) {
+    throw new Error('Ref hash length must be between 8 and 16 characters.')
+  }
+  if (!Number.isInteger(tracing.messageEntryMaxBytes) || tracing.messageEntryMaxBytes < 64 || tracing.messageEntryMaxBytes > 65_536) {
+    throw new Error('Message entry max bytes must be between 64 and 65536.')
+  }
+  if (!Number.isInteger(tracing.watermarkMaxEntries) || tracing.watermarkMaxEntries < 64 || tracing.watermarkMaxEntries > 65_536) {
+    throw new Error('Watermark max entries must be between 64 and 65536.')
+  }
+  const unknown = tracing.resyncOn.filter((trigger) => !isOtelResyncTrigger(trigger))
+  if (unknown.length > 0) throw new Error(`Unknown resync trigger: ${unknown.join(', ')}`)
 }
 
 export function validateGrpcTarget(value: string, index: number): void {

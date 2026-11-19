@@ -7,6 +7,7 @@ import type { RequestPreviewResult } from '../runtime/control-protocol.js'
 import { isRecord } from '../shared/value-utils.js'
 import { isCommandName, type CommandCatalog } from '../shared/commands.js'
 import type { BrowserContextState } from '../shared/browser-context.js'
+import type { ToolPresentation } from '../shared/tool-presentation.js'
 import type { PendingUserQuestion, UserQuestionAnswer } from '../shared/user-question.js'
 import type { GenUiAction } from '../shared/gen-ui.js'
 import type { ExtensionInfo } from '../shared/extension-info.js'
@@ -92,10 +93,14 @@ export interface SidebarMcpServer {
   args: string[]
   url: string
   env: SidebarMcpEnvironment[]
+  /** Absent means enabled, so a message from an older webview needs no migration. */
+  enabled?: boolean
 }
 
-export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env'> {
+export interface SidebarMcpServerSetting extends Omit<SidebarMcpServer, 'env' | 'enabled'> {
   env: Array<{ name: string; configured: boolean }>
+  /** False keeps the saved server configured but leaves its runtime entry switched off. */
+  enabled: boolean
 }
 
 export type SidebarModel = SavedModel
@@ -121,6 +126,7 @@ export type SidebarOutgoingMessage =
   | { type: 'codeChanges'; sessionId: string; changes: SidebarCodeChange[]; active: boolean }
   | { type: 'notification'; sessionId: string; notification: unknown }
   | { type: 'assistantStream'; sessionId: string; agentSessionId: string; frame: unknown }
+  | { type: 'toolPresentation'; sessionId: string; callId: string; view: ToolPresentation }
   | { type: 'error'; message: string }
   | { type: 'accepted'; sessionId: string; modelId: string; reasoningEffort?: string }
   | { type: 'discoveredModels'; models: SidebarDiscoveredModel[]; error?: string }
@@ -257,7 +263,8 @@ export function isSidebarMcpServer(value: unknown): value is SidebarMcpServer {
     (value.transport !== 'stdio' && value.transport !== 'streamable-http') ||
     typeof value.command !== 'string' || typeof value.url !== 'string' ||
     !Array.isArray(value.args) || !value.args.every((argument) => typeof argument === 'string') ||
-    !Array.isArray(value.env)) return false
+    !Array.isArray(value.env) ||
+    ('enabled' in value && typeof value.enabled !== 'boolean')) return false
 
   return value.env.every((entry) => isRecord(entry) && typeof entry.name === 'string' &&
     (!('value' in entry) || typeof entry.value === 'string') &&

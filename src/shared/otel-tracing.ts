@@ -1,6 +1,29 @@
 export type OtelTracingProtocol = 'http/protobuf' | 'grpc'
 export type OtelTracingAuthMethod = 'none' | 'bearer' | 'api-key'
 
+/** Shape of `gen_ai.input.messages` produced by the bundled tracing plugin. */
+export type OtelTracingInputMessagesMode = 'full' | 'refs' | 'objects' | 'checkpoint' | 'omit'
+export type OtelTracingRefEncoding = 'base64url' | 'hex'
+
+/** Layer-2 resync trigger names. Structural checks and `sessionStart` are always on. */
+export const OTEL_RESYNC_TRIGGERS = [
+  'userMessage',
+  'promptSections',
+  'toolSet',
+  'route',
+  'compaction',
+  'feedback',
+  'splice',
+  'seed',
+  'surfaceReplace',
+  'runtimeContext',
+  'turnRoot',
+  'exportGap',
+  'unknownEvent',
+] as const
+
+export type OtelTracingResyncTrigger = (typeof OTEL_RESYNC_TRIGGERS)[number]
+
 export interface OtelTracingEndpoint {
   id: string
   url: string
@@ -23,6 +46,16 @@ export interface OtelTracingSettings {
   captureResponses: boolean
   captureToolArguments: boolean
   maxContentLength: number
+  inputMessagesMode: OtelTracingInputMessagesMode
+  maxSpansBetweenResyncs: number
+  resyncOn: OtelTracingResyncTrigger[]
+  refHashLength: number
+  refEncoding: OtelTracingRefEncoding
+  messageEntryMaxBytes: number
+  watermarkMaxEntries: number
+  captureSystemPromptSections: boolean
+  contextPointers: boolean
+  exportGapResyncs: boolean
 }
 
 export const DEFAULT_OTEL_TRACING_ENDPOINT: OtelTracingEndpoint = {
@@ -45,6 +78,16 @@ export const DEFAULT_OTEL_TRACING_SETTINGS: OtelTracingSettings = {
   captureResponses: false,
   captureToolArguments: false,
   maxContentLength: 8192,
+  inputMessagesMode: 'full',
+  maxSpansBetweenResyncs: 16,
+  resyncOn: ['exportGap', 'unknownEvent'],
+  refHashLength: 12,
+  refEncoding: 'base64url',
+  messageEntryMaxBytes: 8192,
+  watermarkMaxEntries: 4096,
+  captureSystemPromptSections: true,
+  contextPointers: true,
+  exportGapResyncs: true,
 }
 
 const ENDPOINT_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
@@ -59,7 +102,17 @@ export function isOtelTracingSettings(value: unknown): value is OtelTracingSetti
     typeof settings.capturePrompts === 'boolean' &&
     typeof settings.captureResponses === 'boolean' &&
     typeof settings.captureToolArguments === 'boolean' &&
-    Number.isInteger(settings.maxContentLength) && (settings.maxContentLength as number) >= 64 && (settings.maxContentLength as number) <= 65_536
+    Number.isInteger(settings.maxContentLength) && (settings.maxContentLength as number) >= 64 && (settings.maxContentLength as number) <= 65_536 &&
+    isInputMessagesMode(settings.inputMessagesMode) &&
+    validInteger(settings.maxSpansBetweenResyncs, 0, 100_000) &&
+    Array.isArray(settings.resyncOn) && settings.resyncOn.every(isOtelResyncTrigger) &&
+    validInteger(settings.refHashLength, 8, 16) &&
+    isRefEncoding(settings.refEncoding) &&
+    validInteger(settings.messageEntryMaxBytes, 64, 65_536) &&
+    validInteger(settings.watermarkMaxEntries, 64, 65_536) &&
+    typeof settings.captureSystemPromptSections === 'boolean' &&
+    typeof settings.contextPointers === 'boolean' &&
+    typeof settings.exportGapResyncs === 'boolean'
 }
 
 export function normalizeOtelTracingSettings(value: unknown): OtelTracingSettings {
@@ -86,7 +139,22 @@ export function normalizeOtelTracingSettings(value: unknown): OtelTracingSetting
     captureResponses: typeof settings.captureResponses === 'boolean' ? settings.captureResponses : DEFAULT_OTEL_TRACING_SETTINGS.captureResponses,
     captureToolArguments: typeof settings.captureToolArguments === 'boolean' ? settings.captureToolArguments : DEFAULT_OTEL_TRACING_SETTINGS.captureToolArguments,
     maxContentLength: validInteger(settings.maxContentLength, 64, 65_536) ? settings.maxContentLength : DEFAULT_OTEL_TRACING_SETTINGS.maxContentLength,
+    inputMessagesMode: isInputMessagesMode(settings.inputMessagesMode) ? settings.inputMessagesMode : DEFAULT_OTEL_TRACING_SETTINGS.inputMessagesMode,
+    maxSpansBetweenResyncs: validInteger(settings.maxSpansBetweenResyncs, 0, 100_000) ? settings.maxSpansBetweenResyncs : DEFAULT_OTEL_TRACING_SETTINGS.maxSpansBetweenResyncs,
+    resyncOn: normalizeResyncTriggers(settings.resyncOn),
+    refHashLength: validInteger(settings.refHashLength, 8, 16) ? settings.refHashLength : DEFAULT_OTEL_TRACING_SETTINGS.refHashLength,
+    refEncoding: isRefEncoding(settings.refEncoding) ? settings.refEncoding : DEFAULT_OTEL_TRACING_SETTINGS.refEncoding,
+    messageEntryMaxBytes: validInteger(settings.messageEntryMaxBytes, 64, 65_536) ? settings.messageEntryMaxBytes : DEFAULT_OTEL_TRACING_SETTINGS.messageEntryMaxBytes,
+    watermarkMaxEntries: validInteger(settings.watermarkMaxEntries, 64, 65_536) ? settings.watermarkMaxEntries : DEFAULT_OTEL_TRACING_SETTINGS.watermarkMaxEntries,
+    captureSystemPromptSections: typeof settings.captureSystemPromptSections === 'boolean' ? settings.captureSystemPromptSections : DEFAULT_OTEL_TRACING_SETTINGS.captureSystemPromptSections,
+    contextPointers: typeof settings.contextPointers === 'boolean' ? settings.contextPointers : DEFAULT_OTEL_TRACING_SETTINGS.contextPointers,
+    exportGapResyncs: typeof settings.exportGapResyncs === 'boolean' ? settings.exportGapResyncs : DEFAULT_OTEL_TRACING_SETTINGS.exportGapResyncs,
   }
+}
+
+/** True when the settings use content refs, the modes where entry bytes leave the span. */
+export function usesOtelMessageRefs(settings: OtelTracingSettings): boolean {
+  return settings.inputMessagesMode !== 'full'
 }
 
 /** Removes webview-only credential state before saving settings to VS Code configuration. */
@@ -107,7 +175,21 @@ export function persistedOtelTracingSettings(settings: OtelTracingSettings): Omi
     captureResponses: settings.captureResponses,
     captureToolArguments: settings.captureToolArguments,
     maxContentLength: settings.maxContentLength,
+    inputMessagesMode: settings.inputMessagesMode,
+    maxSpansBetweenResyncs: settings.maxSpansBetweenResyncs,
+    resyncOn: [...settings.resyncOn],
+    refHashLength: settings.refHashLength,
+    refEncoding: settings.refEncoding,
+    messageEntryMaxBytes: settings.messageEntryMaxBytes,
+    watermarkMaxEntries: settings.watermarkMaxEntries,
+    captureSystemPromptSections: settings.captureSystemPromptSections,
+    contextPointers: settings.contextPointers,
+    exportGapResyncs: settings.exportGapResyncs,
   }
+}
+
+export function isOtelResyncTrigger(value: unknown): value is OtelTracingResyncTrigger {
+  return typeof value === 'string' && (OTEL_RESYNC_TRIGGERS as readonly string[]).includes(value)
 }
 
 export function isValidOtelEndpointId(value: string): boolean {
@@ -157,4 +239,25 @@ function normalizeEndpoint(value: unknown, index: number): OtelTracingEndpoint {
 
 function validInteger(value: unknown, minimum: number, maximum: number): value is number {
   return Number.isInteger(value) && (value as number) >= minimum && (value as number) <= maximum
+}
+
+function isInputMessagesMode(value: unknown): value is OtelTracingInputMessagesMode {
+  return value === 'full' || value === 'refs' || value === 'objects' || value === 'checkpoint' || value === 'omit'
+}
+
+function isRefEncoding(value: unknown): value is OtelTracingRefEncoding {
+  return value === 'base64url' || value === 'hex'
+}
+
+/**
+ * Keeps the triggers this Helix build knows about, in the canonical order,
+ * without duplicates. An empty list is a real choice: it turns layer-2 resyncs
+ * off and leaves the structural checks to carry the guarantee. A value that is
+ * not an array at all is treated as unset, so the checkpoint defaults apply:
+ * export-gap and unknown-event are the repairs layer 1 cannot make alone.
+ */
+function normalizeResyncTriggers(value: unknown): OtelTracingResyncTrigger[] {
+  if (!Array.isArray(value)) return [...DEFAULT_OTEL_TRACING_SETTINGS.resyncOn]
+  const kept = new Set(value.filter(isOtelResyncTrigger))
+  return OTEL_RESYNC_TRIGGERS.filter((trigger) => kept.has(trigger))
 }

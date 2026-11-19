@@ -186,6 +186,18 @@
   }
 
   /**
+   * A presenter located a file for one call, and the card asks to open it. The
+   * Host owns the decision: it admits an absolute path inside a folder VS Code
+   * is showing. A line a presenter names is not focused yet, so it stays with
+   * the result cards that will carry it.
+   */
+  function openToolFile(message: ChatMessage, path: string): void {
+    const callId = message.tool?.callId
+    if (callId === undefined) return
+    post({ type: 'uiAction', sessionId: session.activeSessionId, callId, action: { kind: 'openPath', path, label: path } })
+  }
+
+  /**
    * What a card asks for. Dismiss and copy stay in the Webview. A prompt runs a
    * new turn, or joins the running one as an inject. Opening a file or a link
    * is the Host's decision: a card names an intent, Helix decides whether it is
@@ -367,6 +379,7 @@
         onanswer={(message, answer) => answerQuestion(message.tool!.question!, answer)}
         onapprove={(message, outcome) => decideApproval(message.tool!, outcome)}
         onui={handleUiAction}
+        onopenfile={openToolFile}
       />
 
       <Composer

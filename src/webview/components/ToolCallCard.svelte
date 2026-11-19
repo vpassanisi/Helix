@@ -1,12 +1,36 @@
 <script lang="ts">
-  import { ArrowRight, Check, ChevronDown, LoaderCircle, Wrench, X } from '@lucide/svelte'
+  import { ArrowRight, ArrowRightLeft, Check, ChevronDown, FileCode2, Globe, LoaderCircle, Pencil, Search, Terminal, Trash2, Wrench, X } from '@lucide/svelte'
+  import type { Component } from 'svelte'
   import { renderMarkdown } from '../markdown.js'
+  import { toolPresentationLine, type ToolPresentationKind } from '../../shared/tool-presentation.js'
+  import { shortenPaths } from '../lib/shorten-paths.js'
+  import { isAbsolutePath } from '../../shared/path-guards.js'
   import type { ApprovalView, ToolCallView } from '../types.js'
 
-  let { tool, onapprove }: {
+  let { tool, onapprove, onopenfile }: {
     tool: ToolCallView
     onapprove: (outcome: 'allowed-once' | 'rejected') => void
+    /** Opens the file a presenter located, when the call named exactly one. */
+    onopenfile?: (path: string, line?: number) => void
   } = $props()
+
+  /** The category a presenter declares picks the icon. The wrench stays for a tool
+   * that declares no presenter, which is every MCP tool today. */
+  const kindIcons: Record<ToolPresentationKind, Component> = {
+    read: FileCode2, edit: Pencil, delete: Trash2, move: ArrowRightLeft, search: Search, execute: Terminal, fetch: Globe, other: Wrench,
+  }
+  const HeaderIcon = $derived(kindIcons[tool.presentation?.kind ?? 'other'])
+  /** The tool's own words first, the model's description argument second. */
+  const summaryLine = $derived(toolPresentationLine(tool.presentation) ?? tool.description)
+  /** The same line for the screen: a long file path inside it is shortened from
+   * the front, so the file name is what survives in the narrow panel. The full
+   * line stays in the tooltip. */
+  const summaryText = $derived(summaryLine === undefined ? undefined : shortenPaths(summaryLine))
+  /** One file is an action: a click opens it. Several are a list to read.
+   * A presenter hands back the model-facing path, and the Host opens only an
+   * absolute path inside the folders that are open, so a relative path stays text. */
+  const location = $derived(tool.presentation?.locations?.length === 1 ? tool.presentation.locations[0] : undefined)
+  const openableLocation = $derived(location !== undefined && isAbsolutePath(location.path) ? location : undefined)
 
   const borderColor = $derived(tool.status === 'error'
     ? 'border-l-[var(--tool-failed-border)]'
@@ -47,15 +71,25 @@
 </script>
 
 <details open={tool.approval?.status === 'pending'} class={`group/tool border-l pl-[10px] ${borderColor}`}>
-  <summary class="group/summary flex cursor-pointer list-none select-none items-center gap-[6px] [&::-webkit-details-marker]:hidden">
-    <Wrench size={13} strokeWidth={1.7} />
-    <span class="min-w-0 flex-[0_1_auto] truncate text-[#cfcfcf]">{tool.name}</span>
-    <ArrowRight class="flex-none text-[#707070]" size={12} strokeWidth={1.7} />
-    <span class={`inline-flex flex-none items-center gap-[4px] text-[10px] ${statusColor}`} aria-live="polite">
-      {#if tool.status === 'preparing'}<LoaderCircle class="animate-spin motion-reduce:animate-none" size={11} strokeWidth={1.8} aria-hidden="true" />{/if}
-      {toolStatusLabel()}
-    </span>
-    <ChevronDown class="flex-none opacity-0 [transition:opacity_.18s_ease,transform_.15s_ease] group-hover/summary:opacity-100 group-focus-visible/summary:opacity-100 group-open/tool:rotate-180 motion-reduce:transition-none" size={13} strokeWidth={1.8} />
+  <summary class="group/summary flex flex-col items-start cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden">
+    <div class="flex items-center gap-[6px]">
+      <HeaderIcon class="flex-none" size={13} strokeWidth={1.7} />
+      <span class="min-w-0 flex-[0_1_auto] truncate text-[#cfcfcf]">{tool.name}</span>
+      <ArrowRight class="flex-none text-[#707070]" size={12} strokeWidth={1.7} />
+      <span class={`inline-flex flex-none items-center gap-[4px] text-[10px] ${statusColor}`} aria-live="polite">
+        {#if tool.status === 'preparing'}<LoaderCircle class="animate-spin motion-reduce:animate-none" size={11} strokeWidth={1.8} aria-hidden="true" />{/if}
+        {toolStatusLabel()}
+      </span>
+      <ChevronDown class="opacity-0 [transition:opacity_.18s_ease,transform_.15s_ease] group-hover/summary:opacity-100 group-focus-visible/summary:opacity-100 group-open/tool:rotate-180 motion-reduce:transition-none" size={13} strokeWidth={1.8} />
+    </div>
+      {#if summaryText}
+        {#if openableLocation}
+          <button class="mt-[2px] w-full min-w-0 truncate text-left text-[10px] leading-[1.35] text-[var(--muted-foreground)] hover:text-[var(--foreground)] [transition:color_.15s_ease] motion-reduce:transition-none" type="button" title={`Open ${openableLocation.path}`}
+            onclick={(event) => { event.preventDefault(); event.stopPropagation(); onopenfile?.(openableLocation.path, openableLocation.line) }}>{summaryText}</button>
+        {:else}
+          <div class="mt-[2px] w-full min-w-0 truncate text-[10px] leading-[1.35] text-[var(--muted-foreground)]" title={summaryLine}>{summaryText}</div>
+        {/if}
+      {/if}
   </summary>
   <div class="mt-[8px] rounded-[var(--radius)] border border-[var(--border)] bg-[var(--card)] p-[8px] [&>div+div]:mt-[10px] [&>div+div]:border-t [&>div+div]:border-[var(--border)] [&>div+div]:pt-[10px]">
     {#if tool.approval}

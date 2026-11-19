@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { registerHooks } from 'node:module'
-import type { OtelTracingEndpoint, OtelTracingSettings } from '../shared/otel-tracing.js'
+import { DEFAULT_OTEL_TRACING_SETTINGS, type OtelTracingEndpoint, type OtelTracingSettings } from '../shared/otel-tracing.js'
 
 // Isolated VS Code API fixture: the configuration reads come from a values Map.
 const hooks = registerHooks({
@@ -30,6 +30,7 @@ const {
   validateGrpcTarget,
   validateTracingSecrets,
   validateTracingEndpoints,
+  validateTracingMessageRefs,
 } = await import('../host/tracing-settings.js')
 const vscode = await import('vscode') as unknown as { values: Map<string, unknown> }
 
@@ -74,13 +75,10 @@ function endpoint(overrides: Partial<OtelTracingEndpoint> = {}): OtelTracingEndp
 
 function settings(overrides: Partial<OtelTracingSettings> = {}): OtelTracingSettings {
   return {
+    ...DEFAULT_OTEL_TRACING_SETTINGS,
     enabled: false,
     serviceName: 'helix',
     endpoints: [],
-    capturePrompts: false,
-    captureResponses: false,
-    captureToolArguments: false,
-    maxContentLength: 8192,
     ...overrides,
   }
 }
@@ -204,6 +202,16 @@ test('buildRuntimeTracingConfig resolves credentials and drops empty endpoints',
     captureResponses: true,
     captureToolArguments: true,
     maxContentLength: 2048,
+    inputMessagesMode: 'refs',
+    maxSpansBetweenResyncs: 6,
+    resyncOn: ['userMessage', 'route'],
+    refHashLength: 14,
+    refEncoding: 'hex',
+    messageEntryMaxBytes: 4096,
+    watermarkMaxEntries: 256,
+    captureSystemPromptSections: false,
+    contextPointers: false,
+    exportGapResyncs: false,
   })
   const secrets = secretStore({ [otelEndpointSecretKey('a')]: 'stored-a' })
 
@@ -217,6 +225,49 @@ test('buildRuntimeTracingConfig resolves credentials and drops empty endpoints',
   assert.equal(endpoints.length, 1, 'the empty endpoint is filtered out')
   assert.equal(endpoints[0].protocol, 'http/protobuf')
   assert.deepEqual(endpoints[0].headers, { 'x-api-key': 'stored-a' })
+  assert.deepEqual(config.resyncOn, ['userMessage', 'route'], 'the trigger list reaches the plugin as configured')
+  assert.deepEqual(
+    {
+      inputMessagesMode: config.inputMessagesMode,
+      maxSpansBetweenResyncs: config.maxSpansBetweenResyncs,
+      refHashLength: config.refHashLength,
+      refEncoding: config.refEncoding,
+      messageEntryMaxBytes: config.messageEntryMaxBytes,
+      watermarkMaxEntries: config.watermarkMaxEntries,
+      captureSystemPromptSections: config.captureSystemPromptSections,
+      contextPointers: config.contextPointers,
+      exportGapResyncs: config.exportGapResyncs,
+    },
+    {
+      inputMessagesMode: 'refs',
+      maxSpansBetweenResyncs: 6,
+      refHashLength: 14,
+      refEncoding: 'hex',
+      messageEntryMaxBytes: 4096,
+      watermarkMaxEntries: 256,
+      captureSystemPromptSections: false,
+      contextPointers: false,
+      exportGapResyncs: false,
+    },
+    'every message-ref setting reaches the plugin config',
+  )
+})
+
+test('a settings block without message refs gets the plugin defaults', async () => {
+  const values = vscode.values
+  values.clear()
+  values.set('deepseekHarness.otelTracing', {
+    enabled: true,
+    serviceName: 'helix',
+    endpoints: [endpoint({ id: 'a' })],
+  })
+
+  const config = await buildRuntimeTracingConfig(secretStore().api as never)
+  assert.equal(config.inputMessagesMode, 'full', 'an old settings block keeps the shipped behaviour')
+  assert.deepEqual(config.resyncOn, ['exportGap', 'unknownEvent'], 'an unset trigger list gets the checkpoint defaults')
+  assert.equal(config.refEncoding, 'base64url')
+  assert.equal(config.watermarkMaxEntries, 4096)
+  assert.equal(config.captureSystemPromptSections, true)
 })
 
 test('buildSidebarTracingSettings reports configured credentials without values', async () => {
@@ -238,4 +289,17 @@ test('buildSidebarTracingSettings reports configured credentials without values'
   assert.equal(sidebar.endpoints[0].credentialConfigured, true, 'a stored credential counts as configured')
   assert.equal(sidebar.endpoints[1].credentialConfigured, false, 'without a stored credential only the draft knows')
   assert.equal(sidebar.endpoints[1].credentialDraft, '')
+})
+
+test('validateTracingMessageRefs keeps the ref settings resolvable', () => {
+  validateTracingMessageRefs(settings())
+  validateTracingMessageRefs(settings({ enabled: true, endpoints: [endpoint()], inputMessagesMode: 'refs' }))
+  validateTracingMessageRefs(settings({ inputMessagesMode: 'omit', resyncOn: [], maxSpansBetweenResyncs: 0 }))
+
+  assert.throws(() => validateTracingMessageRefs(settings({ maxSpansBetweenResyncs: 100_001 })), /Resync cadence/)
+  assert.throws(() => validateTracingMessageRefs(settings({ refHashLength: 7 })), /Ref hash length/)
+  assert.throws(() => validateTracingMessageRefs(settings({ messageEntryMaxBytes: 32 })), /entry max bytes/i)
+  assert.throws(() => validateTracingMessageRefs(settings({ watermarkMaxEntries: 32 })), /watermark max entries/i)
+  assert.throws(() => validateTracingMessageRefs(settings({ maxContentLength: 32 })), /captured length/i)
+  assert.throws(() => validateTracingMessageRefs(settings({ resyncOn: ['teleport' as never] })), /resync trigger/i)
 })

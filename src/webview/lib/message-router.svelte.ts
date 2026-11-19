@@ -1,5 +1,6 @@
 import {
   stringifyPayload,
+  toolCallDescription,
   toolCallId,
   toolResultCallId,
   toolResultIsError,
@@ -19,7 +20,7 @@ import type { SessionState } from './session-state.svelte.js'
 import type { SettingsPageState } from './settings-page.svelte.js'
 import type { SkillRoutingState } from './skill-routing.svelte.js'
 import type { ToolBundlesState } from './tool-bundles-state.svelte.js'
-import type { ApprovalView, HarnessEvent, HarnessNotification, IncomingMessage, SidebarMessage, SidebarSettings } from '../types.js'
+import type { ApprovalView, HarnessEvent, HarnessNotification, IncomingMessage, SidebarMessage, SidebarSettings, ToolPresentation } from '../types.js'
 
 export interface MessageRouterDeps {
   post: (message: SidebarMessage) => void
@@ -57,9 +58,38 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
    */
   const progressCallIds = new Set<string>()
 
+  /**
+   * A tool's own card words travel the control channel, and the row for the
+   * call travels the session stream, so either can arrive first. A view whose
+   * row is not on screen yet waits here for the call that owns it.
+   */
+  const pendingPresentations = new Map<string, ToolPresentation>()
+
+  function rememberPresentation(callId: string, view: ToolPresentation): void {
+    // The stream opens calls the transcript never shows, so the buffer stays bounded.
+    if (pendingPresentations.size >= 64) {
+      const oldest = pendingPresentations.keys().next()
+      if (!oldest.done) pendingPresentations.delete(oldest.value)
+    }
+    pendingPresentations.set(callId, view)
+  }
+
+  function takePresentation(callId: string): ToolPresentation | undefined {
+    const view = pendingPresentations.get(callId)
+    pendingPresentations.delete(callId)
+    return view
+  }
+
+  function handleToolPresentation(message: MessageOfType<'toolPresentation'>): void {
+    if (!owns(message.sessionId)) return
+    if (transcript.attachPresentation(message.callId, message.view)) return
+    rememberPresentation(message.callId, message.view)
+  }
+
   function resetTranscript(): void {
     transcript.reset()
     progressCallIds.clear()
+    pendingPresentations.clear()
     state.streamedStepTracker.reset()
     state.liveToolCallTracker.clear()
     state.resetForSession()
@@ -237,11 +267,15 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
     }
 
     const approval = Object.values(state.pendingApprovalRequests).find((entry) => entry.toolCallId === callId)?.approval
+    const description = toolCallDescription(data.arguments)
+    const presentation = takePresentation(callId)
     transcript.upsertToolCall({
       callId,
       name: toolName ?? 'Tool call',
       arguments: typeof data.arguments === 'string' ? data.arguments : stringifyPayload(data.arguments),
       status: 'running',
+      ...(presentation === undefined ? {} : { presentation }),
+      ...(description === undefined ? {} : { description }),
       ...(approval === undefined ? {} : { approval }),
     })
   }
@@ -477,6 +511,7 @@ export function createMessageRouter(deps: MessageRouterDeps): (message: Incoming
       if (!owns(message.sessionId)) return
       handleAssistantStream(message)
     },
+    toolPresentation: handleToolPresentation,
     error: (message) => {
       transcript.interruptCompaction(undefined, message.message)
       transcript.removePreparingToolCalls(state.liveToolCallTracker.clear())

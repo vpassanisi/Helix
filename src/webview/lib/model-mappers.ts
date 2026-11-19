@@ -84,6 +84,7 @@ export function toMcpServerDraft(server: SidebarMcpServerSetting): McpServerDraf
     command: server.command,
     argsText: server.args.join('\n'),
     url: server.url,
+    enabled: server.enabled !== false,
     env: server.env.map((entry) => ({ name: entry.name, value: '', configured: entry.configured })),
   }
 }
@@ -95,6 +96,7 @@ export function toMcpServerMessage(server: McpServerDraft): SidebarMcpServer {
     command: server.command,
     args: server.argsText.split(/\r?\n/).map((argument) => argument.trim()).filter(Boolean),
     url: server.url,
+    enabled: server.enabled,
     env: server.env.map(({ name, value, configured }) => ({ name, value, configured })),
   }
 }
